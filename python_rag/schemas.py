@@ -1,5 +1,6 @@
 from typing import Any,List,Optional
 from pydantic import BaseModel, Field
+from datetime import datetime
 
 class ApiResponse(BaseModel):
     code: int = 0
@@ -16,8 +17,32 @@ class createUserRequest(BaseModel):
 class UserItem(BaseModel):
     id: int
     name: str
-    created_at: str
+    created_at: datetime
 
 class UserListResponse(ApiResponse):
-    conunt: int
+    count: int
     data: List[UserItem]
+class TaskCreateRequest(BaseModel):
+    user_id: int
+    task_type: str
+    input_text: str
+
+class TaskItem(BaseModel):
+    id: int
+    user_id: int
+    task_type: str
+    input_text: str
+    status: str
+    created_at: Any
+
+class TaskListData(BaseModel):
+    count: int
+    data: List[TaskItem]
+
+class RagQueryRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+
+class RagQueryData(BaseModel):
+    query: str
+    answer: str
+    sources: List[str]

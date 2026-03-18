@@ -32,5 +32,24 @@ def init_table():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_account (
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    username VARCHAR(255) NOT NULL UNIQUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS chat_task (
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    user_id INT NOT NULL,
+                    task_type VARCHAR(255) NOT NULL,
+                    input_text TEXT NOT NULL,
+                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
     finally:
         conn.close()

@@ -7,8 +7,11 @@ from .config import APP_NAME, APP_VERSION
 from .constants import INTERNAL_ERROR
 from .exceptions import AppException
 from .logger import logger
+
 from .routers.health import router as health_router
 from .routers.users import router as users_router
+from .routers.tasks import router as tasks_router
+from .routers.rag import router as rag_router
 
 app = FastAPI(
     title=APP_NAME,
@@ -83,5 +86,9 @@ def root():
     }
 
 
-app.include_router(health_router)
-app.include_router(users_router)
+root_path = "/api/v1"
+
+app.include_router(health_router,prefix=root_path)
+app.include_router(users_router,prefix=root_path)
+app.include_router(tasks_router,prefix=root_path)
+app.include_router(rag_router,prefix=root_path)
