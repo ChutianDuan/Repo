@@ -1,6 +1,6 @@
 import redis
 
-from config import REDIS_HOST, REDIS_PORT
+from .config import REDIS_HOST, REDIS_PORT
 
 def get_redis_client():
     return redis.Redis(

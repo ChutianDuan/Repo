@@ -1,5 +1,5 @@
 import pymysql
-from config import (
+from .config import (
     MYSQL_HOST,
     MYSQL_PORT,
     MYSQL_DATABASE,
