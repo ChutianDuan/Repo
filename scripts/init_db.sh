@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
-REPO_ROOT="/home/ubuntu/Repo"
+export PYTHONPATH=.
 
-cd "$REPO_ROOT"
+python python_rag/init_app.py
 
-python3 -m python_rag.init_app
+mysql -uai_user -pai_password -D ai_app -e "SHOW TABLES;"

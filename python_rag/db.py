@@ -1,3 +1,4 @@
+# python_rag/db.py
 import pymysql
 from .config import (
     MYSQL_HOST,
@@ -21,35 +22,15 @@ def get_mysql_connection():
     )
 
 
-def init_table():
+def execute_sql_file(sql_path):
     conn = get_mysql_connection()
     try:
+        with open(sql_path, "r", encoding="utf-8") as f:
+            sql_text = f.read()
+
+        statements = [x.strip() for x in sql_text.split(";") if x.strip()]
         with conn.cursor() as cursor:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS demo_user (
-                    id INT PRIMARY KEY AUTO_INCREMENT,
-                    name VARCHAR(64) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_account (
-                    id INT PRIMARY KEY AUTO_INCREMENT,
-                    username VARCHAR(255) NOT NULL UNIQUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS chat_task (
-                    id INT PRIMARY KEY AUTO_INCREMENT,
-                    user_id INT NOT NULL,
-                    task_type VARCHAR(255) NOT NULL,
-                    input_text TEXT NOT NULL,
-                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+            for stmt in statements:
+                cursor.execute(stmt)
     finally:
         conn.close()

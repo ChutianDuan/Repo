@@ -1,5 +1,18 @@
 
+# AI Project
 
+## 1. Project Overview
+## 2. Tech Stack
+## 3. Directory Structure
+## 4. Environment Notes
+## 5. Initialization
+## 6. Start the API
+## 7. Current API Endpoints
+## 8. Database Tables
+## 9. Redis Keys
+## 10. Current Progress of Week 1
+## 11. Known Issues
+## 12. Week 2 Plan
 
 ```text
 repo/

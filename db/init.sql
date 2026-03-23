@@ -1,21 +1,104 @@
-CREATE TABLE IF NOT EXISTS demo_user(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
+CREATE DATABASE IF NOT EXISTS ai_app
+  DEFAULT CHARACTER SET utf8mb4
+  DEFAULT COLLATE utf8mb4_unicode_ci;
+
+USE ai_app;
+-- DROP TABLE IF EXISTS messages;
+-- DROP TABLE IF EXISTS sessions;
+-- DROP TABLE IF EXISTS doc_chunks;
+-- DROP TABLE IF EXISTS documents;
+-- DROP TABLE IF EXISTS tasks;
+-- DROP TABLE IF EXISTS user_account;
 
 
-CREATE TABLE IF NOT EXISTS user_account(
-    id INT PRIMARY KEY AUTO_INCREMENT,
+-- 用户表：单用户 demo 也建议保留
+CREATE TABLE IF NOT EXISTS user_account (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS chat_task(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    user_id INT NOT NULL,
-    task_type VARCHAR(255) NOT NULL,
-    input_text TEXT NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-)
+-- 会话表
+CREATE TABLE IF NOT EXISTS sessions (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    title VARCHAR(255) NOT NULL DEFAULT 'New Session',
+    summary TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_sessions_user_updated (user_id, updated_at),
+    CONSTRAINT fk_sessions_user
+        FOREIGN KEY (user_id) REFERENCES user_account(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 消息表
+CREATE TABLE IF NOT EXISTS messages (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    session_id BIGINT NOT NULL,
+    role VARCHAR(32) NOT NULL,
+    content LONGTEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'created',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_messages_session_created (session_id, created_at),
+    CONSTRAINT fk_messages_session
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 文档表
+CREATE TABLE IF NOT EXISTS documents (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    filename VARCHAR(512) NOT NULL,
+    mime VARCHAR(128) NOT NULL,
+    sha256 CHAR(64) NOT NULL,
+    size_bytes BIGINT NOT NULL DEFAULT 0,
+    storage_path VARCHAR(1024) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'uploaded',
+    error_message TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_documents_user_sha256 (user_id, sha256),
+    INDEX idx_documents_status_created (status, created_at),
+    CONSTRAINT fk_documents_user
+        FOREIGN KEY (user_id) REFERENCES user_account(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 文档切片表
+CREATE TABLE IF NOT EXISTS doc_chunks (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    doc_id BIGINT NOT NULL,
+    chunk_index INT NOT NULL,
+    text LONGTEXT NOT NULL,
+    tokens_est INT NOT NULL DEFAULT 0,
+    vector_id BIGINT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_doc_chunks_doc_chunk_index (doc_id, chunk_index),
+    INDEX idx_doc_chunks_doc (doc_id),
+    CONSTRAINT fk_doc_chunks_doc
+        FOREIGN KEY (doc_id) REFERENCES documents(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 任务表
+CREATE TABLE IF NOT EXISTS tasks (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    celery_task_id VARCHAR(128) NOT NULL,
+    type VARCHAR(64) NOT NULL,
+    entity_type VARCHAR(64) NOT NULL,
+    entity_id BIGINT NOT NULL,
+    state VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    progress INT NOT NULL DEFAULT 0,
+    meta_json JSON NULL,
+    error TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_tasks_celery_task_id (celery_task_id),
+    INDEX idx_tasks_entity (entity_type, entity_id),
+    INDEX idx_tasks_state_updated (state, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
