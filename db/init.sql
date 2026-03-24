@@ -3,51 +3,13 @@ CREATE DATABASE IF NOT EXISTS ai_app
   DEFAULT COLLATE utf8mb4_unicode_ci;
 
 USE ai_app;
--- DROP TABLE IF EXISTS messages;
--- DROP TABLE IF EXISTS sessions;
--- DROP TABLE IF EXISTS doc_chunks;
--- DROP TABLE IF EXISTS documents;
--- DROP TABLE IF EXISTS tasks;
--- DROP TABLE IF EXISTS user_account;
 
-
--- 用户表：单用户 demo 也建议保留
 CREATE TABLE IF NOT EXISTS user_account (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(255) NOT NULL UNIQUE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 会话表
-CREATE TABLE IF NOT EXISTS sessions (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    user_id BIGINT NOT NULL,
-    title VARCHAR(255) NOT NULL DEFAULT 'New Session',
-    summary TEXT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_sessions_user_updated (user_id, updated_at),
-    CONSTRAINT fk_sessions_user
-        FOREIGN KEY (user_id) REFERENCES user_account(id)
-        ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 消息表
-CREATE TABLE IF NOT EXISTS messages (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    session_id BIGINT NOT NULL,
-    role VARCHAR(32) NOT NULL,
-    content LONGTEXT NOT NULL,
-    status VARCHAR(32) NOT NULL DEFAULT 'created',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_messages_session_created (session_id, created_at),
-    CONSTRAINT fk_messages_session
-        FOREIGN KEY (session_id) REFERENCES sessions(id)
-        ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 文档表
 CREATE TABLE IF NOT EXISTS documents (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     user_id BIGINT NOT NULL,
@@ -56,35 +18,26 @@ CREATE TABLE IF NOT EXISTS documents (
     sha256 CHAR(64) NOT NULL,
     size_bytes BIGINT NOT NULL DEFAULT 0,
     storage_path VARCHAR(1024) NOT NULL,
-    status VARCHAR(32) NOT NULL DEFAULT 'uploaded',
+    status VARCHAR(32) NOT NULL DEFAULT 'UPLOADED',
     error_message TEXT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_documents_user_sha256 (user_id, sha256),
-    INDEX idx_documents_status_created (status, created_at),
-    CONSTRAINT fk_documents_user
-        FOREIGN KEY (user_id) REFERENCES user_account(id)
-        ON DELETE CASCADE
+    INDEX idx_documents_status_created (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 文档切片表
 CREATE TABLE IF NOT EXISTS doc_chunks (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     doc_id BIGINT NOT NULL,
     chunk_index INT NOT NULL,
     text LONGTEXT NOT NULL,
     tokens_est INT NOT NULL DEFAULT 0,
-    vector_id BIGINT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_doc_chunks_doc_chunk_index (doc_id, chunk_index),
-    INDEX idx_doc_chunks_doc (doc_id),
-    CONSTRAINT fk_doc_chunks_doc
-        FOREIGN KEY (doc_id) REFERENCES documents(id)
-        ON DELETE CASCADE
+    INDEX idx_doc_chunks_doc (doc_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 任务表
 CREATE TABLE IF NOT EXISTS tasks (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     celery_task_id VARCHAR(128) NOT NULL,

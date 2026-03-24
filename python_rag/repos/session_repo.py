@@ -1,5 +1,5 @@
 # python_rag/repos/session_repo.py
-from python_rag.db import get_mysql_connection
+from python_rag.infra.mysql import get_mysql_connection
 
 
 def create_session(user_id, title="New Session"):

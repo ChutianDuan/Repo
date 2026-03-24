@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, Query
-from ..constants import PARAM_ERROR, SUCCESS
-from ..exceptions import AppException
-from ..schemas import ApiResponse, createUserRequest, UserItem, UserListResponse
-from ..services.user_service import create_user, get_latest_users
 
-router = APIRouter(prefix="/users", tags=["users"])
+from python_rag.domain.constants import PARAM_ERROR, SUCCESS
+from python_rag.domain.exceptions import AppException
+from python_rag.schemas.common_schema import ApiResponse, createUserRequest, UserItem, UserListResponse
+from python_rag.services.user_service import create_user, get_latest_users 
 
+
+router = APIRouter(prefix="/internal", tags=["users"])
 
 @router.post("/create", response_model=ApiResponse)
 def create_user_api(req: createUserRequest):
