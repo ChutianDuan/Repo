@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from python_rag.domain.constants import PARAM_ERROR, SUCCESS
+from python_rag.domain.constants.error_code import PARAM_ERROR, SUCCESS
 from python_rag.domain.exceptions import AppException
 from python_rag.schemas.common_schema import ApiResponse, createUserRequest, UserItem, UserListResponse
 from python_rag.services.user_service import create_user, get_latest_users 

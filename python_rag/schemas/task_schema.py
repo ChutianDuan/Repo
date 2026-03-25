@@ -1,13 +1,13 @@
 from typing import Any, Dict, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SubmitPingTaskRequest(BaseModel):
-    seconds = 5
+    seconds: int = Field(..., ge=1, le=60)
 
 
 class SubmitIngestTaskRequest(BaseModel):
-    doc_id = 0
+    doc_id: int = Field(..., gt=0)
 
 
 class SubmitTaskResponse(BaseModel):
