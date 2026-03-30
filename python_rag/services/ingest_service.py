@@ -12,8 +12,12 @@ from python_rag.repos.document_repo import (
 from python_rag.repos.chunk_repo import (
     delete_chunks_by_doc_id,
     bulk_insert_chunks,
+    list_chunks_by_doc_id,
 )
 from python_rag.repos.task_repo import update_task_record
+from python_rag.repos.document_index_repo import upsert_document_index
+from python_rag.services.embedding_service import embed_documents, MODEL_NAME
+from python_rag.services.faiss_index_service import build_doc_faiss_index
 from python_rag.utils.text_chunker import simple_chunk_text
 
 
@@ -66,10 +70,13 @@ def _read_text_file(path):
 
 def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
     """
-    真正的 ingest 逻辑：
+    Day 2 ingest 逻辑：
     - 读文档
     - 切片
-    - 写 chunks
+    - 重建 chunks
+    - 生成 embeddings
+    - 构建 FAISS 索引
+    - 写 document_indexes
     - 更新 document/task 状态
     """
     try:
@@ -97,10 +104,11 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.PROGRESS,
-            progress=25,
+            progress=20,
             meta={
                 "stage": "document_loaded",
                 "doc_id": doc_id,
+                "filename": doc["filename"],
                 "char_count": len(text),
             },
             progress_callback=progress_callback,
@@ -111,36 +119,95 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             chunk_size=800,
             overlap=100,
         )
-
         if not chunks:
             raise AppException(INTERNAL_ERROR, "chunk result is empty")
 
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.PROGRESS,
-            progress=55,
+            progress=40,
             meta={
                 "stage": "document_chunked",
                 "doc_id": doc_id,
+                "filename": doc["filename"],
                 "chunk_count": len(chunks),
             },
             progress_callback=progress_callback,
         )
 
+        # 先删旧 chunks，再重建
         delete_chunks_by_doc_id(doc_id)
-
         inserted = bulk_insert_chunks(doc_id, chunks)
+
+        if inserted <= 0:
+            raise AppException(INTERNAL_ERROR, "bulk_insert_chunks inserted 0 rows")
 
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.PROGRESS,
-            progress=85,
+            progress=60,
             meta={
                 "stage": "chunks_inserted",
                 "doc_id": doc_id,
+                "filename": doc["filename"],
                 "chunk_count": inserted,
             },
             progress_callback=progress_callback,
+        )
+
+        # 一定重新从 DB 读取，拿真实 chunk_id
+        chunk_rows = list_chunks_by_doc_id(doc_id)
+        if not chunk_rows:
+            raise AppException(INTERNAL_ERROR, "no chunks found after insert")
+
+        texts = [row.get("content", row.get("text", "")) for row in chunk_rows]
+        _emit_progress(
+            celery_task_id=celery_task_id,
+            state=TaskState.PROGRESS,
+            progress=75,
+            meta={
+                "stage": "embedding_chunks",
+                "doc_id": doc_id,
+                "filename": doc["filename"],
+                "chunk_count": len(chunk_rows),
+                "embedding_model": MODEL_NAME,
+            },
+            progress_callback=progress_callback,
+        )
+
+        vectors = embed_documents(texts)
+        if vectors is None or len(vectors) != len(chunk_rows):
+            raise AppException(INTERNAL_ERROR, "embedding result count mismatch")
+
+        _emit_progress(
+            celery_task_id=celery_task_id,
+            state=TaskState.PROGRESS,
+            progress=90,
+            meta={
+                "stage": "building_faiss_index",
+                "doc_id": doc_id,
+                "filename": doc["filename"],
+                "chunk_count": len(chunk_rows),
+                "embedding_model": MODEL_NAME,
+            },
+            progress_callback=progress_callback,
+        )
+
+        index_meta = build_doc_faiss_index(
+            doc_id=doc_id,
+            chunk_rows=chunk_rows,
+            vectors=vectors,
+        )
+
+        upsert_document_index(
+            doc_id=doc_id,
+            index_type=index_meta["index_type"],
+            embedding_model=MODEL_NAME,
+            dimension=index_meta["dimension"],
+            index_path=index_meta["index_path"],
+            mapping_path=index_meta["mapping_path"],
+            chunk_count=index_meta["chunk_count"],
+            status="READY",
         )
 
         update_document_status(doc_id, DocumentState.READY, None)
@@ -149,8 +216,14 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             "stage": "finished",
             "doc_id": doc_id,
             "filename": doc["filename"],
-            "chunk_count": inserted,
+            "chunk_count": len(chunk_rows),
             "document_status": DocumentState.READY,
+            "index_status": "READY",
+            "embedding_model": MODEL_NAME,
+            "index_type": index_meta["index_type"],
+            "dimension": index_meta["dimension"],
+            "index_path": index_meta["index_path"],
+            "mapping_path": index_meta["mapping_path"],
         }
 
         _emit_progress(
@@ -179,6 +252,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
                 meta={
                     "stage": "failed",
                     "doc_id": doc_id,
+                    "error": str(e),
                 },
                 error=str(e),
                 progress_callback=progress_callback,

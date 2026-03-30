@@ -69,7 +69,13 @@ def list_chunks_by_doc_id(doc_id, limit=200):
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, doc_id, chunk_index, text, tokens_est, created_at
+                SELECT
+                    id,
+                    doc_id,
+                    chunk_index,
+                    text AS content,
+                    tokens_est,
+                    created_at
                 FROM doc_chunks
                 WHERE doc_id=%s
                 ORDER BY chunk_index ASC

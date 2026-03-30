@@ -5,6 +5,8 @@ class UploadDocumentResponse(BaseModel):
     doc_id: int
     filename: str
     status: str
+    db_task_id: int
+    celery_task_id: str
 
 
 class DocumentDetailResponse(BaseModel):

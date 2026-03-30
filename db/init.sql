@@ -55,3 +55,21 @@ CREATE TABLE IF NOT EXISTS tasks (
     INDEX idx_tasks_entity (entity_type, entity_id),
     INDEX idx_tasks_state_updated (state, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS document_indexes (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    doc_id BIGINT NOT NULL UNIQUE,
+    index_type VARCHAR(64) NOT NULL DEFAULT 'faiss_flat_ip',
+    embedding_model VARCHAR(128) NOT NULL,
+    dimension INT NOT NULL,
+    index_path VARCHAR(512) NOT NULL,
+    mapping_path VARCHAR(512) NOT NULL,
+    chunk_count INT NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'READY',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_document_indexes_doc
+        FOREIGN KEY (doc_id) REFERENCES documents(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

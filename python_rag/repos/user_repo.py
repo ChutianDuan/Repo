@@ -4,10 +4,10 @@ def create_user(name: str):
     conn = get_mysql_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("INSERT INTO demo_user (name) VALUES (%s)", (name,))
+            cursor.execute("INSERT INTO user_account (username) VALUES (%s)", (name,))
             user_id = cursor.lastrowid
             cursor.execute(
-                "SELECT id, name, created_at FROM demo_user WHERE id = %s",
+                "SELECT id, username, created_at FROM user_account WHERE id = %s",
                 (user_id,),
             )
             row = cursor.fetchone()
@@ -20,7 +20,7 @@ def get_latest_users(limit: int = 5):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT id, name, created_at FROM demo_user ORDER BY created_at DESC LIMIT %s",
+                "SELECT id, username, created_at FROM user_account ORDER BY created_at DESC LIMIT %s",
                 (limit,),
             )
             rows = cursor.fetchall()
