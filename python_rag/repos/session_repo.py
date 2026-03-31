@@ -1,8 +1,7 @@
-# python_rag/repos/session_repo.py
 from python_rag.infra.mysql import get_mysql_connection
 
 
-def create_session(user_id, title="New Session"):
+def create_session(user_id, title):
     conn = get_mysql_connection()
     try:
         with conn.cursor() as cursor:
@@ -11,24 +10,38 @@ def create_session(user_id, title="New Session"):
                 INSERT INTO sessions (user_id, title)
                 VALUES (%s, %s)
                 """,
-                (user_id, title)
+                (user_id, title),
             )
-            return cursor.lastrowid
+            session_id = cursor.lastrowid
+
+            cursor.execute(
+                """
+                SELECT id, user_id, title, created_at
+                FROM sessions
+                WHERE id=%s
+                """,
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            row["session_id"] = row.pop("id")
+            row["created_at"] = row["created_at"].isoformat(sep="T", timespec="seconds")
+            return row
     finally:
         conn.close()
 
 
-def create_message(session_id, role, content, status="created"):
+def get_session_by_id(session_id):
     conn = get_mysql_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO messages (session_id, role, content, status)
-                VALUES (%s, %s, %s, %s)
+                SELECT id, user_id, title, summary, created_at, updated_at
+                FROM sessions
+                WHERE id=%s
                 """,
-                (session_id, role, content, status)
+                (session_id,),
             )
-            return cursor.lastrowid
+            return cursor.fetchone()
     finally:
         conn.close()

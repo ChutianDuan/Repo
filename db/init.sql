@@ -73,3 +73,35 @@ CREATE TABLE IF NOT EXISTS document_indexes (
         FOREIGN KEY (doc_id) REFERENCES documents(id)
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    title VARCHAR(255) NOT NULL DEFAULT 'New Session',
+    summary TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_sessions_user_updated (user_id, updated_at),
+    CONSTRAINT fk_sessions_user
+        FOREIGN KEY (user_id) REFERENCES user_account(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE IF NOT EXISTS messages (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    session_id BIGINT NOT NULL,
+    role VARCHAR(32) NOT NULL,
+    content LONGTEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'SUCCESS',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_messages_session_created (session_id, created_at),
+    CONSTRAINT fk_messages_session
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
