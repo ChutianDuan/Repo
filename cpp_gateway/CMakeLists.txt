@@ -12,6 +12,8 @@ add_executable(cpp_gateway
     src/PythonApiClient.cc
     src/HealthService.cc
     src/DocumentService.cc
+    src/ChatService.cc
+    src/SessionService.cc
 )
 
 target_include_directories(cpp_gateway PRIVATE

@@ -7,6 +7,8 @@
 #include "DocumentService.h"
 #include "HealthService.h"
 #include "PythonApiClient.h"
+#include "SessionService.h"
+#include "ChatService.h"
 
 using namespace drogon;
 
@@ -17,6 +19,8 @@ int main() {
     auto pythonClient = std::make_shared<PythonApiClient>(pythonBaseUrl);
     auto healthService = std::make_shared<HealthService>(pythonClient);
     auto documentService = std::make_shared<DocumentService>(pythonClient);
+    auto sessionService = std::make_shared<SessionService>(pythonClient);
+    auto chatService = std::make_shared<ChatService>(pythonClient);
 
     app().registerHandler(
         "/health",
@@ -44,6 +48,57 @@ int main() {
             documentService->uploadAndSubmit(req, std::move(callback));
         },
         {Post}
+    );
+
+    app().registerHandler(
+        "/v1/sessions",
+        [sessionService](const HttpRequestPtr& req,
+                         std::function<void(const HttpResponsePtr&)>&& callback) {
+            auto json = req->getJsonObject();
+            if (!json) {
+                Json::Value body(Json::objectValue);
+                body["ok"] = false;
+                body["error"] = "invalid json";
+
+                auto resp = HttpResponse::newHttpJsonResponse(body);
+                resp->setStatusCode(k400BadRequest);
+                callback(resp);
+                return;
+            }
+            sessionService->createSession(*json, std::move(callback));
+        },
+        {Post}
+    );
+
+    app().registerHandler(
+        "/v1/sessions/{1}/messages",
+        [chatService](const HttpRequestPtr& req,
+                      std::function<void(const HttpResponsePtr&)>&& callback,
+                      int sessionId) {
+            auto json = req->getJsonObject();
+            if (!json) {
+                Json::Value body(Json::objectValue);
+                body["ok"] = false;
+                body["error"] = "invalid json";
+
+                auto resp = HttpResponse::newHttpJsonResponse(body);
+                resp->setStatusCode(k400BadRequest);
+                callback(resp);
+                return;
+            }
+            chatService->createUserMessageAndSubmitChat(sessionId, *json, std::move(callback));
+        },
+        {Post}
+    );
+
+    app().registerHandler(
+        "/v1/sessions/{1}/messages",
+        [sessionService](const HttpRequestPtr&,
+                         std::function<void(const HttpResponsePtr&)>&& callback,
+                         int sessionId) {
+            sessionService->listMessages(sessionId, std::move(callback));
+        },
+        {Get}
     );
 
     app().loadConfigFile("config.json");

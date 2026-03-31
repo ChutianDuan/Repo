@@ -6,30 +6,10 @@
 
 #IncludeRegexTransform: 
 
-/home/ubuntu/Repo/cpp_gateway/src/DocumentService.cc
-DocumentService.h
-/home/ubuntu/Repo/cpp_gateway/src/DocumentService.h
-drogon/drogon.h
--
-drogon/utils/Utilities.h
--
-filesystem
--
-fstream
--
-sstream
--
-string
--
-
-/home/ubuntu/Repo/cpp_gateway/src/DocumentService.h
+/home/ubuntu/Repo/cpp_gateway/src/PythonApiClient.cc
 PythonApiClient.h
 /home/ubuntu/Repo/cpp_gateway/src/PythonApiClient.h
-drogon/drogon.h
--
-memory
--
-string
+json/json.h
 -
 
 /home/ubuntu/Repo/cpp_gateway/src/PythonApiClient.h

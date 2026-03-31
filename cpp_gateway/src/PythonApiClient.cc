@@ -83,3 +83,64 @@ void PythonApiClient::submitIngestJob(
             cb(ok, *jsonPtr, ok ? "" : "python ingest returned non-200");
         });
 }
+
+void PythonApiClient::forwardJsonPost(
+    const std::string& path,
+    const Json::Value& body,
+    std::function<void(const HttpResponsePtr&)>&& callback
+) {
+    auto req = HttpRequest::newHttpJsonRequest(body);
+    req->setMethod(Post);
+    req->setPath(path);
+
+    client_->sendRequest(req, [callback = std::move(callback)](
+        ReqResult result,
+        const HttpResponsePtr& resp
+    ) {
+        if (result != ReqResult::Ok) {
+            Json::Value obj(Json::objectValue);
+            obj["ok"] = false;
+            obj["error"] = "python service unavailable";
+
+            auto errorResp = HttpResponse::newHttpJsonResponse(obj);
+            errorResp->setStatusCode(k502BadGateway);
+            callback(errorResp);
+            return;
+        }
+        callback(resp);
+    });
+}
+
+void PythonApiClient::forwardGet(
+    const std::string& path,
+    std::function<void(const HttpResponsePtr&)>&& callback
+) {
+    auto req = HttpRequest::newHttpRequest();
+    req->setMethod(Get);
+    req->setPath(path);
+
+    client_->sendRequest(
+        req,
+        [callback = std::move(callback)](
+            ReqResult result,
+            const HttpResponsePtr& resp
+        ) mutable {
+            if (result != ReqResult::Ok || !resp) {
+                Json::Value obj(Json::objectValue);
+                obj["ok"] = false;
+                obj["error"] = "python service unavailable";
+
+                auto errorResp = HttpResponse::newHttpJsonResponse(obj);
+                errorResp->setStatusCode(k502BadGateway);
+                callback(errorResp);
+                return;
+            }
+
+            auto out = HttpResponse::newHttpResponse();
+            out->setStatusCode(resp->statusCode());
+            out->setContentTypeCode(CT_APPLICATION_JSON);
+            out->setBody(std::string(resp->body()));
+            callback(out);
+        }
+    );
+}

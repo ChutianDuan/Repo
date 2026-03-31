@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from python_rag.domain.exceptions import ApiException
-
+from python_rag.domain.exceptions import AppException
 from python_rag.services.retrieval_service import search_in_document
 from python_rag.schemas.retrieval_schema import SearchRequest, SearchResponse
 
@@ -20,5 +19,5 @@ def internal_search(req: SearchRequest):
             "message": "ok",
             "data": result,
         }
-    except ApiException as e:
+    except AppException as e:
         raise HTTPException(status_code=400, detail=e.message)

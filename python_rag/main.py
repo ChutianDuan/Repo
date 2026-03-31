@@ -11,12 +11,13 @@ from python_rag.api.internal.document_router import router as document_router
 from python_rag.api.internal.users_router import router  as users_router
 from python_rag.api.internal.retrieval_router import router as retrieval_router
 from python_rag.api.internal.session_router import router as session_router
-
+from python_rag.api.internal.chat_router import router as chat_router
 
 app = FastAPI(title="Python RAG v2")
 
 app.include_router(health_router)
 app.include_router(task_router)
+app.include_router(chat_router)
 app.include_router(document_router)
 app.include_router(users_router)
 app.include_router(retrieval_router)

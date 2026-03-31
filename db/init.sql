@@ -105,3 +105,20 @@ CREATE TABLE IF NOT EXISTS messages (
         FOREIGN KEY (session_id) REFERENCES sessions(id)
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE IF NOT EXISTS citations (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    message_id BIGINT NOT NULL,
+    doc_id BIGINT NOT NULL,
+    chunk_id BIGINT NOT NULL,
+    chunk_index INT NOT NULL,
+    score DOUBLE NOT NULL DEFAULT 0,
+    snippet TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_citations_message (message_id),
+    INDEX idx_citations_doc_chunk (doc_id, chunk_id),
+    CONSTRAINT fk_citations_message
+        FOREIGN KEY (message_id) REFERENCES messages(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

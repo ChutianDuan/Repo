@@ -23,6 +23,23 @@ public:
         std::function<void(bool ok, const Json::Value& json, const std::string& err)> cb
     ) const;
 
+    void forwardGet(
+        const std::string& path,
+        std::function<void(const drogon::HttpResponsePtr&)>&& callback
+    );
+
+    void forwardJsonPost(
+        const std::string& path,
+        const Json::Value& body,
+        std::function<void(const drogon::HttpResponsePtr&)>&& callback
+    );
+
+    void forwardMultipartPost(
+        const drogon::HttpRequestPtr& req,
+        const std::string& path,
+        std::function<void(const drogon::HttpResponsePtr&)>&& callback
+    );
+
 private:
     std::string baseUrl_;
     drogon::HttpClientPtr client_;

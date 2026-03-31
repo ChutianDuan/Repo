@@ -74,12 +74,12 @@ clean: CMakeFiles/cpp_gateway.dir/clean
 CMakeFiles/cpp_gateway.dir/all:
 	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/depend
 	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles --progress-num=1,2,3,4,5 "Built target cpp_gateway"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles --progress-num=1,2,3,4,5,6,7 "Built target cpp_gateway"
 .PHONY : CMakeFiles/cpp_gateway.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/cpp_gateway.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/ubuntu/Repo/cpp_gateway/build/CMakeFiles 5
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/ubuntu/Repo/cpp_gateway/build/CMakeFiles 7
 	$(MAKE) -f CMakeFiles/Makefile2 CMakeFiles/cpp_gateway.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/ubuntu/Repo/cpp_gateway/build/CMakeFiles 0
 .PHONY : CMakeFiles/cpp_gateway.dir/rule

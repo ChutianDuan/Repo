@@ -1,0 +1,9 @@
+[
+  {
+    "row_id": 0,
+    "chunk_id": 7,
+    "doc_id": 11,
+    "chunk_index": 0,
+    "content": "这是一个 Day 7 的端到端演示文档。\n它主要介绍了当前系统已经支持：\n1. 文档上传\n2. 文档切片与向量索引\n3. 检索\n4. 会话与消息\n5. 异步 chat 任务\n6. assistant answer 与 citations 返回"
+  }
+]

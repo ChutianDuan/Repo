@@ -8,6 +8,7 @@ celery_app = Celery(
     include=[
         "python_rag.workers.tasks.ping_task",
         "python_rag.workers.tasks.ingest_task",
+        "python_rag.workers.tasks.chat_task",
     ],
 )
 

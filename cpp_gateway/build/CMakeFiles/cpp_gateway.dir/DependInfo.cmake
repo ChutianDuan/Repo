@@ -4,9 +4,11 @@ set(CMAKE_DEPENDS_LANGUAGES
   )
 # The set of files for implicit dependencies of each language:
 set(CMAKE_DEPENDS_CHECK_CXX
+  "/home/ubuntu/Repo/cpp_gateway/src/ChatService.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/ChatService.cc.o"
   "/home/ubuntu/Repo/cpp_gateway/src/DocumentService.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.o"
   "/home/ubuntu/Repo/cpp_gateway/src/HealthService.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/HealthService.cc.o"
   "/home/ubuntu/Repo/cpp_gateway/src/PythonApiClient.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.o"
+  "/home/ubuntu/Repo/cpp_gateway/src/SessionService.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o"
   "/home/ubuntu/Repo/cpp_gateway/src/main.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/main.cc.o"
   )
 set(CMAKE_CXX_COMPILER_ID "GNU")

@@ -123,6 +123,33 @@ cpp_gateway/fast:
 	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/build
 .PHONY : cpp_gateway/fast
 
+src/ChatService.o: src/ChatService.cc.o
+
+.PHONY : src/ChatService.o
+
+# target to build an object file
+src/ChatService.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/ChatService.cc.o
+.PHONY : src/ChatService.cc.o
+
+src/ChatService.i: src/ChatService.cc.i
+
+.PHONY : src/ChatService.i
+
+# target to preprocess a source file
+src/ChatService.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/ChatService.cc.i
+.PHONY : src/ChatService.cc.i
+
+src/ChatService.s: src/ChatService.cc.s
+
+.PHONY : src/ChatService.s
+
+# target to generate assembly for a file
+src/ChatService.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/ChatService.cc.s
+.PHONY : src/ChatService.cc.s
+
 src/DocumentService.o: src/DocumentService.cc.o
 
 .PHONY : src/DocumentService.o
@@ -204,6 +231,33 @@ src/PythonApiClient.cc.s:
 	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.s
 .PHONY : src/PythonApiClient.cc.s
 
+src/SessionService.o: src/SessionService.cc.o
+
+.PHONY : src/SessionService.o
+
+# target to build an object file
+src/SessionService.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o
+.PHONY : src/SessionService.cc.o
+
+src/SessionService.i: src/SessionService.cc.i
+
+.PHONY : src/SessionService.i
+
+# target to preprocess a source file
+src/SessionService.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/SessionService.cc.i
+.PHONY : src/SessionService.cc.i
+
+src/SessionService.s: src/SessionService.cc.s
+
+.PHONY : src/SessionService.s
+
+# target to generate assembly for a file
+src/SessionService.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/SessionService.cc.s
+.PHONY : src/SessionService.cc.s
+
 src/main.o: src/main.cc.o
 
 .PHONY : src/main.o
@@ -240,6 +294,9 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... edit_cache"
 	@echo "... cpp_gateway"
+	@echo "... src/ChatService.o"
+	@echo "... src/ChatService.i"
+	@echo "... src/ChatService.s"
 	@echo "... src/DocumentService.o"
 	@echo "... src/DocumentService.i"
 	@echo "... src/DocumentService.s"
@@ -249,6 +306,9 @@ help:
 	@echo "... src/PythonApiClient.o"
 	@echo "... src/PythonApiClient.i"
 	@echo "... src/PythonApiClient.s"
+	@echo "... src/SessionService.o"
+	@echo "... src/SessionService.i"
+	@echo "... src/SessionService.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"

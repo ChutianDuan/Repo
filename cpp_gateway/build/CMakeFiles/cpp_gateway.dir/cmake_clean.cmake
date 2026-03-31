@@ -1,7 +1,9 @@
 file(REMOVE_RECURSE
+  "CMakeFiles/cpp_gateway.dir/src/ChatService.cc.o"
   "CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.o"
   "CMakeFiles/cpp_gateway.dir/src/HealthService.cc.o"
   "CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.o"
+  "CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o"
   "CMakeFiles/cpp_gateway.dir/src/main.cc.o"
   "cpp_gateway"
   "cpp_gateway.pdb"

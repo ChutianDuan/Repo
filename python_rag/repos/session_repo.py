@@ -1,5 +1,6 @@
-from python_rag.infra.mysql import get_mysql_connection
 
+from python_rag.infra.mysql import get_mysql_connection
+from python_rag.utils.to_iso import _to_iso
 
 def create_session(user_id, title):
     conn = get_mysql_connection()
@@ -24,7 +25,7 @@ def create_session(user_id, title):
             )
             row = cursor.fetchone()
             row["session_id"] = row.pop("id")
-            row["created_at"] = row["created_at"].isoformat(sep="T", timespec="seconds")
+            row["created_at"] =  _to_iso(row["created_at"])
             return row
     finally:
         conn.close()
