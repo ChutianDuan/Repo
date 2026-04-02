@@ -1,5 +1,6 @@
 import os
-
+from dotenv import load_dotenv
+load_dotenv()
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "ai_app")
@@ -33,3 +34,25 @@ if REDIS_PASSWORD:
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
+
+
+
+CHAT_MAX_CHUNK_CHARS = int(os.getenv("CHAT_MAX_CHUNK_CHARS", "1000"))
+
+LLM_ENABLE = os.getenv("LLM_ENABLE", "true").lower() in ("1", "true", "yes", "on")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")
+
+
+LLM_BASE_URL = os.getenv(
+    "LLM_BASE_URL",
+    "https://open.bigmodel.cn/api/paas/v4",
+).rstrip("/")
+
+LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
+
+LLM_MODEL = os.getenv("LLM_MODEL", "glm-4.7-flash")
+
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "512"))
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+
