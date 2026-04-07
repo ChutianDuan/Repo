@@ -1,11 +1,11 @@
 # python_rag/services/chat_service.py
 from typing import Any, Dict, List, Optional
 
-# from python_rag.config.settings import settings
 from python_rag.domain.constants.error_code import NOT_FOUND_ERROR, INTERNAL_ERROR
 from python_rag.domain.constants.task_state import TaskState
 from python_rag.domain.exceptions import AppException
 from python_rag.domain.logger import logger
+from python_rag.config import CHAT_ENABLE_MOCK_FALLBACK
 
 from python_rag.repos.session_repo import get_session_by_id
 from python_rag.repos.message_repo import (
@@ -17,8 +17,9 @@ from python_rag.repos.task_repo import update_task_record
 from python_rag.repos.citation_repo import bulk_insert_citations
 
 from python_rag.services.retrieval_service import search_in_document
+from python_rag.services.context_assembler import assemble_context
 from python_rag.services.llm_service import LLMServiceError, generate_answer
-from python_rag.services.prompt_builder import build_messages, normalize_chunks
+from python_rag.services.prompt_builder import build_prompt, to_messages
 from python_rag.services.mock_answer_service import build_mock_answer
 
 
@@ -63,6 +64,30 @@ def _retrieve_hits(question: str, doc_id: int, top_k: int) -> List[Dict[str, Any
     return retrieval_result.get("hits", [])
 
 
+def _chunk_to_dict(chunk: Any) -> Dict[str, Any]:
+    if isinstance(chunk, dict):
+        return chunk
+
+    if hasattr(chunk, "__dict__"):
+        return dict(chunk.__dict__)
+
+    # 最后的兜底，避免异常对象导致整个回答链路失败
+    return {
+        "content": str(chunk),
+    }
+
+
+def _chunks_to_dicts(chunks: List[Any]) -> List[Dict[str, Any]]:
+    return [_chunk_to_dict(c) for c in chunks]
+
+
+def generate_mock_answer(question: str, context_chunks: List[Dict[str, Any]]) -> str:
+    return build_mock_answer(
+        user_query=question,
+        hits=context_chunks,
+    )
+
+
 def _create_assistant_message(
     session_id: int,
     content: str,
@@ -70,7 +95,7 @@ def _create_assistant_message(
 ) -> int:
     """
     优先尝试把 meta_json 一起写入。
-    如果你当前 create_message 还不支持 meta_json，这里先自动降级。
+    如果当前 create_message 还不支持 meta_json，则自动降级。
     """
     try:
         row = create_message(
@@ -110,13 +135,14 @@ def _emit_progress(
     progress_callback=None,
     error=None,
 ):
-    update_task_record(
-        celery_task_id=celery_task_id,
-        state=state,
-        progress=progress,
-        meta=meta,
-        error=error,
-    )
+    if celery_task_id:
+        update_task_record(
+            celery_task_id=celery_task_id,
+            state=state,
+            progress=progress,
+            meta=meta,
+            error=error,
+        )
 
     if progress_callback:
         try:
@@ -188,15 +214,19 @@ def run_chat_for_message(
             doc_id=doc_id,
             top_k=top_k,
         )
-        hits = normalize_chunks(raw_hits)
-        citations = _build_citations_from_hits(hits)
+
+        chunks, context_mode = assemble_context(raw_hits)
+        chunk_dicts = _chunks_to_dicts(chunks)
+        citations = _build_citations_from_hits(raw_hits)
 
         logger.info(
-            "chat retrieval done session_id=%s doc_id=%s user_message_id=%s retrieved_count=%s",
+            "chat retrieval done session_id=%s doc_id=%s user_message_id=%s raw_hit_count=%s chunk_count=%s context_mode=%s",
             session_id,
             doc_id,
             user_message_id,
-            len(hits),
+            len(raw_hits),
+            len(chunks),
+            context_mode,
         )
 
         _emit_progress(
@@ -208,24 +238,32 @@ def run_chat_for_message(
                 "session_id": session_id,
                 "doc_id": doc_id,
                 "user_message_id": user_message_id,
-                "retrieved_count": len(hits),
+                "retrieved_count": len(chunks),
+                "raw_hit_count": len(raw_hits),
+                "context_mode": context_mode,
             },
             progress_callback=progress_callback,
         )
+
+        prompt_result = build_prompt(
+            question=question,
+            chunks=chunks,
+            mode=context_mode,
+        )
+        messages = to_messages(prompt_result)
 
         answer_text = ""
         answer_source = "unknown"
         llm_result = None
 
-        if not hits:
+        if context_mode == "no_context":
             answer_text = "根据当前检索内容无法确定该问题的答案，因为没有检索到可用文档片段。"
             answer_source = "no_context"
         else:
-            messages = build_messages(question=question, chunks=hits)
             try:
                 llm_result = generate_answer(
                     question=question,
-                    chunks=hits,
+                    chunks=chunk_dicts,
                     messages=messages,
                 )
                 answer_text = llm_result["answer"]
@@ -237,10 +275,11 @@ def run_chat_for_message(
                     doc_id,
                     user_message_id,
                 )
-                if getattr(True):
-                    answer_text = build_mock_answer(
-                        user_query=question,
-                        hits=hits,
+
+                if CHAT_ENABLE_MOCK_FALLBACK:
+                    answer_text = generate_mock_answer(
+                        question=question,
+                        context_chunks=chunk_dicts,
                     )
                     answer_source = "mock_fallback"
                 else:
@@ -250,11 +289,14 @@ def run_chat_for_message(
 
         assistant_meta = {
             "answer_source": answer_source,
-            "retrieved_count": len(hits),
+            "retrieved_count": len(chunks),
+            "raw_hit_count": len(raw_hits),
             "citation_count": len(citations),
             "doc_id": doc_id,
             "user_message_id": user_message_id,
+            "context_mode": context_mode,
         }
+
         if llm_result:
             assistant_meta["llm_model"] = llm_result.get("model")
             assistant_meta["llm_usage"] = llm_result.get("usage")
@@ -270,6 +312,7 @@ def run_chat_for_message(
                 "doc_id": doc_id,
                 "user_message_id": user_message_id,
                 "answer_source": answer_source,
+                "context_mode": context_mode,
             },
             progress_callback=progress_callback,
         )
@@ -282,7 +325,7 @@ def run_chat_for_message(
 
         _save_citations(
             assistant_message_id=assistant_message_id,
-            hits=hits,
+            hits=raw_hits,
         )
 
         update_message_status(user_message_id, "SUCCESS")
@@ -293,21 +336,25 @@ def run_chat_for_message(
             "doc_id": doc_id,
             "user_message_id": user_message_id,
             "assistant_message_id": assistant_message_id,
-            "retrieved_count": len(hits),
+            "retrieved_count": len(chunks),
+            "raw_hit_count": len(raw_hits),
             "citation_count": len(citations),
             "answer_source": answer_source,
+            "context_mode": context_mode,
         }
 
         logger.info(
             "chat finished session_id=%s doc_id=%s user_message_id=%s assistant_message_id=%s "
-            "retrieved_count=%s citation_count=%s answer_source=%s",
+            "retrieved_count=%s raw_hit_count=%s citation_count=%s answer_source=%s context_mode=%s",
             session_id,
             doc_id,
             user_message_id,
             assistant_message_id,
-            len(hits),
+            len(chunks),
+            len(raw_hits),
             len(citations),
             answer_source,
+            context_mode,
         )
 
         _emit_progress(

@@ -55,4 +55,13 @@ LLM_MODEL = os.getenv("LLM_MODEL", "glm-4.7-flash")
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "512"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))
+CHAT_MIN_RETRIEVAL_SCORE = float(os.getenv("CHAT_MIN_RETRIEVAL_SCORE", "0.0"))
+DEFAULT_SYSTEM_INSTRUCTION = int(os.getenv("DEFAULT_SYSTEM_INSTRUCTION", "60")) 
+STREAM_DELTA_CHARS= int(os.getenv("STREAM_DELTA_CHARS", "20"))
+STREAM_MOCK_DELAY_MS= int(os.getenv("STREAM_MOCK_DELAY_MS", "30"))
+CHAT_ENABLE_MOCK_FALLBACK = os.getenv(
+    "CHAT_ENABLE_MOCK_FALLBACK",
+    "true"
+).lower() in ("1", "true", "yes", "on")
 

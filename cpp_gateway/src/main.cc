@@ -9,6 +9,8 @@
 #include "PythonApiClient.h"
 #include "SessionService.h"
 #include "ChatService.h"
+#include "PythonSSEClient.h"
+#include "StreamChatService.h"
 
 using namespace drogon;
 
@@ -17,10 +19,13 @@ int main() {
     std::string pythonBaseUrl = pythonBase ? pythonBase : "http://127.0.0.1:8000";
 
     auto pythonClient = std::make_shared<PythonApiClient>(pythonBaseUrl);
+    auto pythonSSEClient = std::make_shared<PythonSSEClient>(pythonBaseUrl);
+
     auto healthService = std::make_shared<HealthService>(pythonClient);
     auto documentService = std::make_shared<DocumentService>(pythonClient);
     auto sessionService = std::make_shared<SessionService>(pythonClient);
     auto chatService = std::make_shared<ChatService>(pythonClient);
+    auto streamChatService = std::make_shared<StreamChatService>(pythonSSEClient);
 
     app().registerHandler(
         "/health",
@@ -99,6 +104,15 @@ int main() {
             sessionService->listMessages(sessionId, std::move(callback));
         },
         {Get}
+    );
+
+     app().registerHandler(
+        "/v1/chat/stream",
+        [streamChatService](const HttpRequestPtr& req,
+                            std::function<void(const HttpResponsePtr&)>&& callback) {
+            streamChatService->handleStream(req, std::move(callback));
+        },
+        {Post}
     );
 
     app().loadConfigFile("config.json");

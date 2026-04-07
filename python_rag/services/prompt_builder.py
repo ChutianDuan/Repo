@@ -1,5 +1,8 @@
 from typing import Any, Dict, List, Optional
+
 from python_rag.config import CHAT_MAX_CHUNK_CHARS
+from python_rag.schemas.ragtypes_schema import PromptBuildResult, RetrievedChunk
+
 
 SYSTEM_INSTRUCTION = (
     "你是一个RAG问答助手。\n"
@@ -11,92 +14,122 @@ SYSTEM_INSTRUCTION = (
     "当检索内容中存在多个片段时，请优先整合共同信息。"
 )
 
-def _safe_text(value: Any) -> str:
-    if value is None:
+
+def _truncate_text(text: str, max_chars: Optional[int]) -> str:
+    if not text:
         return ""
-    return str(value).strip()
+    if not max_chars or max_chars <= 0:
+        return text
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "\n...[truncated]"
 
 
-def normalize_chunk(raw_chunk: Dict[str, Any], idx: int) -> Dict[str, Any]:
-    text = _safe_text(raw_chunk.get("text") or raw_chunk.get("content"))
-    if len(text) > CHAT_MAX_CHUNK_CHARS:
-        text = text[:CHAT_MAX_CHUNK_CHARS] + "..."
-    return {
-        "rank": idx + 1,
-        "chunk_id": raw_chunk.get("chunk_id") or raw_chunk.get("id"),
-        "doc_id": raw_chunk.get("doc_id"),
-        "chunk_index": (
-            raw_chunk.get("chunk_index")
-            if raw_chunk.get("chunk_index") is not None
-            else raw_chunk.get("seq", raw_chunk.get("index"))
-        ),
-        "score": raw_chunk.get("score"),
-        "content": text,
-    }
-
-def normalize_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    normalized = []
-    for idx, item in enumerate(chunks):
-        normalized.append(normalize_chunk(item, idx))
-    return normalized
-
-
-def build_context_text(chunks: List[Dict[str, Any]]) -> str:
-    normalized = normalize_chunks(chunks)
+def build_context_block(chunks: List[RetrievedChunk]) -> str:
     parts = []
+    for chunk in chunks:
+        header = "[Chunk %d]" % chunk.rank
+        meta_parts = []
 
-    for chunk in normalized:
-        header_parts = ["[Chunk %d]" % chunk["rank"]]
-        if chunk.get("doc_id") is not None:
-            header_parts.append("doc_id=%s" % chunk["doc_id"])
-        if chunk.get("chunk_index") is not None:
-            header_parts.append("chunk_index=%s" % chunk["chunk_index"])
-        if chunk.get("score") is not None:
-            try:
-                header_parts.append("score=%.4f" % float(chunk["score"]))
-            except Exception:
-                header_parts.append("score=%s" % chunk["score"])
+        if chunk.doc_id is not None:
+            meta_parts.append("doc_id=%s" % chunk.doc_id)
+        if chunk.chunk_index is not None:
+            meta_parts.append("chunk_index=%s" % chunk.chunk_index)
+        if chunk.score is not None:
+            meta_parts.append("score=%.4f" % chunk.score)
 
-        header = " | ".join(header_parts)
+        if meta_parts:
+            header += " | " + " | ".join(meta_parts)
+
         parts.append(header)
-        parts.append(chunk["content"])
+        parts.append(_truncate_text(chunk.content, CHAT_MAX_CHUNK_CHARS))
         parts.append("")
 
     return "\n".join(parts).strip()
 
-def build_user_prompt(question: str, chunks: List[Dict[str, Any]]) -> str:
-    context_text = build_context_text(chunks)
-    prompt = (
+
+def build_normal_prompt(question: str, chunks: List[RetrievedChunk]) -> PromptBuildResult:
+    context_text = build_context_block(chunks)
+    user_prompt = (
         "已检索内容：\n\n"
         "%s\n\n"
         "用户问题：\n"
         "%s\n\n"
-        "请基于以上检索内容作答。若无法确定，请明确说明无法确定。"
+        "请严格依据检索内容回答。"
+        "如果无法从检索内容中确定答案，请明确说明无法确定。"
     ) % (context_text, question.strip())
-    return prompt
-def build_no_context_user_prompt(question: str) -> str:
-    prompt = (
+
+    return PromptBuildResult(
+        system_instruction=SYSTEM_INSTRUCTION,
+        user_prompt=user_prompt,
+        context_text=context_text,
+        context_count=len(chunks),
+        mode="normal",
+    )
+
+
+def build_low_confidence_prompt(question: str, chunks: List[RetrievedChunk]) -> PromptBuildResult:
+    context_text = build_context_block(chunks)
+    user_prompt = (
+        "已检索内容（注意：以下片段与问题的相关性或置信度偏低，仅可作为弱参考）：\n\n"
+        "%s\n\n"
+        "用户问题：\n"
+        "%s\n\n"
+        "请严格遵守以下要求：\n"
+        "1. 只能基于检索内容回答，不要补充外部知识，不要猜测。\n"
+        "2. 如果检索内容不能直接支持答案，请明确回答：根据当前检索内容无法确定。\n"
+        "3. 如果检索内容仅提供了部分线索，请用保守措辞回答，例如“从当前片段来看”或“现有片段仅显示”。\n"
+        "4. 不要把不确定的信息表述成确定事实。"
+    ) % (context_text, question.strip())
+
+    return PromptBuildResult(
+        system_instruction=SYSTEM_INSTRUCTION,
+        user_prompt=user_prompt,
+        context_text=context_text,
+        context_count=len(chunks),
+        mode="low_confidence",
+    )
+
+
+def build_no_context_prompt(question: str) -> PromptBuildResult:
+    context_text = ""
+    user_prompt = (
         "当前没有检索到可用文档片段。\n\n"
         "用户问题：\n"
         "%s\n\n"
-        "请不要编造答案。请明确说明根据当前检索内容无法确定。"
+        "请不要编造答案，请明确说明根据当前检索内容无法确定。"
     ) % question.strip()
-    return prompt
+
+    return PromptBuildResult(
+        system_instruction=SYSTEM_INSTRUCTION,
+        user_prompt=user_prompt,
+        context_text=context_text,
+        context_count=0,
+        mode="no_context",
+    )
 
 
-def build_messages(
-    question: str,
-    chunks: List[Dict[str, Any]],
-    system_instruction: Optional[str] = None,
-) -> List[Dict[str, str]]:
-    sys_msg = system_instruction or SYSTEM_INSTRUCTION
+def build_prompt(question: str, chunks: List[RetrievedChunk], mode: str) -> PromptBuildResult:
+    if mode == "no_context":
+        return build_no_context_prompt(question)
+    if mode == "low_confidence":
+        return build_low_confidence_prompt(question, chunks)
+    return build_normal_prompt(question, chunks)
 
-    if chunks:
-        user_msg = build_user_prompt(question, chunks)
-    else:
-        user_msg = build_no_context_user_prompt(question)
 
+def to_messages(prompt_result: PromptBuildResult) -> List[Dict[str, str]]:
     return [
-        {"role": "system", "content": sys_msg},
-        {"role": "user", "content": user_msg},
+        {"role": "system", "content": prompt_result.system_instruction},
+        {"role": "user", "content": prompt_result.user_prompt},
     ]
+
+if __name__ in "__main__":
+    from python_rag.schemas.ragtypes_schema import RetrievedChunk
+    chunks = [
+        RetrievedChunk(rank=1, content="苹果是一种水果。", doc_id=1, chunk_index=0, score=0.91),
+        RetrievedChunk(rank=2, content="苹果富含维生素。", doc_id=1, chunk_index=1, score=0.88),
+    ]
+
+    prompt_result = build_prompt("苹果有什么特点？", chunks, "normal")
+    print(prompt_result)
+    print(to_messages(prompt_result))

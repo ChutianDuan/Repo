@@ -135,6 +135,32 @@ CMakeFiles/cpp_gateway.dir/src/SessionService.cc.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/cpp_gateway.dir/src/SessionService.cc.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/ubuntu/Repo/cpp_gateway/src/SessionService.cc -o CMakeFiles/cpp_gateway.dir/src/SessionService.cc.s
 
+CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o: CMakeFiles/cpp_gateway.dir/flags.make
+CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o: ../src/PythonSSEClient.cc
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Building CXX object CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o"
+	/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/PythonSSEClient.cc
+
+CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/ubuntu/Repo/cpp_gateway/src/PythonSSEClient.cc > CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.i
+
+CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/ubuntu/Repo/cpp_gateway/src/PythonSSEClient.cc -o CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.s
+
+CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o: CMakeFiles/cpp_gateway.dir/flags.make
+CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o: ../src/StreamChatService.cc
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CXX object CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o"
+	/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/StreamChatService.cc
+
+CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/ubuntu/Repo/cpp_gateway/src/StreamChatService.cc > CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.i
+
+CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/ubuntu/Repo/cpp_gateway/src/StreamChatService.cc -o CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.s
+
 # Object files for target cpp_gateway
 cpp_gateway_OBJECTS = \
 "CMakeFiles/cpp_gateway.dir/src/main.cc.o" \
@@ -142,7 +168,9 @@ cpp_gateway_OBJECTS = \
 "CMakeFiles/cpp_gateway.dir/src/HealthService.cc.o" \
 "CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.o" \
 "CMakeFiles/cpp_gateway.dir/src/ChatService.cc.o" \
-"CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o"
+"CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o" \
+"CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o" \
+"CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o"
 
 # External object files for target cpp_gateway
 cpp_gateway_EXTERNAL_OBJECTS =
@@ -153,11 +181,12 @@ cpp_gateway: CMakeFiles/cpp_gateway.dir/src/HealthService.cc.o
 cpp_gateway: CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.o
 cpp_gateway: CMakeFiles/cpp_gateway.dir/src/ChatService.cc.o
 cpp_gateway: CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o
+cpp_gateway: CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o
+cpp_gateway: CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o
 cpp_gateway: CMakeFiles/cpp_gateway.dir/build.make
 cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libdrogon.a
+cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libcurl-d.a
 cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libtrantor.a
-cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libssl.a
-cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libcrypto.a
 cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libcares.a
 cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libjsoncpp.a
 cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libuuid.a
@@ -167,8 +196,10 @@ cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libbrotlicommon.a
 cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libmariadbclient.a
 cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libhiredisd.a
 cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libz.a
+cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libssl.a
+cpp_gateway: /root/vcpkg/installed/x64-linux/debug/lib/libcrypto.a
 cpp_gateway: CMakeFiles/cpp_gateway.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Linking CXX executable cpp_gateway"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Linking CXX executable cpp_gateway"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/cpp_gateway.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

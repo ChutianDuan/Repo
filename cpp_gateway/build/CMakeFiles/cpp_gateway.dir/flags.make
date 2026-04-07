@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/c++
 CXX_FLAGS = -g   -std=c++17
 
-CXX_DEFINES = 
+CXX_DEFINES = -DCURL_STATICLIB
 
 CXX_INCLUDES = -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include 
 

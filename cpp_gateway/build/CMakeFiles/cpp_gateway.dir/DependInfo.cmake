@@ -8,10 +8,17 @@ set(CMAKE_DEPENDS_CHECK_CXX
   "/home/ubuntu/Repo/cpp_gateway/src/DocumentService.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.o"
   "/home/ubuntu/Repo/cpp_gateway/src/HealthService.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/HealthService.cc.o"
   "/home/ubuntu/Repo/cpp_gateway/src/PythonApiClient.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.o"
+  "/home/ubuntu/Repo/cpp_gateway/src/PythonSSEClient.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o"
   "/home/ubuntu/Repo/cpp_gateway/src/SessionService.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o"
+  "/home/ubuntu/Repo/cpp_gateway/src/StreamChatService.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o"
   "/home/ubuntu/Repo/cpp_gateway/src/main.cc" "/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir/src/main.cc.o"
   )
 set(CMAKE_CXX_COMPILER_ID "GNU")
+
+# Preprocessor definitions for this target.
+set(CMAKE_TARGET_DEFINITIONS_CXX
+  "CURL_STATICLIB"
+  )
 
 # The include file search paths:
 set(CMAKE_CXX_TARGET_INCLUDE_PATH

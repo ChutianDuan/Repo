@@ -231,6 +231,33 @@ src/PythonApiClient.cc.s:
 	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.s
 .PHONY : src/PythonApiClient.cc.s
 
+src/PythonSSEClient.o: src/PythonSSEClient.cc.o
+
+.PHONY : src/PythonSSEClient.o
+
+# target to build an object file
+src/PythonSSEClient.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o
+.PHONY : src/PythonSSEClient.cc.o
+
+src/PythonSSEClient.i: src/PythonSSEClient.cc.i
+
+.PHONY : src/PythonSSEClient.i
+
+# target to preprocess a source file
+src/PythonSSEClient.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.i
+.PHONY : src/PythonSSEClient.cc.i
+
+src/PythonSSEClient.s: src/PythonSSEClient.cc.s
+
+.PHONY : src/PythonSSEClient.s
+
+# target to generate assembly for a file
+src/PythonSSEClient.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.s
+.PHONY : src/PythonSSEClient.cc.s
+
 src/SessionService.o: src/SessionService.cc.o
 
 .PHONY : src/SessionService.o
@@ -257,6 +284,33 @@ src/SessionService.s: src/SessionService.cc.s
 src/SessionService.cc.s:
 	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/SessionService.cc.s
 .PHONY : src/SessionService.cc.s
+
+src/StreamChatService.o: src/StreamChatService.cc.o
+
+.PHONY : src/StreamChatService.o
+
+# target to build an object file
+src/StreamChatService.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o
+.PHONY : src/StreamChatService.cc.o
+
+src/StreamChatService.i: src/StreamChatService.cc.i
+
+.PHONY : src/StreamChatService.i
+
+# target to preprocess a source file
+src/StreamChatService.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.i
+.PHONY : src/StreamChatService.cc.i
+
+src/StreamChatService.s: src/StreamChatService.cc.s
+
+.PHONY : src/StreamChatService.s
+
+# target to generate assembly for a file
+src/StreamChatService.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.s
+.PHONY : src/StreamChatService.cc.s
 
 src/main.o: src/main.cc.o
 
@@ -306,9 +360,15 @@ help:
 	@echo "... src/PythonApiClient.o"
 	@echo "... src/PythonApiClient.i"
 	@echo "... src/PythonApiClient.s"
+	@echo "... src/PythonSSEClient.o"
+	@echo "... src/PythonSSEClient.i"
+	@echo "... src/PythonSSEClient.s"
 	@echo "... src/SessionService.o"
 	@echo "... src/SessionService.i"
 	@echo "... src/SessionService.s"
+	@echo "... src/StreamChatService.o"
+	@echo "... src/StreamChatService.i"
+	@echo "... src/StreamChatService.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
