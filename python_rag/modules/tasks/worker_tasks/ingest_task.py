@@ -1,4 +1,4 @@
-from python_rag.services.ingest_service import run_ingest_for_document
+from python_rag.modules.ingest.service import run_ingest_for_document
 from python_rag.modules.tasks.celery_app import celery_app
 
 

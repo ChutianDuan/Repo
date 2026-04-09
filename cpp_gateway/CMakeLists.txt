@@ -11,20 +11,24 @@ find_package(CURL REQUIRED)
 
 add_executable(cpp_gateway
     src/main.cc
-    src/PythonApiClient.cc
-    src/HealthService.cc
-    src/DocumentService.cc
-    src/ChatService.cc
-    src/SessionService.cc
-    src/PythonSSEClient.cc
-    src/StreamChatService.cc
+
+    src/common/ErrorMapper.cc
+
+    src/clients/PythonApiClient.cc
+    src/clients/PythonSSEClient.cc
+
+    src/handlers/HealthHandler.cc
+    src/handlers/DocumentHandler.cc
+    src/handlers/SessionHandler.cc
+    src/handlers/ChatHandler.cc
+    src/handlers/StreamChatHandler.cc
 )
 
 target_include_directories(cpp_gateway PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(cpp_gateway PRIVATE 
+target_link_libraries(cpp_gateway PRIVATE
     Drogon::Drogon
     CURL::libcurl
 )

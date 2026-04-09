@@ -6,37 +6,42 @@
 },
 {
   "directory": "/home/ubuntu/Repo/cpp_gateway/build",
-  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/PythonApiClient.cc",
-  "file": "/home/ubuntu/Repo/cpp_gateway/src/PythonApiClient.cc"
+  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/common/ErrorMapper.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/common/ErrorMapper.cc",
+  "file": "/home/ubuntu/Repo/cpp_gateway/src/common/ErrorMapper.cc"
 },
 {
   "directory": "/home/ubuntu/Repo/cpp_gateway/build",
-  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/HealthService.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/HealthService.cc",
-  "file": "/home/ubuntu/Repo/cpp_gateway/src/HealthService.cc"
+  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/clients/PythonApiClient.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/clients/PythonApiClient.cc",
+  "file": "/home/ubuntu/Repo/cpp_gateway/src/clients/PythonApiClient.cc"
 },
 {
   "directory": "/home/ubuntu/Repo/cpp_gateway/build",
-  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/DocumentService.cc",
-  "file": "/home/ubuntu/Repo/cpp_gateway/src/DocumentService.cc"
+  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/clients/PythonSSEClient.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/clients/PythonSSEClient.cc",
+  "file": "/home/ubuntu/Repo/cpp_gateway/src/clients/PythonSSEClient.cc"
 },
 {
   "directory": "/home/ubuntu/Repo/cpp_gateway/build",
-  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/ChatService.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/ChatService.cc",
-  "file": "/home/ubuntu/Repo/cpp_gateway/src/ChatService.cc"
+  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/handlers/HealthHandler.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/handlers/HealthHandler.cc",
+  "file": "/home/ubuntu/Repo/cpp_gateway/src/handlers/HealthHandler.cc"
 },
 {
   "directory": "/home/ubuntu/Repo/cpp_gateway/build",
-  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/SessionService.cc",
-  "file": "/home/ubuntu/Repo/cpp_gateway/src/SessionService.cc"
+  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/handlers/DocumentHandler.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/handlers/DocumentHandler.cc",
+  "file": "/home/ubuntu/Repo/cpp_gateway/src/handlers/DocumentHandler.cc"
 },
 {
   "directory": "/home/ubuntu/Repo/cpp_gateway/build",
-  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/PythonSSEClient.cc",
-  "file": "/home/ubuntu/Repo/cpp_gateway/src/PythonSSEClient.cc"
+  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/handlers/SessionHandler.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/handlers/SessionHandler.cc",
+  "file": "/home/ubuntu/Repo/cpp_gateway/src/handlers/SessionHandler.cc"
 },
 {
   "directory": "/home/ubuntu/Repo/cpp_gateway/build",
-  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/StreamChatService.cc",
-  "file": "/home/ubuntu/Repo/cpp_gateway/src/StreamChatService.cc"
+  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/handlers/ChatHandler.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/handlers/ChatHandler.cc",
+  "file": "/home/ubuntu/Repo/cpp_gateway/src/handlers/ChatHandler.cc"
+},
+{
+  "directory": "/home/ubuntu/Repo/cpp_gateway/build",
+  "command": "/usr/bin/c++  -DCURL_STATICLIB -I/home/ubuntu/Repo/cpp_gateway/src -isystem /root/vcpkg/installed/x64-linux/include  -g   -std=c++17 -o CMakeFiles/cpp_gateway.dir/src/handlers/StreamChatHandler.cc.o -c /home/ubuntu/Repo/cpp_gateway/src/handlers/StreamChatHandler.cc",
+  "file": "/home/ubuntu/Repo/cpp_gateway/src/handlers/StreamChatHandler.cc"
 }
 ]

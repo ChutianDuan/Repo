@@ -123,194 +123,221 @@ cpp_gateway/fast:
 	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/build
 .PHONY : cpp_gateway/fast
 
-src/ChatService.o: src/ChatService.cc.o
+src/clients/PythonApiClient.o: src/clients/PythonApiClient.cc.o
 
-.PHONY : src/ChatService.o
-
-# target to build an object file
-src/ChatService.cc.o:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/ChatService.cc.o
-.PHONY : src/ChatService.cc.o
-
-src/ChatService.i: src/ChatService.cc.i
-
-.PHONY : src/ChatService.i
-
-# target to preprocess a source file
-src/ChatService.cc.i:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/ChatService.cc.i
-.PHONY : src/ChatService.cc.i
-
-src/ChatService.s: src/ChatService.cc.s
-
-.PHONY : src/ChatService.s
-
-# target to generate assembly for a file
-src/ChatService.cc.s:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/ChatService.cc.s
-.PHONY : src/ChatService.cc.s
-
-src/DocumentService.o: src/DocumentService.cc.o
-
-.PHONY : src/DocumentService.o
+.PHONY : src/clients/PythonApiClient.o
 
 # target to build an object file
-src/DocumentService.cc.o:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.o
-.PHONY : src/DocumentService.cc.o
+src/clients/PythonApiClient.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/clients/PythonApiClient.cc.o
+.PHONY : src/clients/PythonApiClient.cc.o
 
-src/DocumentService.i: src/DocumentService.cc.i
+src/clients/PythonApiClient.i: src/clients/PythonApiClient.cc.i
 
-.PHONY : src/DocumentService.i
+.PHONY : src/clients/PythonApiClient.i
 
 # target to preprocess a source file
-src/DocumentService.cc.i:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.i
-.PHONY : src/DocumentService.cc.i
+src/clients/PythonApiClient.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/clients/PythonApiClient.cc.i
+.PHONY : src/clients/PythonApiClient.cc.i
 
-src/DocumentService.s: src/DocumentService.cc.s
+src/clients/PythonApiClient.s: src/clients/PythonApiClient.cc.s
 
-.PHONY : src/DocumentService.s
+.PHONY : src/clients/PythonApiClient.s
 
 # target to generate assembly for a file
-src/DocumentService.cc.s:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/DocumentService.cc.s
-.PHONY : src/DocumentService.cc.s
+src/clients/PythonApiClient.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/clients/PythonApiClient.cc.s
+.PHONY : src/clients/PythonApiClient.cc.s
 
-src/HealthService.o: src/HealthService.cc.o
+src/clients/PythonSSEClient.o: src/clients/PythonSSEClient.cc.o
 
-.PHONY : src/HealthService.o
+.PHONY : src/clients/PythonSSEClient.o
 
 # target to build an object file
-src/HealthService.cc.o:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/HealthService.cc.o
-.PHONY : src/HealthService.cc.o
+src/clients/PythonSSEClient.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/clients/PythonSSEClient.cc.o
+.PHONY : src/clients/PythonSSEClient.cc.o
 
-src/HealthService.i: src/HealthService.cc.i
+src/clients/PythonSSEClient.i: src/clients/PythonSSEClient.cc.i
 
-.PHONY : src/HealthService.i
+.PHONY : src/clients/PythonSSEClient.i
 
 # target to preprocess a source file
-src/HealthService.cc.i:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/HealthService.cc.i
-.PHONY : src/HealthService.cc.i
+src/clients/PythonSSEClient.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/clients/PythonSSEClient.cc.i
+.PHONY : src/clients/PythonSSEClient.cc.i
 
-src/HealthService.s: src/HealthService.cc.s
+src/clients/PythonSSEClient.s: src/clients/PythonSSEClient.cc.s
 
-.PHONY : src/HealthService.s
+.PHONY : src/clients/PythonSSEClient.s
 
 # target to generate assembly for a file
-src/HealthService.cc.s:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/HealthService.cc.s
-.PHONY : src/HealthService.cc.s
+src/clients/PythonSSEClient.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/clients/PythonSSEClient.cc.s
+.PHONY : src/clients/PythonSSEClient.cc.s
 
-src/PythonApiClient.o: src/PythonApiClient.cc.o
+src/common/ErrorMapper.o: src/common/ErrorMapper.cc.o
 
-.PHONY : src/PythonApiClient.o
+.PHONY : src/common/ErrorMapper.o
 
 # target to build an object file
-src/PythonApiClient.cc.o:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.o
-.PHONY : src/PythonApiClient.cc.o
+src/common/ErrorMapper.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/common/ErrorMapper.cc.o
+.PHONY : src/common/ErrorMapper.cc.o
 
-src/PythonApiClient.i: src/PythonApiClient.cc.i
+src/common/ErrorMapper.i: src/common/ErrorMapper.cc.i
 
-.PHONY : src/PythonApiClient.i
+.PHONY : src/common/ErrorMapper.i
 
 # target to preprocess a source file
-src/PythonApiClient.cc.i:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.i
-.PHONY : src/PythonApiClient.cc.i
+src/common/ErrorMapper.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/common/ErrorMapper.cc.i
+.PHONY : src/common/ErrorMapper.cc.i
 
-src/PythonApiClient.s: src/PythonApiClient.cc.s
+src/common/ErrorMapper.s: src/common/ErrorMapper.cc.s
 
-.PHONY : src/PythonApiClient.s
+.PHONY : src/common/ErrorMapper.s
 
 # target to generate assembly for a file
-src/PythonApiClient.cc.s:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonApiClient.cc.s
-.PHONY : src/PythonApiClient.cc.s
+src/common/ErrorMapper.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/common/ErrorMapper.cc.s
+.PHONY : src/common/ErrorMapper.cc.s
 
-src/PythonSSEClient.o: src/PythonSSEClient.cc.o
+src/handlers/ChatHandler.o: src/handlers/ChatHandler.cc.o
 
-.PHONY : src/PythonSSEClient.o
+.PHONY : src/handlers/ChatHandler.o
 
 # target to build an object file
-src/PythonSSEClient.cc.o:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.o
-.PHONY : src/PythonSSEClient.cc.o
+src/handlers/ChatHandler.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/ChatHandler.cc.o
+.PHONY : src/handlers/ChatHandler.cc.o
 
-src/PythonSSEClient.i: src/PythonSSEClient.cc.i
+src/handlers/ChatHandler.i: src/handlers/ChatHandler.cc.i
 
-.PHONY : src/PythonSSEClient.i
+.PHONY : src/handlers/ChatHandler.i
 
 # target to preprocess a source file
-src/PythonSSEClient.cc.i:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.i
-.PHONY : src/PythonSSEClient.cc.i
+src/handlers/ChatHandler.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/ChatHandler.cc.i
+.PHONY : src/handlers/ChatHandler.cc.i
 
-src/PythonSSEClient.s: src/PythonSSEClient.cc.s
+src/handlers/ChatHandler.s: src/handlers/ChatHandler.cc.s
 
-.PHONY : src/PythonSSEClient.s
+.PHONY : src/handlers/ChatHandler.s
 
 # target to generate assembly for a file
-src/PythonSSEClient.cc.s:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/PythonSSEClient.cc.s
-.PHONY : src/PythonSSEClient.cc.s
+src/handlers/ChatHandler.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/ChatHandler.cc.s
+.PHONY : src/handlers/ChatHandler.cc.s
 
-src/SessionService.o: src/SessionService.cc.o
+src/handlers/DocumentHandler.o: src/handlers/DocumentHandler.cc.o
 
-.PHONY : src/SessionService.o
+.PHONY : src/handlers/DocumentHandler.o
 
 # target to build an object file
-src/SessionService.cc.o:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/SessionService.cc.o
-.PHONY : src/SessionService.cc.o
+src/handlers/DocumentHandler.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/DocumentHandler.cc.o
+.PHONY : src/handlers/DocumentHandler.cc.o
 
-src/SessionService.i: src/SessionService.cc.i
+src/handlers/DocumentHandler.i: src/handlers/DocumentHandler.cc.i
 
-.PHONY : src/SessionService.i
+.PHONY : src/handlers/DocumentHandler.i
 
 # target to preprocess a source file
-src/SessionService.cc.i:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/SessionService.cc.i
-.PHONY : src/SessionService.cc.i
+src/handlers/DocumentHandler.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/DocumentHandler.cc.i
+.PHONY : src/handlers/DocumentHandler.cc.i
 
-src/SessionService.s: src/SessionService.cc.s
+src/handlers/DocumentHandler.s: src/handlers/DocumentHandler.cc.s
 
-.PHONY : src/SessionService.s
+.PHONY : src/handlers/DocumentHandler.s
 
 # target to generate assembly for a file
-src/SessionService.cc.s:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/SessionService.cc.s
-.PHONY : src/SessionService.cc.s
+src/handlers/DocumentHandler.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/DocumentHandler.cc.s
+.PHONY : src/handlers/DocumentHandler.cc.s
 
-src/StreamChatService.o: src/StreamChatService.cc.o
+src/handlers/HealthHandler.o: src/handlers/HealthHandler.cc.o
 
-.PHONY : src/StreamChatService.o
+.PHONY : src/handlers/HealthHandler.o
 
 # target to build an object file
-src/StreamChatService.cc.o:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.o
-.PHONY : src/StreamChatService.cc.o
+src/handlers/HealthHandler.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/HealthHandler.cc.o
+.PHONY : src/handlers/HealthHandler.cc.o
 
-src/StreamChatService.i: src/StreamChatService.cc.i
+src/handlers/HealthHandler.i: src/handlers/HealthHandler.cc.i
 
-.PHONY : src/StreamChatService.i
+.PHONY : src/handlers/HealthHandler.i
 
 # target to preprocess a source file
-src/StreamChatService.cc.i:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.i
-.PHONY : src/StreamChatService.cc.i
+src/handlers/HealthHandler.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/HealthHandler.cc.i
+.PHONY : src/handlers/HealthHandler.cc.i
 
-src/StreamChatService.s: src/StreamChatService.cc.s
+src/handlers/HealthHandler.s: src/handlers/HealthHandler.cc.s
 
-.PHONY : src/StreamChatService.s
+.PHONY : src/handlers/HealthHandler.s
 
 # target to generate assembly for a file
-src/StreamChatService.cc.s:
-	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/StreamChatService.cc.s
-.PHONY : src/StreamChatService.cc.s
+src/handlers/HealthHandler.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/HealthHandler.cc.s
+.PHONY : src/handlers/HealthHandler.cc.s
+
+src/handlers/SessionHandler.o: src/handlers/SessionHandler.cc.o
+
+.PHONY : src/handlers/SessionHandler.o
+
+# target to build an object file
+src/handlers/SessionHandler.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/SessionHandler.cc.o
+.PHONY : src/handlers/SessionHandler.cc.o
+
+src/handlers/SessionHandler.i: src/handlers/SessionHandler.cc.i
+
+.PHONY : src/handlers/SessionHandler.i
+
+# target to preprocess a source file
+src/handlers/SessionHandler.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/SessionHandler.cc.i
+.PHONY : src/handlers/SessionHandler.cc.i
+
+src/handlers/SessionHandler.s: src/handlers/SessionHandler.cc.s
+
+.PHONY : src/handlers/SessionHandler.s
+
+# target to generate assembly for a file
+src/handlers/SessionHandler.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/SessionHandler.cc.s
+.PHONY : src/handlers/SessionHandler.cc.s
+
+src/handlers/StreamChatHandler.o: src/handlers/StreamChatHandler.cc.o
+
+.PHONY : src/handlers/StreamChatHandler.o
+
+# target to build an object file
+src/handlers/StreamChatHandler.cc.o:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/StreamChatHandler.cc.o
+.PHONY : src/handlers/StreamChatHandler.cc.o
+
+src/handlers/StreamChatHandler.i: src/handlers/StreamChatHandler.cc.i
+
+.PHONY : src/handlers/StreamChatHandler.i
+
+# target to preprocess a source file
+src/handlers/StreamChatHandler.cc.i:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/StreamChatHandler.cc.i
+.PHONY : src/handlers/StreamChatHandler.cc.i
+
+src/handlers/StreamChatHandler.s: src/handlers/StreamChatHandler.cc.s
+
+.PHONY : src/handlers/StreamChatHandler.s
+
+# target to generate assembly for a file
+src/handlers/StreamChatHandler.cc.s:
+	$(MAKE) -f CMakeFiles/cpp_gateway.dir/build.make CMakeFiles/cpp_gateway.dir/src/handlers/StreamChatHandler.cc.s
+.PHONY : src/handlers/StreamChatHandler.cc.s
 
 src/main.o: src/main.cc.o
 
@@ -348,27 +375,30 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... edit_cache"
 	@echo "... cpp_gateway"
-	@echo "... src/ChatService.o"
-	@echo "... src/ChatService.i"
-	@echo "... src/ChatService.s"
-	@echo "... src/DocumentService.o"
-	@echo "... src/DocumentService.i"
-	@echo "... src/DocumentService.s"
-	@echo "... src/HealthService.o"
-	@echo "... src/HealthService.i"
-	@echo "... src/HealthService.s"
-	@echo "... src/PythonApiClient.o"
-	@echo "... src/PythonApiClient.i"
-	@echo "... src/PythonApiClient.s"
-	@echo "... src/PythonSSEClient.o"
-	@echo "... src/PythonSSEClient.i"
-	@echo "... src/PythonSSEClient.s"
-	@echo "... src/SessionService.o"
-	@echo "... src/SessionService.i"
-	@echo "... src/SessionService.s"
-	@echo "... src/StreamChatService.o"
-	@echo "... src/StreamChatService.i"
-	@echo "... src/StreamChatService.s"
+	@echo "... src/clients/PythonApiClient.o"
+	@echo "... src/clients/PythonApiClient.i"
+	@echo "... src/clients/PythonApiClient.s"
+	@echo "... src/clients/PythonSSEClient.o"
+	@echo "... src/clients/PythonSSEClient.i"
+	@echo "... src/clients/PythonSSEClient.s"
+	@echo "... src/common/ErrorMapper.o"
+	@echo "... src/common/ErrorMapper.i"
+	@echo "... src/common/ErrorMapper.s"
+	@echo "... src/handlers/ChatHandler.o"
+	@echo "... src/handlers/ChatHandler.i"
+	@echo "... src/handlers/ChatHandler.s"
+	@echo "... src/handlers/DocumentHandler.o"
+	@echo "... src/handlers/DocumentHandler.i"
+	@echo "... src/handlers/DocumentHandler.s"
+	@echo "... src/handlers/HealthHandler.o"
+	@echo "... src/handlers/HealthHandler.i"
+	@echo "... src/handlers/HealthHandler.s"
+	@echo "... src/handlers/SessionHandler.o"
+	@echo "... src/handlers/SessionHandler.i"
+	@echo "... src/handlers/SessionHandler.s"
+	@echo "... src/handlers/StreamChatHandler.o"
+	@echo "... src/handlers/StreamChatHandler.i"
+	@echo "... src/handlers/StreamChatHandler.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"

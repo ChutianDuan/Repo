@@ -6,9 +6,9 @@ celery_app = Celery(
     broker=CELERY_BROKER_URL,
     backend=CELERY_RESULT_BACKEND,
     include=[
-        "python_rag.workers.tasks.ping_task",
-        "python_rag.workers.tasks.ingest_task",
-        "python_rag.workers.tasks.chat_task",
+        "python_rag.modules.tasks.worker_tasks.ping_task",
+        "python_rag.modules.tasks.worker_tasks.ingest_task",
+        "python_rag.modules.tasks.worker_tasks.chat_task",
     ],
 )
 

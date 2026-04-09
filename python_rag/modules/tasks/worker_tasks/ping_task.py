@@ -1,7 +1,7 @@
 import time
 
-from python_rag.domain.constants.task_state import TaskState
-from python_rag.repos.task_repo import update_task_record
+from python_rag.core.error_codes import TaskState
+from python_rag.modules.tasks.repo import update_task_record
 from python_rag.modules.tasks.celery_app import celery_app
 
 

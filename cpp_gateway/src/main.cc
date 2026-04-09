@@ -1,18 +1,31 @@
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <string>
 
 #include <drogon/drogon.h>
 
-#include "DocumentService.h"
-#include "HealthService.h"
-#include "PythonApiClient.h"
-#include "SessionService.h"
-#include "ChatService.h"
-#include "PythonSSEClient.h"
-#include "StreamChatService.h"
+#include "clients/PythonApiClient.h"
+#include "clients/PythonSSEClient.h"
+#include "handlers/ChatHandler.h"
+#include "handlers/DocumentHandler.h"
+#include "handlers/HealthHandler.h"
+#include "handlers/SessionHandler.h"
+#include "handlers/StreamChatHandler.h"
 
 using namespace drogon;
+
+namespace {
+HttpResponsePtr makeBadRequestResponse(const std::string& error) {
+    Json::Value body(Json::objectValue);
+    body["ok"] = false;
+    body["error"] = error;
+
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(k400BadRequest);
+    return resp;
+}
+}  // namespace
 
 int main() {
     const char* pythonBase = std::getenv("PYTHON_INTERNAL_BASE_URL");
@@ -21,17 +34,17 @@ int main() {
     auto pythonClient = std::make_shared<PythonApiClient>(pythonBaseUrl);
     auto pythonSSEClient = std::make_shared<PythonSSEClient>(pythonBaseUrl);
 
-    auto healthService = std::make_shared<HealthService>(pythonClient);
-    auto documentService = std::make_shared<DocumentService>(pythonClient);
-    auto sessionService = std::make_shared<SessionService>(pythonClient);
-    auto chatService = std::make_shared<ChatService>(pythonClient);
-    auto streamChatService = std::make_shared<StreamChatService>(pythonSSEClient);
+    auto healthHandler = std::make_shared<HealthService>(pythonClient);
+    auto documentHandler = std::make_shared<DocumentService>(pythonClient);
+    auto sessionHandler = std::make_shared<SessionService>(pythonClient);
+    auto chatHandler = std::make_shared<ChatService>(pythonClient);
+    auto streamChatHandler = std::make_shared<StreamChatService>(pythonSSEClient);
 
     app().registerHandler(
         "/health",
-        [healthService](const HttpRequestPtr&,
+        [healthHandler](const HttpRequestPtr&,
                         std::function<void(const HttpResponsePtr&)>&& callback) {
-            healthService->handle(std::move(callback));
+            healthHandler->handle(std::move(callback));
         },
         {Get}
     );
@@ -48,69 +61,57 @@ int main() {
 
     app().registerHandler(
         "/v1/documents",
-        [documentService](const HttpRequestPtr& req,
+        [documentHandler](const HttpRequestPtr& req,
                           std::function<void(const HttpResponsePtr&)>&& callback) {
-            documentService->uploadAndSubmit(req, std::move(callback));
+            documentHandler->uploadAndSubmit(req, std::move(callback));
         },
         {Post}
     );
 
     app().registerHandler(
         "/v1/sessions",
-        [sessionService](const HttpRequestPtr& req,
+        [sessionHandler](const HttpRequestPtr& req,
                          std::function<void(const HttpResponsePtr&)>&& callback) {
             auto json = req->getJsonObject();
             if (!json) {
-                Json::Value body(Json::objectValue);
-                body["ok"] = false;
-                body["error"] = "invalid json";
-
-                auto resp = HttpResponse::newHttpJsonResponse(body);
-                resp->setStatusCode(k400BadRequest);
-                callback(resp);
+                callback(makeBadRequestResponse("invalid json"));
                 return;
             }
-            sessionService->createSession(*json, std::move(callback));
+            sessionHandler->createSession(*json, std::move(callback));
         },
         {Post}
     );
 
     app().registerHandler(
         "/v1/sessions/{1}/messages",
-        [chatService](const HttpRequestPtr& req,
+        [chatHandler](const HttpRequestPtr& req,
                       std::function<void(const HttpResponsePtr&)>&& callback,
                       int sessionId) {
             auto json = req->getJsonObject();
             if (!json) {
-                Json::Value body(Json::objectValue);
-                body["ok"] = false;
-                body["error"] = "invalid json";
-
-                auto resp = HttpResponse::newHttpJsonResponse(body);
-                resp->setStatusCode(k400BadRequest);
-                callback(resp);
+                callback(makeBadRequestResponse("invalid json"));
                 return;
             }
-            chatService->createUserMessageAndSubmitChat(sessionId, *json, std::move(callback));
+            chatHandler->createUserMessageAndSubmitChat(sessionId, *json, std::move(callback));
         },
         {Post}
     );
 
     app().registerHandler(
         "/v1/sessions/{1}/messages",
-        [sessionService](const HttpRequestPtr&,
+        [sessionHandler](const HttpRequestPtr&,
                          std::function<void(const HttpResponsePtr&)>&& callback,
                          int sessionId) {
-            sessionService->listMessages(sessionId, std::move(callback));
+            sessionHandler->listMessages(sessionId, std::move(callback));
         },
         {Get}
     );
 
-     app().registerHandler(
+    app().registerHandler(
         "/v1/chat/stream",
-        [streamChatService](const HttpRequestPtr& req,
+        [streamChatHandler](const HttpRequestPtr& req,
                             std::function<void(const HttpResponsePtr&)>&& callback) {
-            streamChatService->handleStream(req, std::move(callback));
+            streamChatHandler->handleStream(req, std::move(callback));
         },
         {Post}
     );

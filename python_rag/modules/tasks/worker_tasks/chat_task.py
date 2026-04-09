@@ -1,5 +1,5 @@
 from python_rag.modules.tasks.celery_app import celery_app
-from python_rag.services.chat_runtime_service import run_chat_for_message
+from python_rag.modules.chat.runtime_service  import run_chat_for_message
 
 
 @celery_app.task(bind=True, name="python_rag.tasks.chat_generate")

@@ -1,9 +1,8 @@
 import os
 
 from python_rag.modules.documents.schemas import DocumentState
-from python_rag.core.error_codes import TaskState
-from python_rag.domain.constants.error_code import NOT_FOUND_ERROR, INTERNAL_ERROR
-from python_rag.domain.exceptions import AppException
+from python_rag.core.error_codes import TaskState,ERR_CELERY_ERROR
+from python_rag.core.errors import AppError
 from python_rag.core.logger import logger
 from python_rag.modules.documents.repo import (
     get_document_by_id,
@@ -43,7 +42,7 @@ def _emit_progress(celery_task_id, state, progress, meta, progress_callback=None
 
 def _read_text_file(path):
     if not os.path.exists(path):
-        raise AppException(INTERNAL_ERROR, "document file does not exist")
+        raise AppError(ERR_CELERY_ERROR, "document file does not exist")
 
     with open(path, "rb") as f:
         raw = f.read()
@@ -81,7 +80,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
     try:
         doc = get_document_by_id(doc_id)
         if not doc:
-            raise AppException(NOT_FOUND_ERROR, "document not found")
+            raise AppError(ERR_CELERY_ERROR, "document not found")
 
         update_document_status(doc_id, DocumentState.INGESTING, None)
         _emit_progress(
@@ -98,7 +97,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
 
         text = _read_text_file(doc["storage_path"])
         if not text or not text.strip():
-            raise AppException(INTERNAL_ERROR, "document text is empty")
+            raise AppError(ERR_CELERY_ERROR, "document text is empty")
 
         _emit_progress(
             celery_task_id=celery_task_id,
@@ -119,7 +118,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             overlap=100,
         )
         if not chunks:
-            raise AppException(INTERNAL_ERROR, "chunk result is empty")
+            raise AppError(ERR_CELERY_ERROR, "chunk result is empty")
 
         _emit_progress(
             celery_task_id=celery_task_id,
@@ -139,7 +138,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         inserted = bulk_insert_chunks(doc_id, chunks)
 
         if inserted <= 0:
-            raise AppException(INTERNAL_ERROR, "bulk_insert_chunks inserted 0 rows")
+            raise AppError(ERR_CELERY_ERROR, "bulk_insert_chunks inserted 0 rows")
 
         _emit_progress(
             celery_task_id=celery_task_id,
@@ -157,7 +156,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         # 一定重新从 DB 读取，拿真实 chunk_id
         chunk_rows = list_chunks_by_doc_id(doc_id)
         if not chunk_rows:
-            raise AppException(INTERNAL_ERROR, "no chunks found after insert")
+            raise AppError(ERR_CELERY_ERROR, "no chunks found after insert")
 
         texts = [row.get("content", row.get("text", "")) for row in chunk_rows]
         _emit_progress(
@@ -176,7 +175,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
 
         vectors = embed_documents(texts)
         if vectors is None or len(vectors) != len(chunk_rows):
-            raise AppException(INTERNAL_ERROR, "embedding result count mismatch")
+            raise AppError(ERR_CELERY_ERROR, "embedding result count mismatch")
 
         _emit_progress(
             celery_task_id=celery_task_id,
