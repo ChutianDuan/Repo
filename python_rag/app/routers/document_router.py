@@ -10,12 +10,12 @@ router = APIRouter(prefix="/internal", tags=["documents"])
 
 @router.post("/documents/upload")
 def upload_document(
-    file=File(...),
-    user_id=Form(1),
+    file: UploadFile = File(...),
+    user_id: int = Form(1),
 ):
-    return save_uploaded_document(user_id=int(user_id), upload_file=file)
+    return save_uploaded_document(user_id=user_id, upload_file=file)
 
 
 @router.get("/documents/{doc_id}")
-def get_document(doc_id):
-    return get_document_detail(int(doc_id))
+def get_document(doc_id: int):
+    return get_document_detail(doc_id)

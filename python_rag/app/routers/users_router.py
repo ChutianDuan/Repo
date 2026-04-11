@@ -1,16 +1,15 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from python_rag.core.error_codes import  OK,ERR_INTERNAL_ERROR
+from python_rag.core.error_codes import OK, ERR_INTERNAL_ERROR
 from python_rag.core.errors import AppError
+from python_rag.modules.user.service import create_user, get_latest_users
+from python_rag.utils.common import ApiResponse, CreateUserRequest, UserItem, UserListData
 
-from python_rag.modules.user.service import create_user, get_latest_users 
+router = APIRouter(prefix="/internal/users", tags=["users"])
 
-from python_rag.utils.common import ApiResponse, createUserRequest, UserItem, UserListResponse
 
-router = APIRouter(prefix="/internal", tags=["users"])
-
-@router.post("/create", response_model=ApiResponse)
-def create_user_api(req: createUserRequest):
+@router.post("", response_model=ApiResponse)
+def create_user_api(req: CreateUserRequest):
     try:
         row = create_user(req.name)
         return ApiResponse(
@@ -26,9 +25,9 @@ def create_user_api(req: createUserRequest):
 def latest_users_api(limit: int = Query(5, ge=1, le=50)):
     try:
         rows = get_latest_users(limit)
-        data = UserListResponse(
+        data = UserListData(
             count=len(rows),
-            data=[UserItem(**row) for row in rows],
+            items=[UserItem(**row) for row in rows],
         )
         return ApiResponse(
             code=OK,

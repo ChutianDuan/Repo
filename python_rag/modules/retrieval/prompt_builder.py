@@ -123,8 +123,7 @@ def to_messages(prompt_result: PromptBuildResult) -> List[Dict[str, str]]:
         {"role": "user", "content": prompt_result.user_prompt},
     ]
 
-if __name__ in "__main__":
-    from python_rag.schemas.ragtypes_schema import RetrievedChunk
+if __name__ == "__main__":
     chunks = [
         RetrievedChunk(rank=1, content="苹果是一种水果。", doc_id=1, chunk_index=0, score=0.91),
         RetrievedChunk(rank=2, content="苹果富含维生素。", doc_id=1, chunk_index=1, score=0.88),

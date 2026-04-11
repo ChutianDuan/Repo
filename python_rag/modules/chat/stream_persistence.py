@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from python_rag.modules.messages.repo import create_message
 from python_rag.modules.chat.repo import bulk_insert_citations
@@ -7,9 +7,11 @@ from python_rag.modules.chat.repo import bulk_insert_citations
 def _normalize_hit_for_citation(hit: Dict[str, Any], rank: int) -> Dict[str, Any]:
     return {
         "doc_id": hit.get("doc_id"),
+        "chunk_id": hit.get("chunk_id"),
         "chunk_index": hit.get("chunk_index"),
-        "score": hit.get("score"),
+        "score": hit.get("score") or 0,
         "content": hit.get("content"),
+        "snippet": (hit.get("snippet") or hit.get("content") or "")[:300],
         "rank": rank,
     }
 
@@ -33,9 +35,10 @@ def persist_stream_result(
         role="assistant",
         content=answer_text,
         status="SUCCESS",
-        meta={
+        meta_json={
             "answer_source": answer_source,
             "context_mode": context_mode,
+            "retrieved_count": len(retrieval_hits),
         },
     )
 
@@ -48,7 +51,7 @@ def persist_stream_result(
     if citation_rows:
         bulk_insert_citations(
             message_id=assistant_message["message_id"],
-            citations=citation_rows,
+            hits=citation_rows,
         )
 
     return assistant_message

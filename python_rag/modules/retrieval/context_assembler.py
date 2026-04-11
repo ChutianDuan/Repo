@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from python_rag.modules.retrieval.schemas import RetrievedChunk
 from python_rag.config import CHAT_MAX_CHUNK_CHARS, CHAT_TOP_K, CHAT_MIN_RETRIEVAL_SCORE
@@ -90,10 +90,13 @@ def detect_context_mode(chunks: List[RetrievedChunk]) -> str:
     return "normal"
 
 
-def assemble_context(raw_hits: List[Dict[str, Any]]) -> Tuple[List[RetrievedChunk], str]:
+def assemble_context(
+    raw_hits: List[Dict[str, Any]],
+    max_chunks: Optional[int] = None,
+) -> Tuple[List[RetrievedChunk], str]:
     chunks = normalize_hits(raw_hits)
     chunks = deduplicate_chunks(chunks)
-    chunks = chunks[:CHAT_TOP_K]
+    chunks = chunks[: (max_chunks or CHAT_TOP_K)]
     chunks = rerank_sequentially(chunks)
     mode = detect_context_mode(chunks)
     return chunks, mode

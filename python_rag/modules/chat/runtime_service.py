@@ -1,7 +1,11 @@
 # python_rag/services/chat_service.py
 from typing import Any, Dict, List, Optional
 
-from python_rag.core.error_codes import TaskState,ERR_INDEX_NOT_FOUND, ERR_INTERNAL_ERROR
+from python_rag.core.error_codes import (
+    ERR_INTERNAL_ERROR,
+    ERR_SESSION_NOT_FOUND,
+    TaskState,
+)
 from python_rag.core.errors import AppError
 from python_rag.core.logger import logger
 from python_rag.config import CHAT_ENABLE_MOCK_FALLBACK
@@ -165,7 +169,7 @@ def run_chat_for_message(
     try:
         session = get_session_by_id(session_id)
         if not session:
-            raise AppError(ERR_INDEX_NOT_FOUND, "session not found")
+            raise AppError(ERR_SESSION_NOT_FOUND, "session not found", http_status=404)
 
         user_message = _get_user_message(user_message_id)
         if user_message["session_id"] != session_id:
@@ -216,7 +220,7 @@ def run_chat_for_message(
             top_k=top_k,
         )
 
-        chunks, context_mode = assemble_context(raw_hits)
+        chunks, context_mode = assemble_context(raw_hits, max_chunks=top_k)
         chunk_dicts = _chunks_to_dicts(chunks)
         citations = _build_citations_from_hits(raw_hits)
 

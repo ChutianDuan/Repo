@@ -24,7 +24,11 @@ CREATE TABLE IF NOT EXISTS documents (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_documents_user_sha256 (user_id, sha256),
-    INDEX idx_documents_status_created (status, created_at)
+    INDEX idx_documents_user (user_id),
+    INDEX idx_documents_status_created (status, created_at),
+    CONSTRAINT fk_documents_user
+        FOREIGN KEY (user_id) REFERENCES user_account(id)
+        ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS doc_chunks (
@@ -35,7 +39,10 @@ CREATE TABLE IF NOT EXISTS doc_chunks (
     tokens_est INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_doc_chunks_doc_chunk_index (doc_id, chunk_index),
-    INDEX idx_doc_chunks_doc (doc_id)
+    INDEX idx_doc_chunks_doc (doc_id),
+    CONSTRAINT fk_doc_chunks_doc
+        FOREIGN KEY (doc_id) REFERENCES documents(id)
+        ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -74,8 +81,6 @@ CREATE TABLE IF NOT EXISTS document_indexes (
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
-
 CREATE TABLE IF NOT EXISTS sessions (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     user_id BIGINT NOT NULL,
@@ -90,15 +95,13 @@ CREATE TABLE IF NOT EXISTS sessions (
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
-
-
 CREATE TABLE IF NOT EXISTS messages (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     session_id BIGINT NOT NULL,
     role VARCHAR(32) NOT NULL,
     content LONGTEXT NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'SUCCESS',
+    meta_json JSON NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
@@ -107,9 +110,6 @@ CREATE TABLE IF NOT EXISTS messages (
         FOREIGN KEY (session_id) REFERENCES sessions(id)
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-ALTER TABLE messages
-ADD COLUMN meta_json JSON NULL AFTER status;
 
 CREATE TABLE IF NOT EXISTS citations (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -124,5 +124,11 @@ CREATE TABLE IF NOT EXISTS citations (
     INDEX idx_citations_doc_chunk (doc_id, chunk_id),
     CONSTRAINT fk_citations_message
         FOREIGN KEY (message_id) REFERENCES messages(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_citations_doc
+        FOREIGN KEY (doc_id) REFERENCES documents(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_citations_chunk
+        FOREIGN KEY (chunk_id) REFERENCES doc_chunks(id)
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

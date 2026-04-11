@@ -36,7 +36,7 @@ def query_task_status(task_id):
     return get_task_status(task_id)
 
 
-@router.get("")
+@router.get("/tasks")
 def query_task_list(
     limit: int = Query(20, ge=1, le=100),
     state: str = Query(None),

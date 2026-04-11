@@ -1,4 +1,9 @@
-from python_rag.core.error_codes import ERR_INDEX_NOT_FOUND, ERR_INTERNAL_ERROR, TaskState
+from python_rag.core.error_codes import (
+    ERR_INVALID_REQUEST,
+    ERR_MESSAGE_NOT_FOUND,
+    ERR_SESSION_NOT_FOUND,
+    TaskState,
+)
 from python_rag.core.errors import AppError
 
 from python_rag.modules.sessions.repo import get_session_by_id
@@ -10,17 +15,17 @@ from python_rag.modules.tasks.worker_tasks.chat_task import chat_task
 def submit_chat_job(session_id, doc_id, user_message_id, top_k=3):
     session = get_session_by_id(session_id)
     if not session:
-        raise AppError(ERR_INDEX_NOT_FOUND, "session not found")
+        raise AppError(ERR_SESSION_NOT_FOUND, "session not found", http_status=404)
 
     user_msg = get_message_by_id(user_message_id)
     if not user_msg:
-        raise AppError(ERR_INDEX_NOT_FOUND, "user message not found")
+        raise AppError(ERR_MESSAGE_NOT_FOUND, "user message not found", http_status=404)
 
     if user_msg["session_id"] != session_id:
-        raise AppError(ERR_INDEX_NOT_FOUND, "user message does not belong to session")
+        raise AppError(ERR_INVALID_REQUEST, "user message does not belong to session")
 
     if user_msg["role"] != "user":
-        raise AppError(ERR_INDEX_NOT_FOUND, "message role must be user")
+        raise AppError(ERR_INVALID_REQUEST, "message role must be user")
 
     async_result = chat_task.delay(
         session_id=session_id,

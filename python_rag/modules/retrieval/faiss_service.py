@@ -77,27 +77,3 @@ def search_doc_faiss_index(index_path: str, mapping_path: str, query_vector: np.
             }
         )
     return results
-def search_doc_faiss_index(index_path: str, mapping_path: str, query_vector: np.ndarray, top_k: int = 3):
-    index = faiss.read_index(index_path)
-
-    with open(mapping_path, "r", encoding="utf-8") as f:
-        mapping = json.load(f)
-
-    query = np.asarray([query_vector], dtype="float32")
-    scores, indices = index.search(query, top_k)
-
-    results = []
-    for score, idx in zip(scores[0], indices[0]):
-        if idx < 0 or idx >= len(mapping):
-            continue
-        item = mapping[idx]
-        results.append(
-            {
-                "doc_id": item["doc_id"],
-                "chunk_id": item["chunk_id"],
-                "chunk_index": item["chunk_index"],
-                "score": float(score),
-                "content": item["content"],
-            }
-        )
-    return results

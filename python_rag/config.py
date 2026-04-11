@@ -1,5 +1,8 @@
 import os
+
 from dotenv import load_dotenv
+
+
 load_dotenv()
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
@@ -35,13 +38,14 @@ if REDIS_PASSWORD:
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
 
-
-
 CHAT_MAX_CHUNK_CHARS = int(os.getenv("CHAT_MAX_CHUNK_CHARS", "1000"))
+CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))
+CHAT_MIN_RETRIEVAL_SCORE = float(os.getenv("CHAT_MIN_RETRIEVAL_SCORE", "0.0"))
+STREAM_DELTA_CHARS = int(os.getenv("STREAM_DELTA_CHARS", "20"))
+STREAM_MOCK_DELAY_MS = int(os.getenv("STREAM_MOCK_DELAY_MS", "30"))
 
 LLM_ENABLE = os.getenv("LLM_ENABLE", "true").lower() in ("1", "true", "yes", "on")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")
-
 
 LLM_BASE_URL = os.getenv(
     "LLM_BASE_URL",
@@ -55,13 +59,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "glm-4.7-flash")
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "512"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))
-CHAT_MIN_RETRIEVAL_SCORE = float(os.getenv("CHAT_MIN_RETRIEVAL_SCORE", "0.0"))
-DEFAULT_SYSTEM_INSTRUCTION = int(os.getenv("DEFAULT_SYSTEM_INSTRUCTION", "60")) 
-STREAM_DELTA_CHARS= int(os.getenv("STREAM_DELTA_CHARS", "20"))
-STREAM_MOCK_DELAY_MS= int(os.getenv("STREAM_MOCK_DELAY_MS", "30"))
 CHAT_ENABLE_MOCK_FALLBACK = os.getenv(
     "CHAT_ENABLE_MOCK_FALLBACK",
-    "true"
+    "true",
 ).lower() in ("1", "true", "yes", "on")
-

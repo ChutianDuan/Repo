@@ -2,7 +2,7 @@
 set -euo pipefail
 
 GATEWAY_BASE_URL="${GATEWAY_BASE_URL:-http://127.0.0.1:8080}"
-TEST_FILE="${1:-./test.md}"
+TEST_FILE="${1:-./day7_demo.md}"
 
 if [ ! -f "$TEST_FILE" ]; then
   echo "[ERROR] file not found: $TEST_FILE"
@@ -17,14 +17,14 @@ UPLOAD_RESP=$(curl -s -X POST "${GATEWAY_BASE_URL}/v1/documents" \
 echo "$UPLOAD_RESP"
 
 DOC_ID=$(echo "$UPLOAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['doc_id'])")
-DB_TASK_ID=$(echo "$UPLOAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['db_task_id'])")
+TASK_ID=$(echo "$UPLOAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['task_id'])")
 
 echo "doc_id=$DOC_ID"
-echo "db_task_id=$DB_TASK_ID"
+echo "task_id=$TASK_ID"
 
 echo "==> poll task"
 for i in $(seq 1 20); do
-  TASK_RESP=$(curl -s "${GATEWAY_BASE_URL}/v1/tasks/${DB_TASK_ID}")
+  TASK_RESP=$(curl -s "${GATEWAY_BASE_URL}/v1/tasks/${TASK_ID}")
   echo "$TASK_RESP"
 
   STATE=$(echo "$TASK_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])")

@@ -12,7 +12,7 @@ def format_message(
         "content": message.get("content") or "",
         "status": message.get("status") or "UNKNOWN",
         "citations": citations or [],
-        "meta": {},   # 当前 messages 表没有 meta_json，先统一返回空对象
+        "meta": message.get("meta") or {},
         "created_at": message.get("created_at"),
         "updated_at": message.get("updated_at"),
     }

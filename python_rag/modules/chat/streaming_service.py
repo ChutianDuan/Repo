@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Any, Dict, Generator, List, Optional
 
-from python_rag.core.error_codes import ERR_INTERNAL_ERROR
+from python_rag.core.error_codes import ERR_INTERNAL_ERROR, ERR_SESSION_NOT_FOUND
 from python_rag.core.errors import AppError
 
 from python_rag.modules.messages.repo import (
@@ -53,7 +53,7 @@ def _get_user_message(user_message_id: int) -> Dict[str, Any]:
 def _get_session(session_id: int) -> Dict[str, Any]:
     session = get_session_by_id(session_id)
     if not session:
-        raise AppError(ERR_INTERNAL_ERROR, "session not found")
+        raise AppError(ERR_SESSION_NOT_FOUND, "session not found", http_status=404)
     return session
 
 
@@ -148,16 +148,14 @@ def stream_chat_for_message(
             doc_id=doc_id,
             top_k=top_k,
         )
-        chunks, context_mode = assemble_context(raw_hits)
+        chunks, context_mode = assemble_context(raw_hits, max_chunks=top_k)
         chunk_dicts = _chunks_to_dicts(chunks)
 
-        # 新增：读取最近消息
         history_messages = list_recent_messages_by_session_id(
             session_id=session_id,
             limit=10,
         )
 
-        # 新增：组装多轮上下文
         assembler = ConversationAssembler(max_rounds=3)
         messages = assembler.build_messages(
             system_prompt=SYSTEM_PROMPT,
@@ -214,7 +212,6 @@ def stream_chat_for_message(
             answer_source=answer_source,
             context_mode=context_mode,
         )
-
 
         yield build_done_event(
             {

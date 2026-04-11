@@ -20,4 +20,4 @@ def internal_search(req: SearchRequest):
             "data": result,
         }
     except AppError as e:
-        raise HTTPException(status_code=400, detail=e.message)
+        raise HTTPException(status_code=400, detail={"code": e.code, "message": e.message})

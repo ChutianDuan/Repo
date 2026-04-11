@@ -1,9 +1,5 @@
-from email import message
-import re
-from unittest import result
-
-from python_rag.core.error_codes import ERR_SESSION_NOT_FOUND
-from python_rag.core.errors import SessionNotFoundError
+from python_rag.core.error_codes import ERR_INVALID_REQUEST, ERR_SESSION_NOT_FOUND
+from python_rag.core.errors import AppError, SessionNotFoundError
 from python_rag.modules.sessions.repo import create_session, get_session_by_id
 from python_rag.modules.messages.repo import create_message, list_messages_by_session_id
 from python_rag.modules.chat.repo import list_citations_by_message_ids
@@ -21,11 +17,11 @@ def create_message_service(session_id, role, content, status="SUCCESS"):
 
     role = (role or "").strip()
     if role not in ("user", "assistant", "system"):
-        raise ValueError("invalid role")
+        raise AppError(ERR_INVALID_REQUEST, "invalid role")
 
     content = (content or "").strip()
     if not content:
-        raise ValueError("content is empty")
+        raise AppError(ERR_INVALID_REQUEST, "content is empty")
 
     msg = create_message(
         session_id=session_id,
@@ -33,7 +29,8 @@ def create_message_service(session_id, role, content, status="SUCCESS"):
         content=content,
         status=status,
     )
-    msg['citations'] = []
+    msg["citations"] = []
+    msg["meta"] = msg.get("meta") or {}
     return msg
 
 

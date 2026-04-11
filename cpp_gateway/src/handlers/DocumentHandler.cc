@@ -103,7 +103,7 @@ void DocumentService::uploadAndSubmit(
     }
 
     try {
-        fs::create_directories("./uploads");
+        fs::create_directories("./data/uploads");
     } catch (const std::exception& e) {
         Json::Value json;
         json["code"] = 500;
@@ -116,7 +116,7 @@ void DocumentService::uploadAndSubmit(
 
     const std::string originalName = sanitizeFileName(file.getFileName());
     const std::string storedName = buildStoredFileName(originalName);
-    const std::string storagePath = "./uploads/" + storedName;
+    const std::string storagePath = "./data/uploads/" + storedName;
 
     // Drogon 官方文件上传示例里是 parse 后拿 HttpFile，再保存。这里为兼容我们自定义命名，
     // 直接把 file.fileContent() 写到目标路径。multipart 解析流程本身来自官方示例和 wiki。 :contentReference[oaicite:3]{index=3}

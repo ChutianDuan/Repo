@@ -1,6 +1,6 @@
 import type { Citation } from "./citation";
 
-export type MessageRole = "user" | "assistant";
+export type MessageRole = "user" | "assistant" | "system";
 
 export interface ChatMessage {
   message_id: number;
