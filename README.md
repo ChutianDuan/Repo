@@ -124,8 +124,15 @@ cp .env.example .env
 前端环境变量在 `frontend/.env.example`：
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:8080
+VITE_API_BASE_URL=
+VITE_PROXY_TARGET=http://127.0.0.1:8080
 ```
+
+说明：
+
+- `VITE_API_BASE_URL` 留空时，开发环境默认走 Vite 代理，请求 `/health` 和 `/v1/*` 会被转发到 `VITE_PROXY_TARGET`
+- 如果前端不是通过 Vite 开发服务器启动，而是单独部署成静态文件，可以把 `VITE_API_BASE_URL` 改成 `http://server-ip:8080`
+- `cpp_gateway` 现在已经补上了 CORS 和 `OPTIONS` 预检，支持浏览器直接跨域访问
 
 ## 启动方式
 
@@ -166,6 +173,8 @@ cd frontend
 npm install
 npm run dev
 ```
+
+如果修改了 `cpp_gateway`，记得重新编译并重启网关后再验证前端。
 
 ## 演示方式
 

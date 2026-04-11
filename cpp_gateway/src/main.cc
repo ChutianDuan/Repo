@@ -25,6 +25,44 @@ HttpResponsePtr makeBadRequestResponse(const std::string& error) {
     resp->setStatusCode(k400BadRequest);
     return resp;
 }
+
+void applyCorsHeaders(const HttpRequestPtr& req, const HttpResponsePtr& resp) {
+    if (!resp) {
+        return;
+    }
+
+    const auto origin = req ? req->getHeader("Origin") : std::string();
+    resp->addHeader("Access-Control-Allow-Origin", origin.empty() ? "*" : origin);
+    resp->addHeader("Vary", "Origin");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+
+    const auto requestedHeaders = req ? req->getHeader("Access-Control-Request-Headers") : std::string();
+    if (!requestedHeaders.empty()) {
+        resp->addHeader("Access-Control-Allow-Headers", requestedHeaders);
+    } else {
+        resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    }
+
+    resp->addHeader("Access-Control-Max-Age", "86400");
+}
+
+std::function<void(const HttpResponsePtr&)> makeCorsCallback(
+    const HttpRequestPtr& req,
+    std::function<void(const HttpResponsePtr&)>&& callback
+) {
+    return [req, callback = std::move(callback)](const HttpResponsePtr& resp) mutable {
+        applyCorsHeaders(req, resp);
+        callback(resp);
+    };
+}
+
+HttpResponsePtr makeOptionsResponse(const HttpRequestPtr& req) {
+    auto resp = HttpResponse::newHttpResponse();
+    resp->setStatusCode(k204NoContent);
+    resp->setBody("");
+    applyCorsHeaders(req, resp);
+    return resp;
+}
 }  // namespace
 
 int main() {
@@ -42,44 +80,82 @@ int main() {
 
     app().registerHandler(
         "/health",
-        [healthHandler](const HttpRequestPtr&,
+        [healthHandler](const HttpRequestPtr& req,
                         std::function<void(const HttpResponsePtr&)>&& callback) {
-            healthHandler->handle(std::move(callback));
+            healthHandler->handle(makeCorsCallback(req, std::move(callback)));
+        },
+        {Get}
+    );
+
+    app().registerHandler(
+        "/health",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
+    );
+
+    app().registerHandler(
+        "/v1/tasks/{1}",
+        [pythonClient](const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback,
+                       const std::string& taskId) {
+            pythonClient->proxyTaskStatus(taskId, makeCorsCallback(req, std::move(callback)));
         },
         {Get}
     );
 
     app().registerHandler(
         "/v1/tasks/{1}",
-        [pythonClient](const HttpRequestPtr&,
-                       std::function<void(const HttpResponsePtr&)>&& callback,
-                       const std::string& taskId) {
-            pythonClient->proxyTaskStatus(taskId, std::move(callback));
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback,
+           const std::string&) {
+            callback(makeOptionsResponse(req));
         },
-        {Get}
+        {Options}
     );
 
     app().registerHandler(
         "/v1/documents",
         [documentHandler](const HttpRequestPtr& req,
                           std::function<void(const HttpResponsePtr&)>&& callback) {
-            documentHandler->uploadAndSubmit(req, std::move(callback));
+            documentHandler->uploadAndSubmit(req, makeCorsCallback(req, std::move(callback)));
         },
         {Post}
+    );
+
+    app().registerHandler(
+        "/v1/documents",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
     );
 
     app().registerHandler(
         "/v1/sessions",
         [sessionHandler](const HttpRequestPtr& req,
                          std::function<void(const HttpResponsePtr&)>&& callback) {
+            auto corsCallback = makeCorsCallback(req, std::move(callback));
             auto json = req->getJsonObject();
             if (!json) {
-                callback(makeBadRequestResponse("invalid json"));
+                corsCallback(makeBadRequestResponse("invalid json"));
                 return;
             }
-            sessionHandler->createSession(*json, std::move(callback));
+            sessionHandler->createSession(*json, std::move(corsCallback));
         },
         {Post}
+    );
+
+    app().registerHandler(
+        "/v1/sessions",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
     );
 
     app().registerHandler(
@@ -87,33 +163,53 @@ int main() {
         [chatHandler](const HttpRequestPtr& req,
                       std::function<void(const HttpResponsePtr&)>&& callback,
                       int sessionId) {
+            auto corsCallback = makeCorsCallback(req, std::move(callback));
             auto json = req->getJsonObject();
             if (!json) {
-                callback(makeBadRequestResponse("invalid json"));
+                corsCallback(makeBadRequestResponse("invalid json"));
                 return;
             }
-            chatHandler->createUserMessageAndSubmitChat(sessionId, *json, std::move(callback));
+            chatHandler->createUserMessageAndSubmitChat(sessionId, *json, std::move(corsCallback));
         },
         {Post}
     );
 
     app().registerHandler(
         "/v1/sessions/{1}/messages",
-        [sessionHandler](const HttpRequestPtr&,
+        [sessionHandler](const HttpRequestPtr& req,
                          std::function<void(const HttpResponsePtr&)>&& callback,
                          int sessionId) {
-            sessionHandler->listMessages(sessionId, std::move(callback));
+            sessionHandler->listMessages(sessionId, makeCorsCallback(req, std::move(callback)));
         },
         {Get}
+    );
+
+    app().registerHandler(
+        "/v1/sessions/{1}/messages",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback,
+           int) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
     );
 
     app().registerHandler(
         "/v1/chat/stream",
         [streamChatHandler](const HttpRequestPtr& req,
                             std::function<void(const HttpResponsePtr&)>&& callback) {
-            streamChatHandler->handleStream(req, std::move(callback));
+            streamChatHandler->handleStream(req, makeCorsCallback(req, std::move(callback)));
         },
         {Post}
+    );
+
+    app().registerHandler(
+        "/v1/chat/stream",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
     );
 
     app().loadConfigFile("config.json");

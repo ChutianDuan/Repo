@@ -13,7 +13,7 @@ type TimelineItem = {
 };
 
 const DEFAULT_API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8080";
+  import.meta.env.VITE_API_BASE_URL?.trim() || "";
 
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ROUNDS = 80;
@@ -239,7 +239,11 @@ export default function App() {
 
           <label className="field">
             <span>Gateway Base URL</span>
-            <input value={apiBaseUrl} onChange={(event) => setApiBaseUrl(event.target.value)} />
+            <input
+              value={apiBaseUrl}
+              onChange={(event) => setApiBaseUrl(event.target.value)}
+              placeholder="留空则走 Vite 代理，直连时可填 http://server-ip:8080"
+            />
           </label>
 
           <div className="field-row">
