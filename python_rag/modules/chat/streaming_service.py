@@ -2,15 +2,17 @@ import logging
 import time
 from typing import Any, Dict, Generator, List, Optional
 
-from python_rag.core.error_codes import ERR_INTERNAL_ERROR,ERR_CELERY_ERROR
+from python_rag.core.error_codes import ERR_INTERNAL_ERROR
 from python_rag.core.errors import AppError
 
-from python_rag.modules.messages.repo import get_message_by_id
+from python_rag.modules.messages.repo import (
+    get_message_by_id,
+    list_recent_messages_by_session_id,
+)
 from python_rag.modules.sessions.repo import get_session_by_id
 
 from python_rag.modules.retrieval.service import search_in_document
 from python_rag.modules.retrieval.context_assembler import assemble_context
-from python_rag.modules.retrieval.prompt_builder import build_prompt, to_messages
 
 from python_rag.modules.llm.service import LLMServiceError, generate_answer
 from python_rag.modules.llm.mock_service import build_mock_answer
@@ -20,6 +22,8 @@ from python_rag.modules.chat.stream_event_builder import (
     build_done_event,
     build_error_event,
 )
+from python_rag.modules.chat.conversation_assembler import ConversationAssembler
+from python_rag.modules.chat.prompt_templates import SYSTEM_PROMPT
 
 from python_rag.config import (
     STREAM_DELTA_CHARS,
@@ -27,6 +31,10 @@ from python_rag.config import (
     CHAT_TOP_K,
     CHAT_ENABLE_MOCK_FALLBACK,
 )
+
+from python_rag.modules.chat.stream_persistence import persist_stream_result
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +112,20 @@ def _mock_stream_answer(answer_text: str) -> Generator[str, None, None]:
             time.sleep(sleep_ms / 1000.0)
 
 
+def _build_prompt_preview(messages: List[Dict[str, str]], max_chars: int = 4000) -> str:
+    lines = []
+    for i, msg in enumerate(messages, start=1):
+        role = msg.get("role", "")
+        content = (msg.get("content") or "").replace("\n", "\\n")
+        if len(content) > 300:
+            content = content[:300] + "...(truncated)"
+        lines.append(f"[{i}] role={role} content={content}")
+    preview = "\n".join(lines)
+    if len(preview) > max_chars:
+        preview = preview[:max_chars] + "\n...(prompt preview truncated)"
+    return preview
+
+
 def stream_chat_for_message(
     session_id: int,
     doc_id: int,
@@ -129,12 +151,21 @@ def stream_chat_for_message(
         chunks, context_mode = assemble_context(raw_hits)
         chunk_dicts = _chunks_to_dicts(chunks)
 
-        prompt_result = build_prompt(
-            question=question,
-            chunks=chunks,
-            mode=context_mode,
+        # 新增：读取最近消息
+        history_messages = list_recent_messages_by_session_id(
+            session_id=session_id,
+            limit=10,
         )
-        messages = to_messages(prompt_result)
+
+        # 新增：组装多轮上下文
+        assembler = ConversationAssembler(max_rounds=3)
+        messages = assembler.build_messages(
+            system_prompt=SYSTEM_PROMPT,
+            history_messages=history_messages,
+            retrieved_chunks=chunk_dicts,
+            current_question=question,
+            current_user_message_id=user_message_id,
+        )
 
         logger.info(
             "stream chat start session_id=%s doc_id=%s user_message_id=%s retrieved_count=%s mode=%s",
@@ -143,6 +174,12 @@ def stream_chat_for_message(
             user_message_id,
             len(chunks),
             context_mode,
+        )
+        logger.info(
+            "stream chat prompt preview session_id=%s user_message_id=%s\n%s",
+            session_id,
+            user_message_id,
+            _build_prompt_preview(messages),
         )
 
         if context_mode == "no_context":
@@ -169,9 +206,19 @@ def stream_chat_for_message(
 
         for event_text in _mock_stream_answer(answer_text):
             yield event_text
+            
+        assistant_message = persist_stream_result(
+            session_id=session_id,
+            answer_text=answer_text,
+            retrieval_hits=chunk_dicts,
+            answer_source=answer_source,
+            context_mode=context_mode,
+        )
+
 
         yield build_done_event(
             {
+                "assistant_message_id": assistant_message["message_id"],
                 "answer_source": answer_source,
                 "context_mode": context_mode,
                 "retrieved_count": len(chunks),

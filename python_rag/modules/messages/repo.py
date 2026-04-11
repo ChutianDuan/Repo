@@ -36,7 +36,14 @@ def list_messages_by_session_id(session_id, limit=100):
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, session_id, role, content, status, created_at
+                SELECT
+                    id,
+                    session_id,
+                    role,
+                    content,
+                    status,
+                    created_at,
+                    updated_at
                 FROM messages
                 WHERE session_id=%s
                 ORDER BY id ASC
@@ -45,10 +52,12 @@ def list_messages_by_session_id(session_id, limit=100):
                 (session_id, limit),
             )
             rows = cursor.fetchall()
+
             result = []
             for row in rows:
                 row["message_id"] = row.pop("id")
-                row["created_at"] = _to_iso(row["created_at"]   )
+                row["created_at"] = _to_iso(row["created_at"])
+                row["updated_at"] = _to_iso(row["updated_at"])
                 result.append(row)
             return result
     finally:
@@ -93,3 +102,5 @@ def update_message_status(message_id, status):
             conn.commit()
     finally:
         conn.close()
+
+
