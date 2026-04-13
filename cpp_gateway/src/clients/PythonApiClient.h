@@ -41,6 +41,7 @@ public:
     );
 
 private:
+    drogon::HttpClientPtr makeClient() const;
+
     std::string baseUrl_;
-    drogon::HttpClientPtr client_;
 };

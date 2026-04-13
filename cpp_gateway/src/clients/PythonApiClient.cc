@@ -5,18 +5,22 @@
 using namespace drogon;
 
 PythonApiClient::PythonApiClient(const std::string& baseUrl)
-    : baseUrl_(baseUrl),
-      client_(HttpClient::newHttpClient(baseUrl)) {}
+    : baseUrl_(baseUrl) {}
+
+drogon::HttpClientPtr PythonApiClient::makeClient() const {
+    return HttpClient::newHttpClient(baseUrl_);
+}
 
 void PythonApiClient::getInternalHealth(
     std::function<void(bool ok, const std::string& body, const std::string& err)> cb
 ) const {
+    auto client = makeClient();
     auto req = HttpRequest::newHttpRequest();
     req->setMethod(Get);
     req->setPath("/internal/health");
 
-    client_->sendRequest(req,
-        [cb](ReqResult result, const HttpResponsePtr& resp) {
+    client->sendRequest(req,
+        [client, cb](ReqResult result, const HttpResponsePtr& resp) {
             if (result != ReqResult::Ok || !resp) {
                 cb(false, "", "python health request failed");
                 return;
@@ -31,12 +35,13 @@ void PythonApiClient::proxyTaskStatus(
     const std::string& taskId,
     std::function<void(const HttpResponsePtr&)>&& callback
 ) const {
+    auto client = makeClient();
     auto req = HttpRequest::newHttpRequest();
     req->setMethod(Get);
     req->setPath("/internal/tasks/" + taskId);
 
-    client_->sendRequest(req,
-        [callback = std::move(callback)](ReqResult result, const HttpResponsePtr& resp) mutable {
+    client->sendRequest(req,
+        [client, callback = std::move(callback)](ReqResult result, const HttpResponsePtr& resp) mutable {
             if (result != ReqResult::Ok || !resp) {
                 Json::Value json;
                 json["code"] = 502;
@@ -59,6 +64,7 @@ void PythonApiClient::submitIngestJob(
     long long docId,
     std::function<void(bool ok, const Json::Value& json, const std::string& err)> cb
 ) const {
+    auto client = makeClient();
     Json::Value body;
     body["doc_id"] = Json::Int64(docId);
 
@@ -66,8 +72,8 @@ void PythonApiClient::submitIngestJob(
     req->setMethod(Post);
     req->setPath("/internal/jobs/ingest");
 
-    client_->sendRequest(req,
-        [cb](ReqResult result, const HttpResponsePtr& resp) {
+    client->sendRequest(req,
+        [client, cb](ReqResult result, const HttpResponsePtr& resp) {
             if (result != ReqResult::Ok || !resp) {
                 cb(false, Json::Value(), "python ingest request failed");
                 return;
@@ -89,11 +95,12 @@ void PythonApiClient::forwardJsonPost(
     const Json::Value& body,
     std::function<void(const HttpResponsePtr&)>&& callback
 ) {
+    auto client = makeClient();
     auto req = HttpRequest::newHttpJsonRequest(body);
     req->setMethod(Post);
     req->setPath(path);
 
-    client_->sendRequest(req, [callback = std::move(callback)](
+    client->sendRequest(req, [client, callback = std::move(callback)](
         ReqResult result,
         const HttpResponsePtr& resp
     ) {
@@ -115,13 +122,14 @@ void PythonApiClient::forwardGet(
     const std::string& path,
     std::function<void(const HttpResponsePtr&)>&& callback
 ) {
+    auto client = makeClient();
     auto req = HttpRequest::newHttpRequest();
     req->setMethod(Get);
     req->setPath(path);
 
-    client_->sendRequest(
+    client->sendRequest(
         req,
-        [callback = std::move(callback)](
+        [client, callback = std::move(callback)](
             ReqResult result,
             const HttpResponsePtr& resp
         ) mutable {

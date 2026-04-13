@@ -58,6 +58,9 @@ void DocumentService::uploadAndSubmit(
     const HttpRequestPtr& req,
     std::function<void(const HttpResponsePtr&)>&& callback
 ) const {
+    auto sharedCallback =
+        std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+
     MultiPartParser parser;
     if (parser.parse(req) != 0) {
         Json::Value json;
@@ -65,7 +68,7 @@ void DocumentService::uploadAndSubmit(
         json["message"] = "invalid multipart form data";
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k400BadRequest);
-        callback(resp);
+        (*sharedCallback)(resp);
         return;
     }
 
@@ -76,7 +79,7 @@ void DocumentService::uploadAndSubmit(
         json["message"] = "exactly one file is required";
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k400BadRequest);
-        callback(resp);
+        (*sharedCallback)(resp);
         return;
     }
 
@@ -98,7 +101,7 @@ void DocumentService::uploadAndSubmit(
         json["message"] = "user_id must be positive";
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k400BadRequest);
-        callback(resp);
+        (*sharedCallback)(resp);
         return;
     }
 
@@ -110,7 +113,7 @@ void DocumentService::uploadAndSubmit(
         json["message"] = std::string("failed to create upload dir: ") + e.what();
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k500InternalServerError);
-        callback(resp);
+        (*sharedCallback)(resp);
         return;
     }
 
@@ -133,7 +136,7 @@ void DocumentService::uploadAndSubmit(
         json["message"] = std::string("failed to save file: ") + e.what();
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k500InternalServerError);
-        callback(resp);
+        (*sharedCallback)(resp);
         return;
     }
 
@@ -148,7 +151,7 @@ void DocumentService::uploadAndSubmit(
                 user_id, filename, mime, sha256, size_bytes, storage_path, status
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
         )",
-        [this, callback = std::move(callback), originalName, storagePath]
+        [this, sharedCallback, originalName]
         (const drogon::orm::Result& r) mutable {
             long long docId = 0;
             try {
@@ -159,13 +162,13 @@ void DocumentService::uploadAndSubmit(
                 json["message"] = "inserted document but failed to read doc_id";
                 auto resp = HttpResponse::newHttpJsonResponse(json);
                 resp->setStatusCode(k500InternalServerError);
-                callback(resp);
+                (*sharedCallback)(resp);
                 return;
             }
 
             pythonClient_->submitIngestJob(
                 docId,
-                [callback = std::move(callback), docId, originalName]
+                [sharedCallback, docId, originalName]
                 (bool ok, const Json::Value& pythonJson, const std::string& err) mutable {
                     if (!ok) {
                         Json::Value json;
@@ -174,7 +177,7 @@ void DocumentService::uploadAndSubmit(
                         json["doc_id"] = Json::Int64(docId);
                         auto resp = HttpResponse::newHttpJsonResponse(json);
                         resp->setStatusCode(k502BadGateway);
-                        callback(resp);
+                        (*sharedCallback)(resp);
                         return;
                     }
 
@@ -188,17 +191,17 @@ void DocumentService::uploadAndSubmit(
 
                     auto resp = HttpResponse::newHttpJsonResponse(out);
                     resp->setStatusCode(k200OK);
-                    callback(resp);
+                    (*sharedCallback)(resp);
                 }
             );
         },
-        [callback = std::move(callback)](const drogon::orm::DrogonDbException& e) mutable {
+        [sharedCallback](const drogon::orm::DrogonDbException& e) mutable {
             Json::Value json;
             json["code"] = 500;
             json["message"] = std::string("db insert document failed: ") + e.base().what();
             auto resp = HttpResponse::newHttpJsonResponse(json);
             resp->setStatusCode(k500InternalServerError);
-            callback(resp);
+            (*sharedCallback)(resp);
         },
         userId,
         originalName,
