@@ -9,7 +9,8 @@
   "app": {
     "threads_num": 4,
     "enable_session": false,
-    "document_root": "./"
+    "document_root": "./",
+    "client_max_body_size": "100M"
   },
   "db_clients": [
     {

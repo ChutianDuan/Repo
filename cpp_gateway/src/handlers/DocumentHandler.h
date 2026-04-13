@@ -19,7 +19,11 @@ private:
     std::shared_ptr<PythonApiClient> pythonClient_;
 
     static std::string sanitizeFileName(const std::string& name);
-    static std::string buildStoredFileName(const std::string& originalName);
+    static std::string buildStoredFileName(
+        long long userId,
+        const std::string& originalName,
+        const std::string& sha256
+    );
     static std::string guessMime(const drogon::HttpFile& file);
     static std::string sha256Hex(const std::string& data);
 };

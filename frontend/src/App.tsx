@@ -38,6 +38,22 @@ function formatScore(score: number): string {
   return Number.isFinite(score) ? score.toFixed(3) : "-";
 }
 
+function formatDocumentStatus(documentInfo: UploadDocumentResponse | null, ingestTask: TaskStatus | null): string {
+  if (!documentInfo) {
+    return "未上传";
+  }
+  if (!ingestTask) {
+    return "已上传";
+  }
+  if (ingestTask.state === "SUCCESS") {
+    return "已就绪";
+  }
+  if (ingestTask.state === "FAILURE") {
+    return "索引失败";
+  }
+  return "索引中";
+}
+
 export default function App() {
   const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE_URL);
   const [userId, setUserId] = useState("1");
@@ -149,6 +165,10 @@ export default function App() {
       setError("请先上传并完成索引");
       return;
     }
+    if (ingestTask?.state !== "SUCCESS") {
+      setError("文档索引尚未完成，请等待 ingest 成功");
+      return;
+    }
 
     setPending("chat");
     setError(null);
@@ -204,9 +224,13 @@ export default function App() {
     void handleHealthCheck();
   }, []);
 
+  const documentReady = ingestTask?.state === "SUCCESS";
+  const documentStatus = formatDocumentStatus(documentInfo, ingestTask);
   const nextAction = !documentInfo
     ? "先上传文档并等待索引完成。"
-    : !session
+    : !documentReady
+      ? "文档已上传，正在等待索引完成。"
+      : !session
       ? "文档已就绪，下一步创建会话。"
       : "会话和文档都已准备好，可以直接提问。";
 
@@ -326,7 +350,7 @@ export default function App() {
           <div className="info-grid">
             <article className="info-card">
               <span>Document</span>
-              <strong>{documentInfo ? `#${documentInfo.doc_id}` : "未上传"}</strong>
+              <strong>{documentInfo ? `#${documentInfo.doc_id} · ${documentStatus}` : "未上传"}</strong>
               <p>{documentInfo?.filename || "等待文件"}</p>
               <small>{formatTaskStage(ingestTask)}</small>
             </article>

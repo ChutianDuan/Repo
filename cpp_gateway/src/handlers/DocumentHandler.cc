@@ -29,10 +29,14 @@ std::string DocumentService::sanitizeFileName(const std::string& name) {
     return out;
 }
 
-std::string DocumentService::buildStoredFileName(const std::string& originalName) {
-    auto clean = sanitizeFileName(originalName);
-    auto now = std::to_string(trantor::Date::now().microSecondsSinceEpoch());
-    return now + "_" + clean;
+std::string DocumentService::buildStoredFileName(
+    long long userId,
+    const std::string& originalName,
+    const std::string& sha256
+) {
+    const auto clean = sanitizeFileName(originalName);
+    const auto ext = fs::path(clean).extension().string();
+    return std::to_string(userId) + "_" + sha256 + ext;
 }
 
 std::string DocumentService::guessMime(const HttpFile& file) {
@@ -118,7 +122,10 @@ void DocumentService::uploadAndSubmit(
     }
 
     const std::string originalName = sanitizeFileName(file.getFileName());
-    const std::string storedName = buildStoredFileName(originalName);
+    const std::string mime = guessMime(file);
+    const std::string sha256 = sha256Hex(std::string(file.fileContent()));
+    const auto sizeBytes = static_cast<long long>(file.fileContent().size());
+    const std::string storedName = buildStoredFileName(userId, originalName, sha256);
     const std::string storagePath = "./data/uploads/" + storedName;
 
     // Drogon 官方文件上传示例里是 parse 后拿 HttpFile，再保存。这里为兼容我们自定义命名，
@@ -140,16 +147,21 @@ void DocumentService::uploadAndSubmit(
         return;
     }
 
-    const std::string mime = guessMime(file);
-    const std::string sha256 = sha256Hex(std::string(file.fileContent()));
-    const auto sizeBytes = static_cast<long long>(file.fileContent().size());
-
     auto dbClient = app().getDbClient("default");
     dbClient->execSqlAsync(
         R"(
             INSERT INTO documents (
                 user_id, filename, mime, sha256, size_bytes, storage_path, status
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                id = LAST_INSERT_ID(id),
+                filename = VALUES(filename),
+                mime = VALUES(mime),
+                size_bytes = VALUES(size_bytes),
+                storage_path = VALUES(storage_path),
+                status = VALUES(status),
+                error_message = NULL,
+                updated_at = CURRENT_TIMESTAMP
         )",
         [this, sharedCallback, originalName]
         (const drogon::orm::Result& r) mutable {

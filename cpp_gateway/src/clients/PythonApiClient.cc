@@ -4,6 +4,16 @@
 
 using namespace drogon;
 
+namespace {
+HttpResponsePtr buildForwardedJsonResponse(const HttpResponsePtr& resp) {
+    auto out = HttpResponse::newHttpResponse();
+    out->setStatusCode(resp->statusCode());
+    out->setContentTypeCode(CT_APPLICATION_JSON);
+    out->setBody(std::string(resp->body()));
+    return out;
+}
+}  // namespace
+
 PythonApiClient::PythonApiClient(const std::string& baseUrl)
     : baseUrl_(baseUrl) {}
 
@@ -52,11 +62,7 @@ void PythonApiClient::proxyTaskStatus(
                 return;
             }
 
-            auto out = HttpResponse::newHttpResponse();
-            out->setStatusCode(resp->statusCode());
-            out->setContentTypeCode(CT_APPLICATION_JSON);
-            out->setBody(std::string(resp->body()));
-            callback(out);
+            callback(buildForwardedJsonResponse(resp));
         });
 }
 
@@ -104,7 +110,7 @@ void PythonApiClient::forwardJsonPost(
         ReqResult result,
         const HttpResponsePtr& resp
     ) {
-        if (result != ReqResult::Ok) {
+        if (result != ReqResult::Ok || !resp) {
             Json::Value obj(Json::objectValue);
             obj["ok"] = false;
             obj["error"] = "python service unavailable";
@@ -114,7 +120,7 @@ void PythonApiClient::forwardJsonPost(
             callback(errorResp);
             return;
         }
-        callback(resp);
+        callback(buildForwardedJsonResponse(resp));
     });
 }
 
@@ -144,11 +150,7 @@ void PythonApiClient::forwardGet(
                 return;
             }
 
-            auto out = HttpResponse::newHttpResponse();
-            out->setStatusCode(resp->statusCode());
-            out->setContentTypeCode(CT_APPLICATION_JSON);
-            out->setBody(std::string(resp->body()));
-            callback(out);
+            callback(buildForwardedJsonResponse(resp));
         }
     );
 }
