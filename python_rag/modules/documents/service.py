@@ -1,3 +1,5 @@
+import os
+
 from python_rag.modules.documents.schemas import DocumentState
 from python_rag.core.error_codes import (
     ERR_DB_ERROR,
@@ -11,11 +13,15 @@ from python_rag.modules.documents.repo import (
     create_document_record,
     get_document_by_id,
 )
+from python_rag.modules.ingest.chunking_service import validate_supported_document_filename
 from python_rag.utils.hash_utils import sha256_bytes
 
 
 def save_uploaded_document(user_id, upload_file):
+    file_path = None
     try:
+        validate_supported_document_filename(upload_file.filename or "")
+
         content = upload_file.file.read()
         if not content:
             raise AppError(ERR_INVALID_REQUEST, "empty upload file")
@@ -23,15 +29,23 @@ def save_uploaded_document(user_id, upload_file):
         file_path = build_upload_path(upload_file.filename)
         save_bytes_to_path(content, file_path)
 
-        doc_id = create_document_record(
-            user_id=user_id,
-            filename=upload_file.filename,
-            mime=upload_file.content_type or "application/octet-stream",
-            sha256=sha256_bytes(content),
-            size_bytes=len(content),
-            storage_path=file_path,
-            status=DocumentState.UPLOADED,
-        )
+        try:
+            doc_id = create_document_record(
+                user_id=user_id,
+                filename=upload_file.filename,
+                mime=upload_file.content_type or "application/octet-stream",
+                sha256=sha256_bytes(content),
+                size_bytes=len(content),
+                storage_path=file_path,
+                status=DocumentState.UPLOADED,
+            )
+        except Exception:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    logger.exception("failed to cleanup uploaded file after document insert failure")
+            raise
 
         return {
             "doc_id": doc_id,

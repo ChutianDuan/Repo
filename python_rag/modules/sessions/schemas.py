@@ -26,6 +26,10 @@ class CreateMessageRequest(BaseModel):
     status: str = Field(default="SUCCESS", max_length=32)
 
 
+class UpdateMessageStatusRequest(BaseModel):
+    status: str = Field(..., min_length=1, max_length=32)
+
+
 class CitationItem(BaseModel):
     citation_id: Optional[int] = None
     doc_id: int
@@ -49,6 +53,12 @@ class MessageItem(BaseModel):
 
 
 class CreateMessageResponse(BaseModel):
+    code: int = 0
+    message: str = "ok"
+    data: MessageItem
+
+
+class UpdateMessageStatusResponse(BaseModel):
     code: int = 0
     message: str = "ok"
     data: MessageItem

@@ -1,7 +1,20 @@
 #include "ChatHandler.h"
+
 #include <drogon/drogon.h>
 
 using namespace drogon;
+
+namespace {
+HttpResponsePtr makeGatewayErrorResponse(HttpStatusCode status, const std::string& message) {
+    Json::Value result(Json::objectValue);
+    result["code"] = static_cast<int>(status);
+    result["message"] = message;
+
+    auto resp = HttpResponse::newHttpJsonResponse(result);
+    resp->setStatusCode(status);
+    return resp;
+}
+}  // namespace
 
 ChatService::ChatService(std::shared_ptr<PythonApiClient> pythonClient)
     : pythonClient_(std::move(pythonClient)) {}
@@ -17,22 +30,33 @@ void ChatService::createUserMessageAndSubmitChat(
     //   "content": "这份文档讲了什么？",
     //   "top_k": 3
     // }
+    auto sharedCallback =
+        std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
 
     Json::Value createMessageBody;
     createMessageBody["role"] = "user";
     createMessageBody["content"] = body.get("content", "").asString();
-    createMessageBody["status"] = "SUCCESS";
+    createMessageBody["status"] = "PENDING";
 
     pythonClient_->forwardJsonPost(
         "/internal/sessions/" + std::to_string(sessionId) + "/messages",
         createMessageBody,
-        [this, callback = std::move(callback), sessionId, body](const HttpResponsePtr& msgResp) mutable {
+        [this, sharedCallback, sessionId, body](const HttpResponsePtr& msgResp) mutable {
             if (msgResp->statusCode() >= 400) {
-                callback(msgResp);
+                (*sharedCallback)(msgResp);
                 return;
             }
 
-            auto msgJson = *msgResp->getJsonObject();
+            auto msgJsonPtr = msgResp->getJsonObject();
+            if (!msgJsonPtr || !(*msgJsonPtr).isMember("data")) {
+                (*sharedCallback)(makeGatewayErrorResponse(
+                    k502BadGateway,
+                    "invalid response while creating user message"
+                ));
+                return;
+            }
+
+            auto msgJson = *msgJsonPtr;
             int userMessageId = msgJson["data"]["message_id"].asInt();
 
             Json::Value chatJobBody;
@@ -44,13 +68,44 @@ void ChatService::createUserMessageAndSubmitChat(
             pythonClient_->forwardJsonPost(
                 "/internal/jobs/chat",
                 chatJobBody,
-                [callback = std::move(callback), userMessageId](const HttpResponsePtr& chatResp) mutable {
+                [this, sharedCallback, sessionId, userMessageId](const HttpResponsePtr& chatResp) mutable {
                     if (chatResp->statusCode() >= 400) {
-                        callback(chatResp);
+                        Json::Value updateStatusBody;
+                        updateStatusBody["status"] = "FAILURE";
+
+                        pythonClient_->forwardJsonPost(
+                            "/internal/sessions/" + std::to_string(sessionId)
+                                + "/messages/" + std::to_string(userMessageId) + "/status",
+                            updateStatusBody,
+                            [sharedCallback, chatResp](const HttpResponsePtr&) mutable {
+                                (*sharedCallback)(chatResp);
+                            }
+                        );
                         return;
                     }
 
-                    auto chatJson = *chatResp->getJsonObject();
+                    auto chatJsonPtr = chatResp->getJsonObject();
+                    if (!chatJsonPtr) {
+                        Json::Value updateStatusBody;
+                        updateStatusBody["status"] = "FAILURE";
+
+                        auto errorResp = makeGatewayErrorResponse(
+                            k502BadGateway,
+                            "invalid response while submitting chat task"
+                        );
+
+                        pythonClient_->forwardJsonPost(
+                            "/internal/sessions/" + std::to_string(sessionId)
+                                + "/messages/" + std::to_string(userMessageId) + "/status",
+                            updateStatusBody,
+                            [sharedCallback, errorResp](const HttpResponsePtr&) mutable {
+                                (*sharedCallback)(errorResp);
+                            }
+                        );
+                        return;
+                    }
+
+                    auto chatJson = *chatJsonPtr;
 
                     Json::Value result;
                     result["code"] = 0;
@@ -62,7 +117,7 @@ void ChatService::createUserMessageAndSubmitChat(
                     result["data"]["status_url"] = chatJson["status_url"];
 
                     auto resp = HttpResponse::newHttpJsonResponse(result);
-                    callback(resp);
+                    (*sharedCallback)(resp);
                 }
             );
         }

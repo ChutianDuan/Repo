@@ -4,7 +4,7 @@
     "python.analysis.autoImportCompletions": true,
     "python.REPL.enableREPLSmartSend": false,
 
-    "cmake.sourceDirectory": "/home/ubuntu/Repo/cpp_gateway",
+    "cmake.sourceDirectory": "/Volumes/拯救者PSSD/Repo/cpp_gateway",
     "cmake.buildDirectory": "/home/ubuntu/Repo/cpp_gateway/build",
     "cmake.configureOnOpen": true,
     "cmake.exportCompileCommandsFile": true,

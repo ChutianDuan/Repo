@@ -3,6 +3,7 @@ import type { UploadDocumentResponse } from "../types/document";
 import type { ChatMessage } from "../types/message";
 import type { ChatSubmitData, MessageListData, Session } from "../types/session";
 import type { TaskStatus } from "../types/task";
+import type { UserItem, UserListData } from "../types/user";
 
 function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, "")}${path}`;
@@ -63,6 +64,25 @@ export function getHealth(baseUrl: string): Promise<HealthSnapshot> {
 
 export function getTaskStatus(baseUrl: string, taskId: string): Promise<TaskStatus> {
   return requestJson<TaskStatus>(baseUrl, `/v1/tasks/${taskId}`);
+}
+
+export async function createUser(baseUrl: string, name: string): Promise<UserItem> {
+  const payload = await requestJson<ApiEnvelope<UserItem>>(baseUrl, "/v1/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  return payload.data;
+}
+
+export async function listLatestUsers(baseUrl: string, limit = 5): Promise<UserItem[]> {
+  const payload = await requestJson<ApiEnvelope<UserListData>>(
+    baseUrl,
+    `/v1/users/latest?limit=${encodeURIComponent(String(limit))}`,
+  );
+
+  return payload.data.items;
 }
 
 export async function uploadDocument(

@@ -1,11 +1,21 @@
 import { FormEvent, useEffect, useState } from "react";
 
-import { createSession, getHealth, getTaskStatus, listMessages, submitChat, uploadDocument } from "./api/client";
+import {
+  createSession,
+  createUser,
+  getHealth,
+  getTaskStatus,
+  listLatestUsers,
+  listMessages,
+  submitChat,
+  uploadDocument,
+} from "./api/client";
 import type { HealthSnapshot } from "./types/api";
 import type { UploadDocumentResponse } from "./types/document";
 import type { ChatMessage } from "./types/message";
 import type { Session } from "./types/session";
 import type { TaskStatus } from "./types/task";
+import type { UserItem } from "./types/user";
 
 type TimelineItem = {
   id: number;
@@ -54,21 +64,32 @@ function formatDocumentStatus(documentInfo: UploadDocumentResponse | null, inges
   return "索引中";
 }
 
+function parsePositiveInteger(value: string, fieldName: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${fieldName} 必须是正整数`);
+  }
+  return parsed;
+}
+
 export default function App() {
   const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE_URL);
   const [userId, setUserId] = useState("1");
+  const [newUserName, setNewUserName] = useState("");
   const [sessionTitle, setSessionTitle] = useState("Demo Session");
   const [question, setQuestion] = useState("这份文档讲了什么？");
   const [topK, setTopK] = useState("3");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
+  const [latestUsers, setLatestUsers] = useState<UserItem[]>([]);
   const [session, setSession] = useState<Session | null>(null);
   const [documentInfo, setDocumentInfo] = useState<UploadDocumentResponse | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [ingestTask, setIngestTask] = useState<TaskStatus | null>(null);
   const [chatTask, setChatTask] = useState<TaskStatus | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
 
@@ -97,6 +118,25 @@ export default function App() {
     throw new Error("轮询超时，请检查后端任务队列是否正常");
   }
 
+  async function refreshUsers(silent = false) {
+    setUsersLoading(true);
+    try {
+      const nextUsers = await listLatestUsers(apiBaseUrl, 6);
+      setLatestUsers(nextUsers);
+      if (!silent) {
+        appendTimeline(`最近用户已刷新，共 ${nextUsers.length} 条`);
+      }
+    } catch (nextError) {
+      if (!silent) {
+        const message = nextError instanceof Error ? nextError.message : "刷新用户失败";
+        setError(message);
+        appendTimeline(`刷新用户失败：${message}`);
+      }
+    } finally {
+      setUsersLoading(false);
+    }
+  }
+
   async function handleHealthCheck() {
     setPending("health");
     setError(null);
@@ -113,10 +153,44 @@ export default function App() {
     }
   }
 
+  async function handleCreateUser() {
+    const trimmedName = newUserName.trim();
+    if (!trimmedName) {
+      setError("请输入用户名");
+      return;
+    }
+
+    setPending("user");
+    setError(null);
+    try {
+      const createdUser = await createUser(apiBaseUrl, trimmedName);
+      setUserId(String(createdUser.id));
+      setNewUserName("");
+      setLatestUsers((current) => [createdUser, ...current.filter((item) => item.id !== createdUser.id)].slice(0, 6));
+      appendTimeline(`已创建用户：user_id=${createdUser.id}，name=${createdUser.name}`);
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : "创建用户失败";
+      setError(message);
+      appendTimeline(`创建用户失败：${message}`);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  function handleSelectUser(user: UserItem) {
+    setUserId(String(user.id));
+    appendTimeline(`已切换用户：user_id=${user.id}，name=${user.name}`);
+  }
+
   async function handleUpload(event: FormEvent) {
     event.preventDefault();
     if (!selectedFile) {
       setError("请先选择文件");
+      return;
+    }
+
+    if (!/\.(md|txt|json|csv|pdf|docx)$/i.test(selectedFile.name)) {
+      setError("当前仅支持 .md、.txt、.json、.csv、.pdf、.docx 文件");
       return;
     }
 
@@ -125,7 +199,8 @@ export default function App() {
     setIngestTask(null);
 
     try {
-      const uploadResult = await uploadDocument(apiBaseUrl, Number(userId), selectedFile);
+      const parsedUserId = parsePositiveInteger(userId, "User ID");
+      const uploadResult = await uploadDocument(apiBaseUrl, parsedUserId, selectedFile);
       setDocumentInfo(uploadResult);
       appendTimeline(`文档已上传：doc_id=${uploadResult.doc_id}，开始轮询 ingest 任务`);
 
@@ -144,7 +219,8 @@ export default function App() {
     setPending("session");
     setError(null);
     try {
-      const nextSession = await createSession(apiBaseUrl, Number(userId), sessionTitle.trim() || "Demo Session");
+      const parsedUserId = parsePositiveInteger(userId, "User ID");
+      const nextSession = await createSession(apiBaseUrl, parsedUserId, sessionTitle.trim() || "Demo Session");
       setSession(nextSession);
       appendTimeline(`已创建会话：session_id=${nextSession.session_id}`);
     } catch (nextError) {
@@ -175,12 +251,13 @@ export default function App() {
     setChatTask(null);
 
     try {
+      const parsedTopK = parsePositiveInteger(topK, "Top K");
       const submitted = await submitChat(
         apiBaseUrl,
         session.session_id,
         documentInfo.doc_id,
         question.trim(),
-        Number(topK),
+        parsedTopK,
       );
       appendTimeline(`问题已提交：message_id=${submitted.message_id}，开始轮询 chat 任务`);
 
@@ -222,6 +299,7 @@ export default function App() {
 
   useEffect(() => {
     void handleHealthCheck();
+    void refreshUsers(true);
   }, []);
 
   const documentReady = ingestTask?.state === "SUCCESS";
@@ -270,9 +348,58 @@ export default function App() {
             />
           </label>
 
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleCreateUser();
+            }}
+          >
+            <div className="panel-head panel-head-compact">
+              <h3>用户</h3>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => void refreshUsers()}
+                disabled={pending !== null || usersLoading}
+              >
+                {usersLoading ? "刷新中..." : "刷新用户"}
+              </button>
+            </div>
+            <label className="field">
+              <span>新用户名称</span>
+              <input
+                value={newUserName}
+                onChange={(event) => setNewUserName(event.target.value)}
+                placeholder="例如 demo_user_01"
+              />
+            </label>
+            <button type="submit" disabled={pending !== null}>
+              {pending === "user" ? "创建中..." : "创建用户"}
+            </button>
+            {latestUsers.length === 0 ? (
+              <p className="muted">暂无最近用户，先创建一个。</p>
+            ) : (
+              <div className="user-chip-list">
+                {latestUsers.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`user-chip ${userId === String(item.id) ? "user-chip-active" : ""}`}
+                    onClick={() => handleSelectUser(item)}
+                    disabled={pending !== null}
+                  >
+                    <strong>{item.name}</strong>
+                    <span>#{item.id}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </form>
+
           <div className="field-row">
             <label className="field">
-              <span>User ID</span>
+              <span>当前 User ID</span>
               <input value={userId} onChange={(event) => setUserId(event.target.value)} />
             </label>
             <label className="field">
@@ -286,10 +413,13 @@ export default function App() {
               <span>选择演示文档</span>
               <input
                 type="file"
-                accept=".md,.txt,.json,.pdf"
+                accept=".md,.txt,.json,.csv,.pdf,.docx"
                 onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
               />
             </label>
+            <small className="field-hint">
+              当前支持 `.md`、`.txt`、`.json`、`.csv`、`.pdf`、`.docx`。PDF 仅支持可提取文本的电子版，扫描件暂不支持 OCR。
+            </small>
             <button type="submit" disabled={pending !== null}>
               {pending === "upload" ? "上传并轮询中..." : "1. 上传并建立索引"}
             </button>

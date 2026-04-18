@@ -1,3 +1,5 @@
+import uuid
+
 from celery.result import AsyncResult
 
 from python_rag.core.error_codes import ERR_CELERY_ERROR, ERR_DB_ERROR,TaskState
@@ -6,7 +8,7 @@ from python_rag.core.logger import logger
 
 from python_rag.modules.tasks.repo import (
     create_task_record, get_task_by_celery_id,
-    list_task_records,list_task_records_by_entity,)
+    list_task_records,list_task_records_by_entity, update_task_record,)
 
 from python_rag.modules.tasks.celery_app import celery_app
 from python_rag.modules.tasks.worker_tasks.ping_task import ping_task
@@ -40,10 +42,10 @@ def submit_ping_job(seconds):
 
 def submit_ingest_job(doc_id):
     try:
-        async_result = ingest_task.delay(doc_id=doc_id)
+        celery_task_id = str(uuid.uuid4())
 
         db_task_id = create_task_record(
-            celery_task_id=async_result.id,
+            celery_task_id=celery_task_id,
             task_type="ingest_document",
             entity_type="document",
             entity_id=doc_id,
@@ -52,11 +54,29 @@ def submit_ingest_job(doc_id):
             meta={"doc_id": doc_id},
         )
 
+        try:
+            ingest_task.apply_async(
+                kwargs={"doc_id": doc_id},
+                task_id=celery_task_id,
+            )
+        except Exception as exc:
+            update_task_record(
+                celery_task_id=celery_task_id,
+                state=TaskState.FAILURE,
+                progress=100,
+                meta={
+                    "stage": "queue_failed",
+                    "doc_id": doc_id,
+                },
+                error=str(exc),
+            )
+            raise
+
         return {
             "db_task_id": db_task_id,
-            "task_id": async_result.id,
+            "task_id": celery_task_id,
             "state": TaskState.PENDING,
-            "status_url": "/internal/tasks/{0}".format(async_result.id),
+            "status_url": "/internal/tasks/{0}".format(celery_task_id),
         }
     except Exception as e:
         logger.exception("submit_ingest_job failed")

@@ -1,3 +1,5 @@
+import uuid
+
 from python_rag.core.error_codes import (
     ERR_INVALID_REQUEST,
     ERR_MESSAGE_NOT_FOUND,
@@ -8,7 +10,7 @@ from python_rag.core.errors import AppError
 
 from python_rag.modules.sessions.repo import get_session_by_id
 from python_rag.modules.messages.repo import get_message_by_id
-from python_rag.modules.tasks.repo import create_task_record
+from python_rag.modules.tasks.repo import create_task_record, update_task_record
 from python_rag.modules.tasks.worker_tasks.chat_task import chat_task
 
 
@@ -27,15 +29,10 @@ def submit_chat_job(session_id, doc_id, user_message_id, top_k=3):
     if user_msg["role"] != "user":
         raise AppError(ERR_INVALID_REQUEST, "message role must be user")
 
-    async_result = chat_task.delay(
-        session_id=session_id,
-        doc_id=doc_id,
-        user_message_id=user_message_id,
-        top_k=top_k,
-    )
+    celery_task_id = str(uuid.uuid4())
 
     db_task_id = create_task_record(
-        celery_task_id=async_result.id,
+        celery_task_id=celery_task_id,
         task_type="chat_generate",
         entity_type="session",
         entity_id=session_id,
@@ -49,9 +46,34 @@ def submit_chat_job(session_id, doc_id, user_message_id, top_k=3):
         },
     )
 
+    try:
+        chat_task.apply_async(
+            kwargs={
+                "session_id": session_id,
+                "doc_id": doc_id,
+                "user_message_id": user_message_id,
+                "top_k": top_k,
+            },
+            task_id=celery_task_id,
+        )
+    except Exception as exc:
+        update_task_record(
+            celery_task_id=celery_task_id,
+            state=TaskState.FAILURE,
+            progress=100,
+            meta={
+                "stage": "queue_failed",
+                "session_id": session_id,
+                "doc_id": doc_id,
+                "user_message_id": user_message_id,
+            },
+            error=str(exc),
+        )
+        raise
+
     return {
         "db_task_id": db_task_id,
-        "task_id": async_result.id,
+        "task_id": celery_task_id,
         "state": TaskState.PENDING,
-        "status_url": f"/internal/tasks/{async_result.id}",
+        "status_url": f"/internal/tasks/{celery_task_id}",
     }

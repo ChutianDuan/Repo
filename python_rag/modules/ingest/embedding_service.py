@@ -1,7 +1,10 @@
+from typing import List
+
 import numpy as np
 import torch
-from sentence_transformers import SentenceTransformer
-from typing import List
+
+from python_rag.core.error_codes import ERR_INTERNAL_ERROR
+from python_rag.core.errors import AppError
 
 
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -13,7 +16,23 @@ _model = None
 def get_model():
     global _model
     if _model is None:
-        _model = SentenceTransformer(MODEL_NAME, device=DEVICE)
+        try:
+            from sentence_transformers import SentenceTransformer
+        except Exception as exc:
+            raise AppError(
+                ERR_INTERNAL_ERROR,
+                f"embedding dependencies are not available: {exc}",
+                http_status=500,
+            ) from exc
+
+        try:
+            _model = SentenceTransformer(MODEL_NAME, device=DEVICE)
+        except Exception as exc:
+            raise AppError(
+                ERR_INTERNAL_ERROR,
+                f"failed to initialize embedding model '{MODEL_NAME}': {exc}",
+                http_status=500,
+            ) from exc
     return _model
 
 

@@ -15,6 +15,10 @@ from python_rag.modules.documents.repo import (
 
 from python_rag.modules.tasks.repo import update_task_record
 from python_rag.modules.ingest.embedding_service import embed_documents, MODEL_NAME
+from python_rag.modules.ingest.chunking_service import (
+    extract_text_from_document,
+    validate_supported_document_filename,
+)
 from python_rag.modules.retrieval.faiss_service import build_doc_faiss_index
 from python_rag.utils.text_chunker import simple_chunk_text
 
@@ -40,32 +44,6 @@ def _emit_progress(celery_task_id, state, progress, meta, progress_callback=None
             logger.exception("progress_callback failed")
 
 
-def _read_text_file(path):
-    if not os.path.exists(path):
-        raise AppError(ERR_CELERY_ERROR, "document file does not exist")
-
-    with open(path, "rb") as f:
-        raw = f.read()
-
-    if not raw:
-        return ""
-
-    encodings = [
-        "utf-8",
-        "utf-8-sig",
-        "gb18030",
-        "gbk",
-    ]
-
-    for enc in encodings:
-        try:
-            return raw.decode(enc)
-        except Exception:
-            pass
-
-    return raw.decode("utf-8", errors="ignore")
-
-
 def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
     """
     Day 2 ingest 逻辑：
@@ -83,6 +61,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             raise AppError(ERR_CELERY_ERROR, "document not found")
 
         update_document_status(doc_id, DocumentState.INGESTING, None)
+        validate_supported_document_filename(doc.get("filename") or "")
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.STARTED,
@@ -95,7 +74,10 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             progress_callback=progress_callback,
         )
 
-        text = _read_text_file(doc["storage_path"])
+        text = extract_text_from_document(
+            path=doc["storage_path"],
+            filename=doc.get("filename") or "",
+        )
         if not text or not text.strip():
             raise AppError(ERR_CELERY_ERROR, "document text is empty")
 

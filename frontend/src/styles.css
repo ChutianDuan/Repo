@@ -180,6 +180,10 @@ textarea {
   margin-bottom: 18px;
 }
 
+.panel-head-compact {
+  margin-bottom: 0;
+}
+
 .panel-head p {
   margin: 0;
   color: var(--ink-soft);
@@ -199,6 +203,11 @@ textarea {
 .field span {
   font-size: 0.88rem;
   color: var(--ink-soft);
+}
+
+.field-hint {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
 }
 
 .field-row,
@@ -308,6 +317,40 @@ textarea {
 .citation-card span {
   margin-top: 4px;
   color: var(--ink-soft);
+}
+
+.user-chip-list {
+  display: grid;
+  gap: 10px;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0.9rem 1rem;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.72);
+  color: #1d1e1f;
+  box-shadow: none;
+  text-align: left;
+}
+
+.user-chip strong,
+.user-chip span {
+  display: block;
+}
+
+.user-chip span {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+}
+
+.user-chip-active {
+  border-color: rgba(217, 107, 33, 0.45);
+  background: rgba(217, 107, 33, 0.12);
 }
 
 .role-user {

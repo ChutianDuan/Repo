@@ -11,4 +11,11 @@ if [ -f .env ]; then
 fi
 
 export PYTHONPATH="$REPO_ROOT"
-celery -A python_rag.modules.tasks.celery_app worker -l INFO
+
+CELERY_POOL="${CELERY_POOL:-threads}"
+CELERY_CONCURRENCY="${CELERY_CONCURRENCY:-4}"
+
+celery -A python_rag.modules.tasks.celery_app worker \
+  -l INFO \
+  --pool "${CELERY_POOL}" \
+  --concurrency "${CELERY_CONCURRENCY}"

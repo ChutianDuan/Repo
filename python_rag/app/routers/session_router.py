@@ -7,11 +7,14 @@ from python_rag.modules.sessions.schemas import (
     CreateMessageRequest,
     CreateMessageResponse,
     ListMessagesResponse,
+    UpdateMessageStatusRequest,
+    UpdateMessageStatusResponse,
 )
 from python_rag.modules.sessions.service import (
     create_session_service,
     create_message_service,
     list_messages_service,
+    update_session_message_status_service,
 )
 
 router = APIRouter(prefix="/internal/sessions", tags=["sessions"])
@@ -54,3 +57,20 @@ def list_session_messages(session_id: int, limit: int = Query(100, ge=1, le=500)
         return {"code": 0, "message": "ok", "data": data}
     except AppError as e:
         raise HTTPException(status_code=404, detail={"code": e.code, "message": e.message})
+
+
+@router.post("/{session_id}/messages/{message_id}/status", response_model=UpdateMessageStatusResponse)
+def update_session_message_status(
+    session_id: int,
+    message_id: int,
+    req: UpdateMessageStatusRequest,
+):
+    try:
+        data = update_session_message_status_service(
+            session_id=session_id,
+            message_id=message_id,
+            status=req.status,
+        )
+        return {"code": 0, "message": "ok", "data": data}
+    except AppError as e:
+        raise HTTPException(status_code=400, detail={"code": e.code, "message": e.message})

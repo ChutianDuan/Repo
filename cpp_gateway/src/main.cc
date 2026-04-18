@@ -135,6 +135,53 @@ int main() {
     );
 
     app().registerHandler(
+        "/v1/users",
+        [pythonClient](const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback) {
+            auto corsCallback = makeCorsCallback(req, std::move(callback));
+            auto json = req->getJsonObject();
+            if (!json) {
+                corsCallback(makeBadRequestResponse("invalid json"));
+                return;
+            }
+            pythonClient->forwardJsonPost("/internal/users", *json, std::move(corsCallback));
+        },
+        {Post}
+    );
+
+    app().registerHandler(
+        "/v1/users",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
+    );
+
+    app().registerHandler(
+        "/v1/users/latest",
+        [pythonClient](const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string path = "/internal/users/latest";
+            const auto limit = req->getParameter("limit");
+            if (!limit.empty()) {
+                path += "?limit=" + limit;
+            }
+            pythonClient->forwardGet(path, makeCorsCallback(req, std::move(callback)));
+        },
+        {Get}
+    );
+
+    app().registerHandler(
+        "/v1/users/latest",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
+    );
+
+    app().registerHandler(
         "/v1/sessions",
         [sessionHandler](const HttpRequestPtr& req,
                          std::function<void(const HttpResponsePtr&)>&& callback) {
