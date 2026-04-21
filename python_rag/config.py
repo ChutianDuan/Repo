@@ -4,6 +4,15 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _resolve_repo_path(path_value: str) -> str:
+    if os.path.isabs(path_value):
+        return path_value
+    return os.path.abspath(os.path.join(REPO_ROOT, path_value))
+
+
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "ai_app")
@@ -18,8 +27,8 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("APP_PORT", "8000"))
 
-STORAGE_ROOT = os.getenv("STORAGE_ROOT", "./data")
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./data/uploads")
+STORAGE_ROOT = _resolve_repo_path(os.getenv("STORAGE_ROOT", "./data"))
+UPLOAD_DIR = _resolve_repo_path(os.getenv("UPLOAD_DIR", "./data/uploads"))
 INGEST_CHUNK_SIZE = int(os.getenv("INGEST_CHUNK_SIZE", "800"))
 INGEST_CHUNK_OVERLAP = int(os.getenv("INGEST_CHUNK_OVERLAP", "100"))
 

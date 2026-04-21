@@ -1,6 +1,7 @@
 import os
 import uuid
-from python_rag.config import STORAGE_ROOT, UPLOAD_DIR
+
+from python_rag.config import REPO_ROOT, STORAGE_ROOT, UPLOAD_DIR
 
 
 def ensure_storage_dirs():
@@ -20,3 +21,24 @@ def save_bytes_to_path(content, path):
     os.makedirs(parent, exist_ok=True)
     with open(path, "wb") as f:
         f.write(content)
+
+
+def resolve_storage_path(path):
+    if not path:
+        return path
+
+    if os.path.isabs(path):
+        return path
+
+    normalized_path = os.path.normpath(path)
+    candidate_roots = (
+        REPO_ROOT,
+        os.path.join(REPO_ROOT, "cpp_gateway"),
+    )
+
+    for root in candidate_roots:
+        candidate = os.path.abspath(os.path.join(root, normalized_path))
+        if os.path.exists(candidate):
+            return candidate
+
+    return os.path.abspath(os.path.join(REPO_ROOT, normalized_path))

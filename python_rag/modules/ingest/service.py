@@ -15,6 +15,7 @@ from python_rag.modules.documents.repo import (
 )
 
 from python_rag.modules.tasks.repo import update_task_record
+from python_rag.infra.storage import resolve_storage_path
 from python_rag.modules.ingest.embedding_service import (
     embed_documents,
     get_embedding_model_name,
@@ -80,7 +81,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         )
 
         text = extract_text_from_document(
-            path=doc["storage_path"],
+            path=resolve_storage_path(doc["storage_path"]),
             filename=doc.get("filename") or "",
         )
         if not text or not text.strip():

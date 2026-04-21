@@ -1,5 +1,6 @@
 #include "DocumentHandler.h"
 
+#include <cstdlib>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -48,6 +49,27 @@ std::string buildUniqueSuffix() {
     std::ostringstream oss;
     oss << std::hex << now << dist(gen);
     return oss.str();
+}
+
+fs::path getRepoRoot() {
+    if (const char* envRepoRoot = std::getenv("REPO_ROOT"); envRepoRoot && envRepoRoot[0] != '\0') {
+        return fs::path(envRepoRoot);
+    }
+
+    return fs::current_path().parent_path();
+}
+
+fs::path getUploadDir() {
+    const char* envUploadDir = std::getenv("UPLOAD_DIR");
+    fs::path uploadDir = (envUploadDir && envUploadDir[0] != '\0')
+        ? fs::path(envUploadDir)
+        : fs::path("./data/uploads");
+
+    if (uploadDir.is_relative()) {
+        uploadDir = getRepoRoot() / uploadDir;
+    }
+
+    return uploadDir.lexically_normal();
 }
 
 void tryDeleteFile(const std::string& storagePath) {
@@ -161,7 +183,7 @@ void DocumentService::uploadAndSubmit(
     }
 
     try {
-        fs::create_directories("./data/uploads");
+        fs::create_directories(getUploadDir());
     } catch (const std::exception& e) {
         Json::Value json;
         json["code"] = 500;
@@ -188,7 +210,7 @@ void DocumentService::uploadAndSubmit(
     const std::string sha256 = sha256Hex(std::string(file.fileContent()));
     const auto sizeBytes = static_cast<long long>(file.fileContent().size());
     const std::string storedName = buildStoredFileName(userId, originalName, sha256);
-    const std::string storagePath = "./data/uploads/" + storedName;
+    const std::string storagePath = (getUploadDir() / storedName).string();
 
     // Drogon 官方文件上传示例里是 parse 后拿 HttpFile，再保存。这里为兼容我们自定义命名，
     // 直接把 file.fileContent() 写到目标路径。multipart 解析流程本身来自官方示例和 wiki。 :contentReference[oaicite:3]{index=3}
