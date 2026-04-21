@@ -19,3 +19,18 @@ export interface DocumentDetail {
   created_at?: string | null;
   updated_at?: string | null;
 }
+
+export type DocumentStatus = "UPLOADED" | "PROCESSING" | "READY" | "FAILED";
+
+export interface DocumentListItem {
+  doc_id: number;
+  filename: string;
+  status: DocumentStatus;
+  chunks: number | null;
+  vectorized: boolean;
+  created_at: string;
+  updated_at?: string | null;
+  task_id?: string;
+  progress?: number;
+  error?: string | null;
+}

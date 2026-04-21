@@ -9,6 +9,7 @@ celery>=5.4,<6
 requests>=2.32,<3
 pypdf>=4,<6
 python-docx>=1.1,<2
+psutil>=5.9,<7
 numpy==1.26.4
 scipy==1.13.1
 scikit-learn==1.5.1

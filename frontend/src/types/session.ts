@@ -19,3 +19,11 @@ export interface ChatSubmitData {
   state: string;
   status_url: string;
 }
+
+export interface SessionSummary {
+  session_id: number;
+  title: string;
+  updated_at?: string | null;
+  message_count: number;
+  status?: "active" | "idle";
+}

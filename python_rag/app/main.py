@@ -14,6 +14,7 @@ from python_rag.app.routers.retrieval_router import router as retrieval_router
 from python_rag.app.routers.session_router import router as session_router
 from python_rag.app.routers.chat_router import router as chat_router
 from python_rag.app.routers.chat_stream_router import router as chat_stream_router
+from python_rag.app.routers.monitor_router import router as monitor_router
 
 app = FastAPI(
     title="Python RAG",
@@ -32,3 +33,4 @@ app.include_router(users_router)
 app.include_router(retrieval_router)
 app.include_router(session_router)
 app.include_router(chat_stream_router)
+app.include_router(monitor_router)

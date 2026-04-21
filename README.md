@@ -1,175 +1,106 @@
 # RAG Gateway Stack
 
-一个面向文档问答场景的分层式 RAG 项目骨架，当前由前端、C++ 网关、FastAPI 内部服务、Celery 异步任务系统组成。
+一个面向文档检索与问答的分层式 RAG 工程。当前由 `React 前端`、`C++ Gateway`、`FastAPI 内部服务`、`Celery Worker`、`MySQL`、`Redis` 和 `FAISS` 组成。
 
-这个仓库的目标不是只做一个“能跑的 demo 页面”，而是把接口层、业务层、异步计算层拆开，为后续性能优化、接入鉴权、任务调度和文档类型扩展留出清晰边界。
+项目重点不是单页 demo，而是把外部入口、业务服务、异步任务、数据库和检索链路拆开，方便后续扩展鉴权、限流、任务调度、监控和多文档知识库。
 
-## 项目定位
-
-- `frontend` 负责交互展示和调用公开 API，便于快速验证上传、索引、会话和问答流程。
-- `cpp_gateway` 作为统一对外入口，负责承接浏览器请求、聚合内部服务，并为后续接入鉴权、限流、审计和高性能接口治理预留位置。
-- `python_rag` 负责文档管理、切片、向量化、检索、Prompt 组织、任务管理和聊天链路，是当前迭代速度最快的业务实现层。
-- `celery worker` 把 ingest/chat 等耗时任务从 API 请求线程中剥离，避免上传、向量化和生成回答时阻塞主服务。
-
-## 为什么这样分层
-
-### 前端
-
-前端基于 `Vite + React + TypeScript`，定位为控制台式演示界面，直接串联健康检查、用户创建、文档上传、任务轮询、会话创建和消息回放，方便做端到端联调。
-
-### C++ 网关
-
-网关使用 C++ 的核心原因有两点：
-
-- 对外接口层更适合承载高并发和高性能场景，后续可以在这里集中做连接管理、协议转换、限流和统一错误收敛。
-- 鉴权、签名校验、访问控制、审计日志这类“入口能力”放在网关层更自然，后续扩展成本更低。
-
-当前网关已承担：
-
-- 对外暴露 `/health`、`/v1/*` 接口
-- 文件上传接入
-- 转发 Python 内部接口
-- SSE 流式接口代理
-- 浏览器跨域支持
-
-### FastAPI 内部服务
-
-FastAPI 负责快速开发业务逻辑，适合当前阶段高频迭代。文档上传、RAG 检索、会话消息、任务状态、内部健康检查都集中在这里实现。
-
-选择 FastAPI 的原因很直接：
-
-- 开发效率高，适合快速验证和演进业务
-- 数据模型和接口定义清晰
-- 易于和 Celery、Redis、MySQL、向量检索链路组合
-
-### Celery Worker
-
-Celery 用于承接 ingest 与 chat 等耗时任务，避免主 API 被切片、embedding、FAISS 构建和回答生成拖慢。
-
-当前启动脚本默认提供可配置线程池模式：
-
-- `CELERY_POOL=threads`
-- `CELERY_CONCURRENCY=4`
-
-这样可以把上传后的索引任务、聊天任务从请求链路中拆出去，减轻接口阻塞风险。实际部署时也可以根据机器和模型负载切换为 `prefork` 或其它池模型。
-
-## 系统架构
+## 架构概览
 
 ```text
 Browser / Frontend
         |
         v
-  C++ Gateway (public API, upload, stream proxy, future auth)
+C++ Gateway  : public API, upload, CORS, stream proxy, future auth/rate limit
         |
-        +---------------------> FastAPI (internal domain APIs)
-                                   |
-                                   +--> MySQL
-                                   +--> Redis
-                                   +--> Celery Worker
-                                           |
-                                           +--> chunking / embedding / FAISS / chat
+        v
+FastAPI      : internal business APIs, RAG orchestration
+        |
+        +--> MySQL       : users, documents, chunks, sessions, messages, citations, tasks
+        +--> Redis       : Celery broker/result backend, lightweight health cache
+        +--> Celery      : ingest/chat async jobs
+        +--> FAISS       : per-document vector index
+        +--> LLM/vLLM    : OpenAI-compatible generation endpoint
 ```
-
-## 主要能力
-
-- 文档上传与落盘
-- 多类型文档抽取：`md/txt/json/csv/pdf/docx`
-- 文档切片与向量化
-- FAISS 文档级索引构建
-- 会话与消息管理
-- 基于检索结果的回答生成
-- 引用片段 `citations` 返回
-- 任务状态轮询
-- SSE 流式回答代理
 
 ## 目录结构
 
 ```text
 Repo/
-├── cpp_gateway/          # Drogon C++ 网关
-├── db/                   # MySQL 初始化与升级脚本
-├── frontend/             # React + TypeScript 前端
+├── cpp_gateway/          # Drogon C++ 对外网关
+├── db/                   # MySQL 初始化脚本与增量升级脚本
+├── frontend/             # Vite + React + TypeScript 前端工作台
 ├── python_rag/           # FastAPI + Celery + RAG 业务实现
-├── scripts/              # 本地启动与 e2e 脚本
-├── .env.example          # Python / Celery 环境变量示例
+├── scripts/              # 数据库、API、worker、vLLM、E2E 启动脚本
+├── data/                 # 上传文件与索引数据目录
+├── .env.example          # 后端环境变量示例
 └── README.md
 ```
 
-## 请求流转
+## 后端重点
 
-### 文档上传与索引
+### 后端组件分工
 
-1. 前端上传文件到 `cpp_gateway`
-2. 网关写入 `documents` 并调用 Python 内部 ingest 接口
-3. Celery worker 读取文档、切片、生成 embedding、构建 FAISS 索引
-4. 任务状态写回 `tasks`，前端轮询获取进度
+| 组件 | 责任 |
+| --- | --- |
+| `cpp_gateway` | 对外暴露 `/health` 和 `/v1/*`，处理文件上传、CORS、SSE 代理，后续适合放鉴权、限流、审计。 |
+| `python_rag` | 内部业务服务，负责用户、文档、任务、会话、检索、Prompt、LLM 调用和监控概览。 |
+| `celery worker` | 执行耗时任务，包括文档 ingest、embedding、FAISS 构建和异步 chat。 |
+| `MySQL` | 持久化业务数据和任务状态。 |
+| `Redis` | Celery broker/result backend，同时用于健康检查轻量写入。 |
 
-### 问答流程
+### 数据库初始化
 
-1. 前端创建 session
-2. 前端提交用户问题到网关
-3. 网关创建 user message，并提交 chat 任务
-4. Python 检索文档片段、组装 prompt、调用 LLM 或 mock fallback
-5. assistant message 与 citations 落库
-6. 前端刷新消息列表查看回答与引用
+推荐统一使用脚本：
 
-## 对外接口
+```bash
+bash scripts/init_db.sh
+```
 
-网关当前对前端开放的核心接口：
+脚本行为：
 
-- `GET /health`
-- `POST /v1/users`
-- `GET /v1/users/latest`
-- `POST /v1/documents`
-- `POST /v1/sessions`
-- `POST /v1/sessions/{session_id}/messages`
-- `GET /v1/sessions/{session_id}/messages`
-- `GET /v1/tasks/{task_id}`
-- `POST /v1/chat/stream`
+- 读取根目录 `.env`
+- 使用 `MYSQL_DATABASE` 创建数据库
+- 执行 `db/init.sql`
+- 按文件名字典序执行 `db/*_schema_upgrade.sql`
+- 最后输出当前数据库表列表
 
-Python 内部接口：
+如果 `MYSQL_USER` 还不存在，或业务用户没有建库权限，请在 `.env` 中加 admin 账号：
 
-- `GET /internal/health`
-- `POST /internal/documents/upload`
-- `GET /internal/documents/{doc_id}`
-- `POST /internal/jobs/ingest`
-- `POST /internal/jobs/chat`
-- `GET /internal/tasks/{task_id}`
-- `POST /internal/sessions`
-- `POST /internal/sessions/{session_id}/messages`
-- `POST /internal/sessions/{session_id}/messages/{message_id}/status`
-- `GET /internal/sessions/{session_id}/messages`
-- `POST /internal/chat/stream`
-- `POST /internal/search`
+```bash
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DATABASE=ai_app
+MYSQL_USER=ai_user
+MYSQL_PASSWORD=ai_password
 
-## 数据层
+MYSQL_ADMIN_USER=root
+MYSQL_ADMIN_PASSWORD=your_root_password
+```
 
-当前核心表：
+如果已经手工创建了业务用户，并且该用户有目标库权限，可以不配置 `MYSQL_ADMIN_USER`。
 
-- `user_account`
-- `documents`
-- `doc_chunks`
-- `document_indexes`
-- `sessions`
-- `messages`
-- `citations`
-- `tasks`
+核心表：
 
-建库与升级脚本：
+| 表 | 用途 |
+| --- | --- |
+| `user_account` | 用户基础信息。 |
+| `documents` | 上传文档元数据、落盘路径、处理状态。 |
+| `doc_chunks` | 文档切片内容和 chunk 顺序。 |
+| `document_indexes` | FAISS 索引路径、embedding 模型、维度和 chunk 数。 |
+| `sessions` | 问答会话。 |
+| `messages` | 用户/助手消息和 meta_json。 |
+| `citations` | 回答引用的 chunk、分数和片段。 |
+| `tasks` | Celery 任务状态、进度、错误和阶段 meta。 |
 
-- 初始化：`db/init.sql`
-- 增量升级：`db/001_schema_upgrade.sql`
+### 后端环境变量
 
-## 本地启动
-
-### 1. 准备环境变量
+复制示例文件：
 
 ```bash
 cp .env.example .env
-cp frontend/.env.example frontend/.env
 ```
 
-根目录 `.env` 主要用于 Python API 和 Celery：
+最小必填项通常是：
 
 ```bash
 MYSQL_HOST=127.0.0.1
@@ -184,20 +115,29 @@ REDIS_DB=0
 
 CELERY_BROKER_URL=redis://127.0.0.1:6379/1
 CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2
-CELERY_POOL=threads
-CELERY_CONCURRENCY=4
+
+APP_HOST=0.0.0.0
+APP_PORT=8000
+
+STORAGE_ROOT=./data
+UPLOAD_DIR=./data/uploads
+INGEST_CHUNK_SIZE=800
+INGEST_CHUNK_OVERLAP=100
+
+EMBEDDING_PROVIDER=sentence_transformers
+EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+EMBEDDING_DEVICE=auto
+
+LLM_ENABLE=true
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=http://127.0.0.1:9000/v1
+LLM_MODEL=local-llm
+CHAT_ENABLE_MOCK_FALLBACK=true
 ```
 
-前端开发环境变量：
+注意：`cpp_gateway/config.json` 目前仍独立配置 MySQL / Redis / 监听端口。根目录 `.env` 会被 `cpp_gateway/scripts/start_gateway.sh` 读取，但 Drogon 的数据库连接仍以 `cpp_gateway/config.json` 为准。
 
-```bash
-VITE_API_BASE_URL=
-VITE_PROXY_TARGET=http://127.0.0.1:8080
-```
-
-### 2. 安装依赖
-
-Python:
+### Python 依赖
 
 ```bash
 python3 -m venv .venv
@@ -205,110 +145,187 @@ source .venv/bin/activate
 pip install -r python_rag/requirements.txt
 ```
 
-Frontend:
+监控接口会使用 `psutil` 读取 CPU、内存、磁盘。GPU 指标优先通过系统命令 `nvidia-smi` 读取；没有 NVIDIA 驱动时会返回空 GPU 列表，不影响主流程。
+
+### C++ Gateway 编译
+
+依赖：
+
+- `cmake`
+- C++17 编译器
+- Drogon
+- CURL
+- JsonCpp
+- MySQL / Redis 相关 Drogon 依赖
+
+示例：
 
 ```bash
-cd frontend
-npm install
+cmake -S cpp_gateway \
+      -B cpp_gateway/build \
+      -DCMAKE_BUILD_TYPE=Debug
+
+cmake --build cpp_gateway/build -j
 ```
 
-### 3. 初始化数据库
+如果使用 vcpkg，请按你的环境补充：
 
 ```bash
+-DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+```
+
+### 启动顺序
+
+建议每个服务单独开一个终端：
+
+```bash
+# 1. MySQL / Redis 先启动，并初始化数据库
 bash scripts/init_db.sh
-```
 
-### 4. 启动 Python API
+# 2. 可选：启动 vLLM
+source .venv/bin/activate
+bash scripts/start_vllm.sh
 
-```bash
+# 3. 启动 FastAPI
+source .venv/bin/activate
 bash scripts/start_api.sh
-```
 
-### 5. 启动 Celery Worker
-
-```bash
+# 4. 启动 Celery Worker
+source .venv/bin/activate
 bash scripts/start_worker.sh
-```
 
-### 6. 启动 C++ 网关
-
-```bash
+# 5. 启动 C++ Gateway
 bash cpp_gateway/scripts/start_gateway.sh
 ```
 
-说明：
-
-- 网关的数据库和 Redis 连接目前读取 `cpp_gateway/config.json`
-- Python 内部服务地址通过 `PYTHON_INTERNAL_BASE_URL` 传给网关，默认是 `http://127.0.0.1:8000`
-- 如果需要重新编译网关，请先确认本机已安装 Drogon 和 libcurl 开发环境
-
-### 7. 启动前端
+健康检查：
 
 ```bash
-cd frontend
-npm run dev
+curl http://127.0.0.1:8000/internal/health
+curl http://127.0.0.1:8000/internal/monitor/overview
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/v1/monitor/overview
 ```
 
-## 演示脚本
+### 后端公开接口
+
+前端应优先通过 C++ Gateway 访问这些接口：
+
+| Method | Path | 说明 |
+| --- | --- | --- |
+| `GET` | `/health` | 网关聚合健康检查。 |
+| `POST` | `/v1/users` | 创建用户。 |
+| `GET` | `/v1/users/latest` | 最近用户列表。 |
+| `POST` | `/v1/documents` | 上传文档并提交 ingest 任务。 |
+| `GET` | `/v1/documents/{doc_id}` | 查询文档详情。 |
+| `POST` | `/v1/sessions` | 创建会话。 |
+| `POST` | `/v1/sessions/{session_id}/messages` | 创建用户消息并提交 chat 任务。 |
+| `GET` | `/v1/sessions/{session_id}/messages` | 获取消息和 citations。 |
+| `GET` | `/v1/tasks` | 查询任务列表。 |
+| `GET` | `/v1/tasks/{task_id}` | 查询单个任务状态。 |
+| `POST` | `/v1/chat/stream` | SSE 流式回答代理。 |
+| `GET` | `/v1/monitor/overview` | CPU / GPU / MySQL / Redis / Worker / 队列 / RAG 摘要。 |
+
+FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问。
+
+### 核心链路
+
+文档 ingest：
+
+1. 前端上传文档到 `/v1/documents`
+2. C++ Gateway 校验类型、落盘、写入 `documents`
+3. Gateway 调用 FastAPI `/internal/jobs/ingest`
+4. Celery worker 抽取文本、切片、embedding、构建 FAISS
+5. 写入 `doc_chunks`、`document_indexes`，更新 `tasks` 和 `documents.status`
+6. 前端轮询 `/v1/tasks/{task_id}` 获取进度
+
+问答：
+
+1. 前端创建 session
+2. 前端提交问题到 `/v1/sessions/{session_id}/messages`
+3. Gateway 先创建 user message，再提交 chat task
+4. Celery 检索 FAISS，组装 context 和 prompt
+5. 调用 LLM；失败时可按配置使用 mock fallback
+6. assistant message 和 citations 落库
+7. 前端刷新消息并展示引用来源
+
+### E2E 验证
+
+先创建用户：
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"demo-user"}'
+```
+
+上传与索引：
 
 ```bash
 bash scripts/e2e_ingest.sh ./day7_demo.md
+```
+
+完整问答：
+
+```bash
 bash scripts/e2e_chat.sh ./day7_demo.md
 ```
 
-## 当前实现特点
+如果切换了 embedding 模型，历史文档需要重新 ingest，否则 FAISS 索引维度或向量空间可能不一致。
 
-- 当前索引为“单文档单索引”模式，便于演示链路，后续可抽象成多文档索引或分片索引
-- 当前流式回答是“先生成完整答案，再按块模拟输出”，已经具备 SSE 接口形态，但还不是真正的 provider 原生流式生成
-- 当前网关已具备统一入口能力，但尚未接入认证与授权
-- 当前已支持 `md/txt/json/csv/pdf/docx`，其中 PDF 仅支持可提取文本的电子文档，扫描件 OCR 仍未接入
+## 前端
 
-## 后续优化方向
+前端是 `Vite + React + TypeScript` 的 RAG 工作台，页面按功能拆分：
 
-### 1. Ray 接入
+| 页面 | 说明 |
+| --- | --- |
+| `Workspace` | 核心问答工作区，包含会话、消息、上传、RAG 开关、引用面板。 |
+| `Documents` | 文档上传、索引状态、chunk/向量化摘要、文档详情。 |
+| `Tasks` | ingest/chat 任务表、进度、meta_json、错误日志。 |
+| `Monitor` | CPU / GPU / 内存 / MySQL / Redis / Worker / 队列 / RAG 摘要。 |
+| `Settings` | 网关地址、用户、top_k、chunk 参数和模型显示名。 |
 
-后续计划引入 Ray，用于更精细的 GPU 资源调度和任务分配，特别适合 embedding、推理、批量文档处理等需要显卡资源编排的场景。
+安装与启动：
 
-### 2. 网关鉴权
+```bash
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
 
-计划在 C++ 网关层加入：
+前端环境变量：
 
-- Token 校验
-- 签名或请求认证
-- 限流与访问控制
-- 审计与链路追踪
+```bash
+VITE_API_BASE_URL=
+VITE_PROXY_TARGET=http://127.0.0.1:8080
+```
 
-### 3. 文档支持类型优化
+本地开发时建议让 `VITE_API_BASE_URL` 为空，这样 Vite 会把 `/health` 和 `/v1` 代理到 Gateway。
 
-当前文档支持已经从纯文本扩展到 PDF / DOCX，但还会继续完善：
+构建：
 
-- PDF / Office 文档解析
-- 多格式统一抽取与清洗
-- 更稳定的 chunk 策略
-- 文档元数据与类型标签体系
+```bash
+cd frontend
+npm run build
+```
 
-### 4. 任务与资源调度优化
+## 当前已知限制
 
-后续会继续完善：
+- Gateway 的 MySQL / Redis 连接还没有完全收敛到根目录 `.env`，目前仍依赖 `cpp_gateway/config.json`。
+- `Monitor` 的历史趋势还只是前端近端采样，尚未落库保存时序指标。
+- GPU 监控依赖 `nvidia-smi`，非 NVIDIA 环境会返回空数组。
+- 当前索引是单文档单 FAISS 索引，后续可扩展为多文档知识库、分片索引或向量数据库。
+- SSE 流式接口当前是接口形态完整，但生成侧仍以先得到完整答案再分块输出为主。
+- PDF 仅支持可提取文本的电子文档，扫描件 OCR 尚未接入。
+- 尚未接入鉴权、租户隔离、请求限流和审计日志。
 
-- 基于任务类型的队列拆分
-- 更细粒度的 worker 资源隔离
-- 更清晰的任务重试与失败恢复
-- 更稳定的检索缓存与索引加载策略
+## 推荐验证命令
 
-## 已完成的本地验证
+```bash
+python3 -m compileall python_rag
+cd frontend && npm run build
+bash -n scripts/init_db.sh scripts/start_api.sh scripts/start_worker.sh scripts/start_vllm.sh cpp_gateway/scripts/start_gateway.sh
+```
 
-- `python3 -m compileall python_rag`
-- `npm run build`
-
-未完成或受环境限制的部分：
-
-- 未连接真实 MySQL / Redis 跑通整链路
-- 未联调真实 LLM
-- 当前机器未安装 Drogon 开发包，无法重新配置并编译 `cpp_gateway`
-
-## 已知限制
-
-- `cpp_gateway/build` 是带缓存的产物目录，不适合作为跨机器复用的可移植构建目录
-- `cpp_gateway/config.json` 目前仍是独立配置口径，尚未与根目录 `.env` 统一
-- `python_rag/modules/ingest/chunking_service.py` 还是空壳，当前切片逻辑实际位于 `python_rag/utils/text_chunker.py`
+当前机器如果没有 Drogon 开发包，需要先安装 Drogon 或设置 `Drogon_DIR` / `CMAKE_PREFIX_PATH` 后再编译 `cpp_gateway`。

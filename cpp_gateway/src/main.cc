@@ -2,6 +2,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <drogon/drogon.h>
 
@@ -117,6 +118,43 @@ int main() {
     );
 
     app().registerHandler(
+        "/v1/tasks",
+        [pythonClient](const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string path = "/internal/tasks";
+            std::vector<std::string> params;
+            const auto limit = req->getParameter("limit");
+            const auto state = req->getParameter("state");
+            if (!limit.empty()) {
+                params.push_back("limit=" + limit);
+            }
+            if (!state.empty()) {
+                params.push_back("state=" + state);
+            }
+            if (!params.empty()) {
+                path += "?";
+                for (size_t i = 0; i < params.size(); ++i) {
+                    if (i > 0) {
+                        path += "&";
+                    }
+                    path += params[i];
+                }
+            }
+            pythonClient->forwardGet(path, makeCorsCallback(req, std::move(callback)));
+        },
+        {Get}
+    );
+
+    app().registerHandler(
+        "/v1/tasks",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
+    );
+
+    app().registerHandler(
         "/v1/documents",
         [documentHandler](const HttpRequestPtr& req,
                           std::function<void(const HttpResponsePtr&)>&& callback) {
@@ -129,6 +167,29 @@ int main() {
         "/v1/documents",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
+    );
+
+    app().registerHandler(
+        "/v1/documents/{1}",
+        [pythonClient](const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback,
+                       int docId) {
+            pythonClient->forwardGet(
+                "/internal/documents/" + std::to_string(docId),
+                makeCorsCallback(req, std::move(callback))
+            );
+        },
+        {Get}
+    );
+
+    app().registerHandler(
+        "/v1/documents/{1}",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback,
+           int) {
             callback(makeOptionsResponse(req));
         },
         {Options}
@@ -252,6 +313,27 @@ int main() {
 
     app().registerHandler(
         "/v1/chat/stream",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
+    );
+
+    app().registerHandler(
+        "/v1/monitor/overview",
+        [pythonClient](const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback) {
+            pythonClient->forwardGet(
+                "/internal/monitor/overview",
+                makeCorsCallback(req, std::move(callback))
+            );
+        },
+        {Get}
+    );
+
+    app().registerHandler(
+        "/v1/monitor/overview",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             callback(makeOptionsResponse(req));
