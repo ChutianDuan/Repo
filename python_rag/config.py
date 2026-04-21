@@ -20,6 +20,8 @@ APP_PORT = int(os.getenv("APP_PORT", "8000"))
 
 STORAGE_ROOT = os.getenv("STORAGE_ROOT", "./data")
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./data/uploads")
+INGEST_CHUNK_SIZE = int(os.getenv("INGEST_CHUNK_SIZE", "800"))
+INGEST_CHUNK_OVERLAP = int(os.getenv("INGEST_CHUNK_OVERLAP", "100"))
 
 REDIS_URL = "redis://{host}:{port}/{db}".format(
     host=REDIS_HOST,
@@ -43,6 +45,23 @@ CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))
 CHAT_MIN_RETRIEVAL_SCORE = float(os.getenv("CHAT_MIN_RETRIEVAL_SCORE", "0.0"))
 STREAM_DELTA_CHARS = int(os.getenv("STREAM_DELTA_CHARS", "20"))
 STREAM_MOCK_DELAY_MS = int(os.getenv("STREAM_MOCK_DELAY_MS", "30"))
+
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "sentence_transformers")
+EMBEDDING_MODEL = os.getenv(
+    "EMBEDDING_MODEL",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+).strip()
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "").rstrip("/")
+EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "").strip()
+EMBEDDING_TIMEOUT_SECONDS = int(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "60"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "auto").strip()
+EMBEDDING_NORMALIZE = os.getenv(
+    "EMBEDDING_NORMALIZE",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+EMBEDDING_QUERY_PREFIX = os.getenv("EMBEDDING_QUERY_PREFIX", "")
+EMBEDDING_DOCUMENT_PREFIX = os.getenv("EMBEDDING_DOCUMENT_PREFIX", "")
 
 LLM_ENABLE = os.getenv("LLM_ENABLE", "true").lower() in ("1", "true", "yes", "on")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")

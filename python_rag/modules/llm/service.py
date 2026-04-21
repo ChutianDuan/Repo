@@ -90,9 +90,6 @@ def generate_from_messages(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     if not LLM_MODEL:
         raise LLMServiceError("LLM_MODEL is not configured")
 
-    if not LLM_API_KEY:
-        raise LLMServiceError("LLM_API_KEY is not configured")
-
     url = LLM_BASE_URL + "/chat/completions"
     headers = _build_headers()
     payload = _build_payload(messages)

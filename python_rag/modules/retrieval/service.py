@@ -5,7 +5,10 @@ from python_rag.core.logger import logger
 
 
 from python_rag.modules.documents.repo import get_document_index_by_doc_id
-from python_rag.modules.ingest.embedding_service import embed_query
+from python_rag.modules.ingest.embedding_service import (
+    embed_query,
+    get_embedding_model_name,
+)
 from python_rag.modules.retrieval.faiss_service import search_doc_faiss_index
 
 
@@ -23,6 +26,18 @@ def search_in_document(doc_id, query, top_k=3):
 
     if index_meta["status"] != "READY":
         raise AppError(ERR_INTERNAL_ERROR, "document index is not ready")
+
+    current_embedding_model = get_embedding_model_name()
+    if index_meta.get("embedding_model") != current_embedding_model:
+        raise AppError(
+            ERR_INTERNAL_ERROR,
+            (
+                "document index embedding mismatch: indexed_with='%s', current='%s'. "
+                "Re-ingest the document before querying."
+            )
+            % (index_meta.get("embedding_model"), current_embedding_model),
+            http_status=409,
+        )
 
     query_vector = embed_query(query)
 

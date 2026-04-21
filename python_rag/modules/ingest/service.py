@@ -1,5 +1,6 @@
 import os
 
+from python_rag.config import INGEST_CHUNK_OVERLAP, INGEST_CHUNK_SIZE
 from python_rag.modules.documents.schemas import DocumentState
 from python_rag.core.error_codes import TaskState,ERR_CELERY_ERROR
 from python_rag.core.errors import AppError
@@ -14,7 +15,10 @@ from python_rag.modules.documents.repo import (
 )
 
 from python_rag.modules.tasks.repo import update_task_record
-from python_rag.modules.ingest.embedding_service import embed_documents, MODEL_NAME
+from python_rag.modules.ingest.embedding_service import (
+    embed_documents,
+    get_embedding_model_name,
+)
 from python_rag.modules.ingest.chunking_service import (
     extract_text_from_document,
     validate_supported_document_filename,
@@ -56,6 +60,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
     - 更新 document/task 状态
     """
     try:
+        embedding_model_name = get_embedding_model_name()
         doc = get_document_by_id(doc_id)
         if not doc:
             raise AppError(ERR_CELERY_ERROR, "document not found")
@@ -96,8 +101,8 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
 
         chunks = simple_chunk_text(
             text=text,
-            chunk_size=800,
-            overlap=100,
+            chunk_size=INGEST_CHUNK_SIZE,
+            overlap=INGEST_CHUNK_OVERLAP,
         )
         if not chunks:
             raise AppError(ERR_CELERY_ERROR, "chunk result is empty")
@@ -111,6 +116,8 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
                 "doc_id": doc_id,
                 "filename": doc["filename"],
                 "chunk_count": len(chunks),
+                "chunk_size": INGEST_CHUNK_SIZE,
+                "chunk_overlap": INGEST_CHUNK_OVERLAP,
             },
             progress_callback=progress_callback,
         )
@@ -150,7 +157,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
                 "doc_id": doc_id,
                 "filename": doc["filename"],
                 "chunk_count": len(chunk_rows),
-                "embedding_model": MODEL_NAME,
+                "embedding_model": embedding_model_name,
             },
             progress_callback=progress_callback,
         )
@@ -168,7 +175,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
                 "doc_id": doc_id,
                 "filename": doc["filename"],
                 "chunk_count": len(chunk_rows),
-                "embedding_model": MODEL_NAME,
+                "embedding_model": embedding_model_name,
             },
             progress_callback=progress_callback,
         )
@@ -182,7 +189,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         upsert_document_index(
             doc_id=doc_id,
             index_type=index_meta["index_type"],
-            embedding_model=MODEL_NAME,
+            embedding_model=embedding_model_name,
             dimension=index_meta["dimension"],
             index_path=index_meta["index_path"],
             mapping_path=index_meta["mapping_path"],
@@ -199,7 +206,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             "chunk_count": len(chunk_rows),
             "document_status": DocumentState.READY,
             "index_status": "READY",
-            "embedding_model": MODEL_NAME,
+            "embedding_model": embedding_model_name,
             "index_type": index_meta["index_type"],
             "dimension": index_meta["dimension"],
             "index_path": index_meta["index_path"],
