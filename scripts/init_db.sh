@@ -25,5 +25,10 @@ MYSQL_CMD=(
 )
 
 "${MYSQL_CMD[@]}" < db/init.sql
-"${MYSQL_CMD[@]}" "${MYSQL_DATABASE}" < db/001_schema_upgrade.sql
+
+for migration in db/*_schema_upgrade.sql; do
+  [ -f "${migration}" ] || continue
+  "${MYSQL_CMD[@]}" "${MYSQL_DATABASE}" < "${migration}"
+done
+
 "${MYSQL_CMD[@]}" "${MYSQL_DATABASE}" -e "SHOW TABLES;"

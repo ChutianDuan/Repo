@@ -75,7 +75,7 @@ def get_document_detail(doc_id):
             "storage_path": row["storage_path"],
             "error_message": row["error_message"],
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+            "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
         }
     except AppError:
         raise

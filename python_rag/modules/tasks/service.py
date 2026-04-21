@@ -127,7 +127,7 @@ def list_tasks(limit=20, state=None):
                 "meta": row["meta_json"],
                 "error": row["error"],
                 "created_at": str(row["created_at"]),
-                "updated_at": str(row["updated_at"]),
+                "updated_at": str(row.get("updated_at")) if row.get("updated_at") else None,
             }
             for row in rows
         ]
@@ -153,7 +153,7 @@ def list_tasks_by_entity(entity_type, entity_id, limit=20):
                 "meta": row["meta_json"],
                 "error": row["error"],
                 "created_at": str(row["created_at"]),
-                "updated_at": str(row["updated_at"]),
+                "updated_at": str(row.get("updated_at")) if row.get("updated_at") else None,
             }
             for row in rows
         ]

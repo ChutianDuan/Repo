@@ -1,5 +1,6 @@
 
 from python_rag.infra.mysql import get_mysql_connection
+from python_rag.infra.schema_support import has_column
 from python_rag.utils.to_iso import _to_iso
 
 def create_session(user_id, title):
@@ -35,12 +36,15 @@ def get_session_by_id(session_id):
     conn = get_mysql_connection()
     try:
         with conn.cursor() as cursor:
+            fields = ["id", "user_id", "title", "summary", "created_at"]
+            if has_column("sessions", "updated_at"):
+                fields.append("updated_at")
             cursor.execute(
                 """
-                SELECT id, user_id, title, summary, created_at, updated_at
+                SELECT {fields}
                 FROM sessions
                 WHERE id=%s
-                """,
+                """.format(fields=", ".join(fields)),
                 (session_id,),
             )
             return cursor.fetchone()

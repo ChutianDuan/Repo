@@ -1,4 +1,5 @@
 from python_rag.infra.mysql import get_mysql_connection
+from python_rag.infra.schema_support import has_column
 
 
 def create_document_record(user_id, filename, mime, sha256, size_bytes, storage_path, status):
@@ -22,13 +23,26 @@ def get_document_by_id(doc_id):
     conn = get_mysql_connection()
     try:
         with conn.cursor() as cursor:
+            fields = [
+                "id",
+                "user_id",
+                "filename",
+                "mime",
+                "sha256",
+                "size_bytes",
+                "storage_path",
+                "status",
+                "error_message",
+                "created_at",
+            ]
+            if has_column("documents", "updated_at"):
+                fields.append("updated_at")
             cursor.execute(
                 """
-                SELECT id, user_id, filename, mime, sha256, size_bytes,
-                       storage_path, status, error_message, created_at, updated_at
+                SELECT {fields}
                 FROM documents
                 WHERE id=%s
-                """,
+                """.format(fields=", ".join(fields)),
                 (doc_id,),
             )
             return cursor.fetchone()
@@ -65,6 +79,17 @@ def upsert_document_index(
     conn = get_mysql_connection()
     try:
         with conn.cursor() as cursor:
+            update_fields = [
+                "index_type=VALUES(index_type)",
+                "embedding_model=VALUES(embedding_model)",
+                "dimension=VALUES(dimension)",
+                "index_path=VALUES(index_path)",
+                "mapping_path=VALUES(mapping_path)",
+                "chunk_count=VALUES(chunk_count)",
+                "status=VALUES(status)",
+            ]
+            if has_column("document_indexes", "updated_at"):
+                update_fields.append("updated_at=CURRENT_TIMESTAMP")
             cursor.execute(
                 """
                 INSERT INTO document_indexes (
@@ -72,15 +97,8 @@ def upsert_document_index(
                     index_path, mapping_path, chunk_count, status
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
-                    index_type=VALUES(index_type),
-                    embedding_model=VALUES(embedding_model),
-                    dimension=VALUES(dimension),
-                    index_path=VALUES(index_path),
-                    mapping_path=VALUES(mapping_path),
-                    chunk_count=VALUES(chunk_count),
-                    status=VALUES(status),
-                    updated_at=CURRENT_TIMESTAMP
-                """,
+                    {update_fields}
+                """.format(update_fields=",\n                    ".join(update_fields)),
                 (
                     doc_id,
                     index_type,
@@ -100,14 +118,25 @@ def get_document_index_by_doc_id(doc_id):
     conn = get_mysql_connection()
     try:
         with conn.cursor() as cursor:
+            fields = [
+                "doc_id",
+                "index_type",
+                "embedding_model",
+                "dimension",
+                "index_path",
+                "mapping_path",
+                "chunk_count",
+                "status",
+                "created_at",
+            ]
+            if has_column("document_indexes", "updated_at"):
+                fields.append("updated_at")
             cursor.execute(
                 """
-                SELECT doc_id, index_type, embedding_model, dimension,
-                       index_path, mapping_path, chunk_count, status,
-                       created_at, updated_at
+                SELECT {fields}
                 FROM document_indexes
                 WHERE doc_id=%s
-                """,
+                """.format(fields=", ".join(fields)),
                 (doc_id,),
             )
             return cursor.fetchone()
