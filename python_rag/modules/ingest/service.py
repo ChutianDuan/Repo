@@ -1,4 +1,5 @@
 import os
+import time
 
 from python_rag.config import INGEST_CHUNK_OVERLAP, INGEST_CHUNK_SIZE
 from python_rag.modules.documents.schemas import DocumentState
@@ -23,6 +24,11 @@ from python_rag.modules.ingest.embedding_service import (
 from python_rag.modules.ingest.chunking_service import (
     extract_text_from_document,
     validate_supported_document_filename,
+)
+from python_rag.modules.monitor.request_metrics import (
+    estimate_embedding_cost_usd,
+    is_timeout_error,
+    record_request_metric,
 )
 from python_rag.modules.retrieval.faiss_service import build_doc_faiss_index
 from python_rag.utils.text_chunker import simple_chunk_text
@@ -60,6 +66,14 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
     - 写 document_indexes
     - 更新 document/task 状态
     """
+    started_at = time.perf_counter()
+    text_extract_ms = None
+    chunking_ms = None
+    chunk_insert_ms = None
+    embedding_ms = None
+    index_ms = None
+    embedding_tokens = None
+
     try:
         embedding_model_name = get_embedding_model_name()
         doc = get_document_by_id(doc_id)
@@ -80,10 +94,12 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             progress_callback=progress_callback,
         )
 
+        text_started_at = time.perf_counter()
         text = extract_text_from_document(
             path=resolve_storage_path(doc["storage_path"]),
             filename=doc.get("filename") or "",
         )
+        text_extract_ms = int((time.perf_counter() - text_started_at) * 1000)
         if not text or not text.strip():
             raise AppError(ERR_CELERY_ERROR, "document text is empty")
 
@@ -100,11 +116,13 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             progress_callback=progress_callback,
         )
 
+        chunking_started_at = time.perf_counter()
         chunks = simple_chunk_text(
             text=text,
             chunk_size=INGEST_CHUNK_SIZE,
             overlap=INGEST_CHUNK_OVERLAP,
         )
+        chunking_ms = int((time.perf_counter() - chunking_started_at) * 1000)
         if not chunks:
             raise AppError(ERR_CELERY_ERROR, "chunk result is empty")
 
@@ -124,8 +142,10 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         )
 
         # 先删旧 chunks，再重建
+        insert_started_at = time.perf_counter()
         delete_chunks_by_doc_id(doc_id)
         inserted = bulk_insert_chunks(doc_id, chunks)
+        chunk_insert_ms = int((time.perf_counter() - insert_started_at) * 1000)
 
         if inserted <= 0:
             raise AppError(ERR_CELERY_ERROR, "bulk_insert_chunks inserted 0 rows")
@@ -163,7 +183,9 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             progress_callback=progress_callback,
         )
 
+        embedding_started_at = time.perf_counter()
         vectors = embed_documents(texts)
+        embedding_ms = int((time.perf_counter() - embedding_started_at) * 1000)
         if vectors is None or len(vectors) != len(chunk_rows):
             raise AppError(ERR_CELERY_ERROR, "embedding result count mismatch")
 
@@ -181,11 +203,13 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             progress_callback=progress_callback,
         )
 
+        index_started_at = time.perf_counter()
         index_meta = build_doc_faiss_index(
             doc_id=doc_id,
             chunk_rows=chunk_rows,
             vectors=vectors,
         )
+        index_ms = int((time.perf_counter() - index_started_at) * 1000)
 
         upsert_document_index(
             doc_id=doc_id,
@@ -200,6 +224,15 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
 
         update_document_status(doc_id, DocumentState.READY, None)
 
+        embedding_tokens = sum(int(row.get("tokens_est") or 0) for row in chunk_rows)
+        ready_latency_ms = None
+        if doc.get("created_at"):
+            ready_latency_ms = int(
+                max(0, (time.time() - doc["created_at"].timestamp()) * 1000),
+            )
+        total_ingest_ms = int((time.perf_counter() - started_at) * 1000)
+        cost_usd = estimate_embedding_cost_usd(embedding_tokens)
+
         result = {
             "stage": "finished",
             "doc_id": doc_id,
@@ -212,7 +245,32 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             "dimension": index_meta["dimension"],
             "index_path": index_meta["index_path"],
             "mapping_path": index_meta["mapping_path"],
+            "ingest_ready_ms": ready_latency_ms,
+            "ingest_runtime_ms": total_ingest_ms,
+            "embedding_tokens": embedding_tokens,
+            "cost_usd": cost_usd,
+            "timings_ms": {
+                "text_extract_ms": text_extract_ms,
+                "chunking_ms": chunking_ms,
+                "chunk_insert_ms": chunk_insert_ms,
+                "embedding_ms": embedding_ms,
+                "index_ms": index_ms,
+            },
         }
+
+        record_request_metric(
+            request_type="ingest",
+            status="success",
+            channel="celery",
+            doc_id=doc_id,
+            celery_task_id=celery_task_id,
+            e2e_latency_ms=total_ingest_ms,
+            ready_latency_ms=ready_latency_ms,
+            embedding_tokens=embedding_tokens,
+            cost_usd=cost_usd,
+            answer_source="embedding",
+            extra=result["timings_ms"],
+        )
 
         _emit_progress(
             celery_task_id=celery_task_id,
@@ -226,6 +284,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
 
     except Exception as e:
         logger.exception("run_ingest_for_document failed")
+        total_ingest_ms = int((time.perf_counter() - started_at) * 1000)
 
         try:
             update_document_status(doc_id, DocumentState.FAILED, str(e))
@@ -247,5 +306,25 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             )
         except Exception:
             logger.exception("update_task_record FAILURE failed")
+
+        record_request_metric(
+            request_type="ingest",
+            status="error",
+            channel="celery",
+            doc_id=doc_id,
+            celery_task_id=celery_task_id,
+            e2e_latency_ms=total_ingest_ms,
+            embedding_tokens=embedding_tokens,
+            cost_usd=estimate_embedding_cost_usd(embedding_tokens),
+            timed_out=is_timeout_error(e),
+            error_message=str(e),
+            extra={
+                "text_extract_ms": text_extract_ms,
+                "chunking_ms": chunking_ms,
+                "chunk_insert_ms": chunk_insert_ms,
+                "embedding_ms": embedding_ms,
+                "index_ms": index_ms,
+            },
+        )
 
         raise

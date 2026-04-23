@@ -6,6 +6,7 @@
 
 #include <json/json.h>
 
+#include "clients/PythonApiClient.h"
 #include "clients/PythonSSEClient.h"
 
 using namespace drogon;
@@ -18,8 +19,12 @@ std::string jsonToCompactString(const Json::Value& value) {
 }
 }  // namespace
 
-StreamChatService::StreamChatService(std::shared_ptr<PythonSSEClient> pythonSSEClient)
-    : pythonSSEClient_(std::move(pythonSSEClient)) {}
+StreamChatService::StreamChatService(
+    std::shared_ptr<PythonSSEClient> pythonSSEClient,
+    std::shared_ptr<PythonApiClient> pythonApiClient
+)
+    : pythonSSEClient_(std::move(pythonSSEClient)),
+      pythonApiClient_(std::move(pythonApiClient)) {}
 
 bool StreamChatService::validateRequestBody(const Json::Value& body, std::string& error) {
     if (!body.isObject()) {
@@ -35,8 +40,11 @@ bool StreamChatService::validateRequestBody(const Json::Value& body, std::string
         error = "missing or invalid doc_id";
         return false;
     }
-    if (!body.isMember("user_message_id") || !body["user_message_id"].isInt()) {
-        error = "missing or invalid user_message_id";
+    const bool hasUserMessageId = body.isMember("user_message_id") && body["user_message_id"].isInt();
+    const bool hasContent = body.isMember("content") && body["content"].isString()
+        && !body["content"].asString().empty();
+    if (!hasUserMessageId && !hasContent) {
+        error = "missing user_message_id or content";
         return false;
     }
 
@@ -66,27 +74,13 @@ HttpResponsePtr StreamChatService::buildJsonErrorResponse(int code, const std::s
     return resp;
 }
 
-void StreamChatService::handleStream(
-    const HttpRequestPtr& req,
+void StreamChatService::startStreamResponse(
+    const Json::Value& body,
     std::function<void(const HttpResponsePtr&)>&& callback
 ) {
-    auto jsonPtr = req->getJsonObject();
-    if (!jsonPtr) {
-        callback(buildJsonErrorResponse(4001, "request body must be valid json"));
-        return;
-    }
-
-    Json::Value body = *jsonPtr;
-    std::string error;
-    if (!validateRequestBody(body, error)) {
-        callback(buildJsonErrorResponse(4002, error));
-        return;
-    }
-
     auto resp = HttpResponse::newAsyncStreamResponse(
         [client = pythonSSEClient_, body](ResponseStreamPtr stream) mutable {
             std::thread([client, body, stream = std::move(stream)]() mutable {
-                // 把 unique_ptr 包成 shared_ptr，供多个异步回调共享
                 auto sharedStream = std::shared_ptr<drogon::ResponseStream>(std::move(stream));
 
                 client->postStream(
@@ -117,4 +111,61 @@ void StreamChatService::handleStream(
     resp->setExpiredTime(0);
 
     callback(resp);
+}
+
+void StreamChatService::handleStream(
+    const HttpRequestPtr& req,
+    std::function<void(const HttpResponsePtr&)>&& callback
+) {
+    auto jsonPtr = req->getJsonObject();
+    if (!jsonPtr) {
+        callback(buildJsonErrorResponse(4001, "request body must be valid json"));
+        return;
+    }
+
+    Json::Value body = *jsonPtr;
+    std::string error;
+    if (!validateRequestBody(body, error)) {
+        callback(buildJsonErrorResponse(4002, error));
+        return;
+    }
+
+    if (body.isMember("user_message_id") && body["user_message_id"].isInt()) {
+        startStreamResponse(body, std::move(callback));
+        return;
+    }
+
+    auto sharedCallback =
+        std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+
+    Json::Value createMessageBody;
+    createMessageBody["role"] = "user";
+    createMessageBody["content"] = body["content"].asString();
+    createMessageBody["status"] = "PENDING";
+
+    const int sessionId = body["session_id"].asInt();
+    pythonApiClient_->forwardJsonPost(
+        "/internal/sessions/" + std::to_string(sessionId) + "/messages",
+        createMessageBody,
+        [this, sharedCallback, body](const HttpResponsePtr& msgResp) mutable {
+            if (msgResp->statusCode() >= 400) {
+                (*sharedCallback)(msgResp);
+                return;
+            }
+
+            auto msgJsonPtr = msgResp->getJsonObject();
+            if (!msgJsonPtr || !(*msgJsonPtr).isMember("data")) {
+                (*sharedCallback)(buildJsonErrorResponse(
+                    4003,
+                    "invalid response while creating user message"
+                ));
+                return;
+            }
+
+            Json::Value nextBody = body;
+            nextBody["user_message_id"] = (*msgJsonPtr)["data"]["message_id"].asInt();
+            nextBody.removeMember("content");
+            startStreamResponse(nextBody, std::move(*sharedCallback));
+        }
+    );
 }

@@ -5,7 +5,7 @@ import { SectionCard } from "../../components/common/SectionCard";
 import { MetricsChartPanel } from "../../components/monitor/MetricsChartPanel";
 import { ResourceOverviewCards } from "../../components/monitor/ResourceOverviewCards";
 import { ServiceHealthPanel } from "../../components/monitor/ServiceHealthPanel";
-import { formatDateTime, formatNumber } from "../../utils/format";
+import { formatCurrencyUsd, formatDateTime, formatDurationMs, formatNumber, formatRatio } from "../../utils/format";
 
 interface MonitorPageProps {
   overview: MonitorOverview;
@@ -49,6 +49,49 @@ export function MonitorPage({ overview, points, monitorError, onRefreshMonitor }
         <MetricCard label="Ready Docs" value={formatNumber(overview.rag.documents_ready)} />
         <MetricCard label="Total Chunks" value={overview.rag.total_chunks === null ? "--" : formatNumber(overview.rag.total_chunks)} />
       </div>
+
+      <SectionCard title="Experience" description="TTFT、端到端延迟分位数和 ingest 就绪时间。">
+        <div className="summary-grid">
+          <MetricCard label="TTFT P50" value={formatDurationMs(overview.experience.ttft_ms.p50)} />
+          <MetricCard label="TTFT P95" value={formatDurationMs(overview.experience.ttft_ms.p95)} />
+          <MetricCard label="E2E P50" value={formatDurationMs(overview.experience.e2e_latency_ms.p50)} />
+          <MetricCard label="E2E P95" value={formatDurationMs(overview.experience.e2e_latency_ms.p95)} />
+          <MetricCard label="E2E P99" value={formatDurationMs(overview.experience.e2e_latency_ms.p99)} />
+          <MetricCard label="Ingest Ready P50" value={formatDurationMs(overview.experience.ingest_ready_ms.p50)} />
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Cost" description="请求和文档成本基于 provider usage 或估算 token，并结合可配置单价计算。">
+        <div className="summary-grid">
+          <MetricCard label="Prompt Tokens Avg" value={formatNumber(overview.cost.prompt_tokens_avg)} />
+          <MetricCard label="Completion Tokens Avg" value={formatNumber(overview.cost.completion_tokens_avg)} />
+          <MetricCard label="Cost / Request" value={formatCurrencyUsd(overview.cost.cost_per_request_usd)} />
+          <MetricCard label="Cost / Document" value={formatCurrencyUsd(overview.cost.cost_per_document_usd)} />
+          <MetricCard label="Chat Cost Total" value={formatCurrencyUsd(overview.cost.chat_cost_total_usd)} />
+          <MetricCard label="Ingest Cost Total" value={formatCurrencyUsd(overview.cost.ingest_cost_total_usd)} />
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Throughput" description="QPS、并发会话数、Worker 队列深度和活跃 SSE 连接。">
+        <div className="summary-grid">
+          <MetricCard label="QPS" value={overview.throughput.qps === null || overview.throughput.qps === undefined ? "--" : overview.throughput.qps.toFixed(3)} />
+          <MetricCard label="Concurrent Sessions" value={formatNumber(overview.throughput.concurrent_sessions)} />
+          <MetricCard label="Worker Queue Depth" value={formatNumber(overview.throughput.worker_queue_depth)} />
+          <MetricCard label="Active SSE" value={formatNumber(overview.throughput.active_sse_connections)} />
+          <MetricCard label="Worker Count" value={formatNumber(overview.queue.worker_count)} />
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Quality" description="错误率、超时率、检索耗时、引用数量和无上下文占比。">
+        <div className="summary-grid">
+          <MetricCard label="Error Rate" value={formatRatio(overview.quality.error_rate)} tone={overview.quality.error_rate && overview.quality.error_rate > 0.05 ? "error" : "default"} />
+          <MetricCard label="Timeout Rate" value={formatRatio(overview.quality.timeout_rate)} tone={overview.quality.timeout_rate && overview.quality.timeout_rate > 0.02 ? "warn" : "default"} />
+          <MetricCard label="Retrieval P50" value={formatDurationMs(overview.quality.retrieval_ms.p50)} />
+          <MetricCard label="Retrieval P95" value={formatDurationMs(overview.quality.retrieval_ms.p95)} />
+          <MetricCard label="Citation Avg" value={formatNumber(overview.quality.citation_count_avg)} />
+          <MetricCard label="No Context Ratio" value={formatRatio(overview.quality.no_context_ratio)} />
+        </div>
+      </SectionCard>
 
       <SectionCard title="Metrics Panels" description="无第三方图表依赖，使用轻量趋势条展示近端变化。">
         <MetricsChartPanel points={points} />

@@ -22,6 +22,7 @@ def persist_stream_result(
     retrieval_hits: List[Dict[str, Any]],
     answer_source: str,
     context_mode: str,
+    extra_meta: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """
     在 stream done 前调用：
@@ -30,16 +31,20 @@ def persist_stream_result(
     3. 返回 assistant message 信息
     """
 
+    meta = {
+        "answer_source": answer_source,
+        "context_mode": context_mode,
+        "retrieved_count": len(retrieval_hits),
+    }
+    if extra_meta:
+        meta.update(extra_meta)
+
     assistant_message = create_message(
         session_id=session_id,
         role="assistant",
         content=answer_text,
         status="SUCCESS",
-        meta_json={
-            "answer_source": answer_source,
-            "context_mode": context_mode,
-            "retrieved_count": len(retrieval_hits),
-        },
+        meta_json=meta,
     )
 
     citation_rows = []

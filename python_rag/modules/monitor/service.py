@@ -5,9 +5,16 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from python_rag.config import LLM_BASE_URL, LLM_ENABLE, STORAGE_ROOT
+from python_rag.config import (
+    LLM_BASE_URL,
+    LLM_ENABLE,
+    MONITOR_METRICS_MAX_ROWS,
+    MONITOR_METRICS_WINDOW_SECONDS,
+    STORAGE_ROOT,
+)
 from python_rag.infra.mysql import get_mysql_connection
 from python_rag.infra.redis_client import get_redis_client
+from python_rag.modules.monitor.request_metrics import summarize_request_metrics
 from python_rag.modules.tasks.celery_app import celery_app
 
 
@@ -102,12 +109,18 @@ def _redis_ok() -> bool:
     return bool(client.ping())
 
 
-def _worker_ok() -> bool:
+def _worker_stats() -> Dict[str, Any]:
     try:
         replies = celery_app.control.ping(timeout=0.5)
-        return len(replies) > 0
+        return {
+            "ok": len(replies) > 0,
+            "count": len(replies),
+        }
     except Exception:
-        return False
+        return {
+            "ok": False,
+            "count": 0,
+        }
 
 
 def _query_dashboard_counts() -> Dict[str, Any]:
@@ -160,6 +173,7 @@ def get_monitor_overview() -> Dict[str, Any]:
     mysql_ok: Optional[bool] = None
     redis_ok: Optional[bool] = None
     worker_ok: Optional[bool] = None
+    worker_count = 0
 
     try:
         mysql_ok = _mysql_ok()
@@ -172,9 +186,12 @@ def get_monitor_overview() -> Dict[str, Any]:
         redis_ok = False
 
     try:
-        worker_ok = _worker_ok()
+        worker_info = _worker_stats()
+        worker_ok = worker_info["ok"]
+        worker_count = worker_info["count"]
     except Exception:
         worker_ok = False
+        worker_count = 0
 
     try:
         counts = _query_dashboard_counts() if mysql_ok else {
@@ -186,6 +203,15 @@ def get_monitor_overview() -> Dict[str, Any]:
             "queue": {"pending": 0, "running": 0, "failed": 0},
             "rag": {"documents_ready": 0, "total_chunks": 0},
         }
+
+    metric_summary = summarize_request_metrics(
+        window_seconds=MONITOR_METRICS_WINDOW_SECONDS,
+        limit=MONITOR_METRICS_MAX_ROWS,
+    )
+    throughput = metric_summary.get("throughput") or {}
+    throughput["worker_queue_depth"] = counts["queue"]["pending"] + counts["queue"]["running"]
+    experience = metric_summary.get("experience") or {}
+    quality = metric_summary.get("quality") or {}
 
     latency_ms = int((time.perf_counter() - started_at) * 1000)
     llm_state = "ok" if LLM_ENABLE and LLM_BASE_URL else "unknown"
@@ -201,12 +227,21 @@ def get_monitor_overview() -> Dict[str, Any]:
             "embedding": "unknown",
             "api": "ok",
         },
-        "queue": counts["queue"],
+        "queue": {
+            **counts["queue"],
+            "worker_count": worker_count,
+        },
         "latency": {
             "api_ms": latency_ms,
-            "chat_ms": None,
-            "retrieval_ms": None,
+            "chat_ms": (experience.get("e2e_latency_ms") or {}).get("p50"),
+            "retrieval_ms": (quality.get("retrieval_ms") or {}).get("p50"),
+            "ingest_ms": (experience.get("ingest_ready_ms") or {}).get("p50"),
         },
         "rag": counts["rag"],
+        "experience": experience,
+        "cost": metric_summary.get("cost") or {},
+        "throughput": throughput,
+        "quality": quality,
+        "samples": metric_summary.get("samples") or {},
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }

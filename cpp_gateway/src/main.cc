@@ -77,7 +77,7 @@ int main() {
     auto documentHandler = std::make_shared<DocumentService>(pythonClient);
     auto sessionHandler = std::make_shared<SessionService>(pythonClient);
     auto chatHandler = std::make_shared<ChatService>(pythonClient);
-    auto streamChatHandler = std::make_shared<StreamChatService>(pythonSSEClient);
+    auto streamChatHandler = std::make_shared<StreamChatService>(pythonSSEClient, pythonClient);
 
     app().registerHandler(
         "/health",

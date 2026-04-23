@@ -17,11 +17,18 @@ class SearchHit(BaseModel):
     content: str
     snippet: str
 
+
+class SearchMetrics(BaseModel):
+    embedding_ms: int | None = None
+    faiss_ms: int | None = None
+    retrieval_ms: int | None = None
+
 class SearchResponseData(BaseModel):
     doc_id: int
     query: str
     top_k: int
     hits: List[SearchHit]
+    metrics: SearchMetrics | None = None
 
 
 class SearchResponse(BaseModel):
@@ -43,5 +50,4 @@ class PromptBuildResult(BaseModel):
     context_text:str
     context_count:int
     mode:str
-
 

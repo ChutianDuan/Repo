@@ -91,3 +91,19 @@ CHAT_ENABLE_MOCK_FALLBACK = os.getenv(
     "CHAT_ENABLE_MOCK_FALLBACK",
     "true",
 ).lower() in ("1", "true", "yes", "on")
+
+LLM_PROMPT_COST_PER_1K_TOKENS = float(
+    os.getenv("LLM_PROMPT_COST_PER_1K_TOKENS", "0"),
+)
+LLM_COMPLETION_COST_PER_1K_TOKENS = float(
+    os.getenv("LLM_COMPLETION_COST_PER_1K_TOKENS", "0"),
+)
+EMBEDDING_COST_PER_1K_TOKENS = float(
+    os.getenv("EMBEDDING_COST_PER_1K_TOKENS", "0"),
+)
+MONITOR_METRICS_WINDOW_SECONDS = int(
+    os.getenv("MONITOR_METRICS_WINDOW_SECONDS", "300"),
+)
+MONITOR_METRICS_MAX_ROWS = int(
+    os.getenv("MONITOR_METRICS_MAX_ROWS", "5000"),
+)

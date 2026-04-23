@@ -7,7 +7,7 @@ import { MonitorPage } from "../pages/monitor/MonitorPage";
 import { SettingsPage } from "../pages/settings/SettingsPage";
 import { TasksPage } from "../pages/tasks/TasksPage";
 import { WorkspacePage } from "../pages/workspace/WorkspacePage";
-import { createSession, listMessages, submitChat } from "../services/chatService";
+import { createSession, listMessages, streamChat, submitChat } from "../services/chatService";
 import { uploadDocument } from "../services/documentService";
 import { getHealth, getMonitorOverview } from "../services/monitorService";
 import { getTaskStatus, listTasks } from "../services/taskService";
@@ -110,17 +110,52 @@ function buildFallbackOverview(
       pending,
       running,
       failed,
+      worker_count: null,
     },
     latency: {
       api_ms: apiLatencyMs,
       chat_ms: null,
       retrieval_ms: null,
+      ingest_ms: null,
     },
     rag: {
       documents_ready: readyDocuments.length,
       total_chunks: knownChunks.length > 0 ? knownChunks.reduce((sum, value) => sum + value, 0) : null,
       top_k: topK,
       retrieval_mode: "document",
+    },
+    experience: {
+      ttft_ms: {},
+      e2e_latency_ms: {},
+      ingest_ready_ms: {},
+    },
+    cost: {
+      prompt_tokens_avg: null,
+      prompt_tokens_total: null,
+      completion_tokens_avg: null,
+      completion_tokens_total: null,
+      cost_per_request_usd: null,
+      cost_per_document_usd: null,
+      chat_cost_total_usd: null,
+      ingest_cost_total_usd: null,
+    },
+    throughput: {
+      qps: null,
+      concurrent_sessions: null,
+      worker_queue_depth: pending + running,
+      active_sse_connections: null,
+    },
+    quality: {
+      retrieval_ms: {},
+      error_rate: null,
+      timeout_rate: null,
+      citation_count_avg: null,
+      no_context_ratio: null,
+    },
+    samples: {
+      total: tasks.length,
+      chat: null,
+      ingest: null,
     },
     updated_at: nowIso(),
     source: "health-fallback",
@@ -144,6 +179,26 @@ function taskRecordFromStatus(
     error: status.error ?? null,
     created_at: existing?.created_at || defaults.created_at || nowIso(),
     updated_at: nowIso(),
+  };
+}
+
+function buildLocalMessage(
+  sessionId: number,
+  role: ChatMessage["role"],
+  content: string,
+  status: string,
+): ChatMessage {
+  const timestamp = nowIso();
+  return {
+    message_id: -Math.floor(Date.now() + Math.random() * 1000000),
+    session_id: sessionId,
+    role,
+    content,
+    status,
+    citations: [],
+    meta: {},
+    created_at: timestamp,
+    updated_at: timestamp,
   };
 }
 
@@ -204,7 +259,7 @@ export default function App() {
         cpu: nextOverview.system.cpu_percent,
         gpu: nextOverview.gpu[0]?.util_percent ?? null,
         api_ms: nextOverview.latency.api_ms,
-        throughput: taskRecords.filter((task) => task.state === "SUCCESS").length,
+        throughput: nextOverview.throughput.qps ?? taskRecords.filter((task) => task.state === "SUCCESS").length,
       },
     ]);
   }
@@ -236,6 +291,17 @@ export default function App() {
   function setMessagesForSession(sessionId: number, messages: ChatMessage[]) {
     setMessagesBySession((current) => ({ ...current, [sessionId]: messages }));
     updateSessionSummary(sessionId, messages);
+  }
+
+  function updateMessagesForSession(
+    sessionId: number,
+    updater: (messages: ChatMessage[]) => ChatMessage[],
+  ) {
+    setMessagesBySession((current) => {
+      const nextMessages = updater(current[sessionId] || []);
+      updateSessionSummary(sessionId, nextMessages);
+      return { ...current, [sessionId]: nextMessages };
+    });
   }
 
   function updateDocumentFromTask(docId: number, task: TaskStatus) {
@@ -494,7 +560,97 @@ export default function App() {
     setPending("chat");
     setError(null);
     setChatTask(null);
+    let streamTaskId: string | null = null;
     try {
+      if (streamingEnabled) {
+        const userMessage = buildLocalMessage(session.session_id, "user", question.trim(), "SUCCESS");
+        const assistantMessage = buildLocalMessage(session.session_id, "assistant", "", "PROCESSING");
+        streamTaskId = `stream-${Date.now()}`;
+
+        updateMessagesForSession(session.session_id, (messages) => [
+          ...messages,
+          userMessage,
+          assistantMessage,
+        ]);
+        setChatTask({
+          task_id: streamTaskId,
+          state: "PROCESSING",
+          progress: 50,
+          meta: {
+            stage: "streaming",
+            session_id: session.session_id,
+            doc_id: currentDocument.doc_id,
+          },
+          error: null,
+        });
+        setSelectedTaskId(streamTaskId);
+
+        await streamChat(
+          apiBaseUrl,
+          {
+            session_id: session.session_id,
+            doc_id: currentDocument.doc_id,
+            content: question.trim(),
+            top_k: topK,
+          },
+          {
+            onDelta: (delta) => {
+              if (!delta) {
+                return;
+              }
+              updateMessagesForSession(session.session_id, (messages) =>
+                messages.map((message) =>
+                  message.message_id === assistantMessage.message_id
+                    ? {
+                        ...message,
+                        content: message.content + delta,
+                        updated_at: nowIso(),
+                        status: "PROCESSING",
+                      }
+                    : message,
+                ),
+              );
+            },
+            onDone: (meta) => {
+              setChatTask({
+                task_id: streamTaskId || `stream-${Date.now()}`,
+                state: "SUCCESS",
+                progress: 100,
+                meta: {
+                  stage: "finished",
+                  session_id: session.session_id,
+                  doc_id: currentDocument.doc_id,
+                  answer_source: meta.answer_source,
+                  context_mode: meta.context_mode,
+                  retrieved_count: meta.retrieved_count,
+                  citation_count: meta.citation_count,
+                  retrieval_ms: meta.retrieval_ms,
+                  ttft_ms: meta.ttft_ms,
+                  e2e_latency_ms: meta.e2e_latency_ms,
+                  prompt_tokens: meta.prompt_tokens,
+                  completion_tokens: meta.completion_tokens,
+                  cost_usd: meta.cost_usd,
+                  no_context: meta.no_context,
+                },
+                error: null,
+              });
+            },
+          },
+        );
+
+        try {
+          const messages = await listMessages(apiBaseUrl, session.session_id);
+          setMessagesForSession(session.session_id, messages);
+        } catch (refreshError) {
+          setError(
+            refreshError instanceof Error
+              ? `流式回答已完成，但刷新消息失败: ${refreshError.message}`
+              : "流式回答已完成，但刷新消息失败",
+          );
+        }
+        return;
+      }
+
       const submitted = await submitChat(
         apiBaseUrl,
         session.session_id,
@@ -530,6 +686,26 @@ export default function App() {
       const messages = await listMessages(apiBaseUrl, session.session_id);
       setMessagesForSession(session.session_id, messages);
     } catch (nextError) {
+      if (streamingEnabled) {
+        updateMessagesForSession(session.session_id, (messages) =>
+          messages.map((message, index) =>
+            index === messages.length - 1 && message.role === "assistant"
+              ? { ...message, status: "FAILURE", updated_at: nowIso() }
+              : message,
+          ),
+        );
+        setChatTask({
+          task_id: streamTaskId || `stream-${Date.now()}`,
+          state: "FAILURE",
+          progress: 100,
+          meta: {
+            stage: "failed",
+            session_id: session.session_id,
+            doc_id: currentDocument.doc_id,
+          },
+          error: nextError instanceof Error ? nextError.message : "流式提问失败",
+        });
+      }
       setError(nextError instanceof Error ? nextError.message : "提问失败");
     } finally {
       setPending(null);
