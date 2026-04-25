@@ -28,13 +28,28 @@ def normalize_raw_hit(raw_hit: Dict[str, Any], rank: int) -> RetrievedChunk:
     except Exception:
         score = None
 
+    faiss_score = raw_hit.get("faiss_score")
+    try:
+        faiss_score = float(faiss_score) if faiss_score is not None else None
+    except Exception:
+        faiss_score = None
+
+    rerank_score = raw_hit.get("rerank_score")
+    try:
+        rerank_score = float(rerank_score) if rerank_score is not None else None
+    except Exception:
+        rerank_score = None
+
     return RetrievedChunk(
-        rank=rank,
+        rank=raw_hit.get("rank") or rank,
         content=text,
         doc_id=raw_hit.get("doc_id"),
         chunk_id=raw_hit.get("chunk_id") or raw_hit.get("id"),
         chunk_index=raw_hit.get("chunk_index", raw_hit.get("seq", raw_hit.get("index"))),
         score=score,
+        faiss_score=faiss_score,
+        rerank_score=rerank_score,
+        original_rank=raw_hit.get("original_rank"),
     )
 
 
@@ -61,7 +76,7 @@ def deduplicate_chunks(chunks: List[RetrievedChunk]) -> List[RetrievedChunk]:
     return result
 
 
-def rerank_sequentially(chunks: List[RetrievedChunk]) -> List[RetrievedChunk]:
+def renumber_chunks(chunks: List[RetrievedChunk]) -> List[RetrievedChunk]:
     result: List[RetrievedChunk] = []
     for idx, chunk in enumerate(chunks, 1):
         result.append(
@@ -72,6 +87,9 @@ def rerank_sequentially(chunks: List[RetrievedChunk]) -> List[RetrievedChunk]:
                 chunk_id=chunk.chunk_id,
                 chunk_index=chunk.chunk_index,
                 score=chunk.score,
+                faiss_score=chunk.faiss_score,
+                rerank_score=chunk.rerank_score,
+                original_rank=chunk.original_rank,
             )
         )
     return result
@@ -97,7 +115,7 @@ def assemble_context(
     chunks = normalize_hits(raw_hits)
     chunks = deduplicate_chunks(chunks)
     chunks = chunks[: (max_chunks or CHAT_TOP_K)]
-    chunks = rerank_sequentially(chunks)
+    chunks = renumber_chunks(chunks)
     mode = detect_context_mode(chunks)
     return chunks, mode
 

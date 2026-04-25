@@ -50,6 +50,9 @@ def _build_citations_from_hits(hits: List[Dict[str, Any]]) -> List[Dict[str, Any
             "doc_id": hit.get("doc_id"),
             "chunk_index": hit.get("chunk_index", hit.get("seq", hit.get("index"))),
             "score": hit.get("score"),
+            "faiss_score": hit.get("faiss_score"),
+            "rerank_score": hit.get("rerank_score"),
+            "original_rank": hit.get("original_rank"),
             "preview": (hit.get("content") or hit.get("text") or hit.get("chunk_text") or "")[:200],
         })
     return citations
@@ -176,6 +179,10 @@ def run_chat_for_message(
     top_k = top_k or 3
     started_at = time.perf_counter()
     retrieval_ms = None
+    rerank_ms = None
+    candidate_top_k = None
+    final_top_k = top_k
+    rerank_meta = {}
     prompt_tokens = None
     completion_tokens = None
     total_tokens = None
@@ -239,7 +246,12 @@ def run_chat_for_message(
                 top_k=top_k,
             )
             raw_hits = retrieval_result.get("hits", [])
-            retrieval_ms = (retrieval_result.get("metrics") or {}).get("retrieval_ms")
+            retrieval_metrics = retrieval_result.get("metrics") or {}
+            retrieval_ms = retrieval_metrics.get("retrieval_ms")
+            rerank_ms = retrieval_metrics.get("rerank_ms")
+            candidate_top_k = retrieval_metrics.get("candidate_top_k")
+            final_top_k = retrieval_metrics.get("final_top_k") or top_k
+            rerank_meta = retrieval_metrics.get("rerank") or {}
 
             chunks, context_mode = assemble_context(raw_hits, max_chunks=top_k)
             chunk_dicts = _chunks_to_dicts(chunks)
@@ -269,6 +281,10 @@ def run_chat_for_message(
                     "raw_hit_count": len(raw_hits),
                     "context_mode": context_mode,
                     "retrieval_ms": retrieval_ms,
+                    "rerank_ms": rerank_ms,
+                    "candidate_top_k": candidate_top_k,
+                    "final_top_k": final_top_k,
+                    "rerank": rerank_meta,
                 },
                 progress_callback=progress_callback,
             )
@@ -339,6 +355,10 @@ def run_chat_for_message(
                 "user_message_id": user_message_id,
                 "context_mode": context_mode,
                 "retrieval_ms": retrieval_ms,
+                "rerank_ms": rerank_ms,
+                "candidate_top_k": candidate_top_k,
+                "final_top_k": final_top_k,
+                "rerank": rerank_meta,
                 "e2e_latency_ms": e2e_latency_ms,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
@@ -365,6 +385,9 @@ def run_chat_for_message(
                     "answer_source": answer_source,
                     "context_mode": context_mode,
                     "retrieval_ms": retrieval_ms,
+                    "rerank_ms": rerank_ms,
+                    "candidate_top_k": candidate_top_k,
+                    "final_top_k": final_top_k,
                     "e2e_latency_ms": e2e_latency_ms,
                 },
                 progress_callback=progress_callback,
@@ -395,6 +418,9 @@ def run_chat_for_message(
                 "answer_source": answer_source,
                 "context_mode": context_mode,
                 "retrieval_ms": retrieval_ms,
+                "rerank_ms": rerank_ms,
+                "candidate_top_k": candidate_top_k,
+                "final_top_k": final_top_k,
                 "e2e_latency_ms": e2e_latency_ms,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
@@ -439,6 +465,10 @@ def run_chat_for_message(
                     "assistant_message_id": assistant_message_id,
                     "total_tokens": total_tokens,
                     "llm_latency_ms": llm_result.get("latency_ms") if llm_result else None,
+                    "rerank_ms": rerank_ms,
+                    "candidate_top_k": candidate_top_k,
+                    "final_top_k": final_top_k,
+                    "rerank": rerank_meta,
                     "token_source": usage_metrics["token_source"],
                 },
             )
@@ -500,7 +530,13 @@ def run_chat_for_message(
             context_mode=context_mode,
             answer_source=answer_source,
             error_message=str(e),
-            extra={"total_tokens": total_tokens},
+            extra={
+                "total_tokens": total_tokens,
+                "rerank_ms": rerank_ms,
+                "candidate_top_k": candidate_top_k,
+                "final_top_k": final_top_k,
+                "rerank": rerank_meta,
+            },
         )
 
         raise

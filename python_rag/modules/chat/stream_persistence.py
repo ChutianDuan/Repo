@@ -5,11 +5,18 @@ from python_rag.modules.chat.repo import bulk_insert_citations
 
 
 def _normalize_hit_for_citation(hit: Dict[str, Any], rank: int) -> Dict[str, Any]:
+    citation_score = hit.get("rerank_score")
+    if citation_score is None:
+        citation_score = hit.get("score")
+
     return {
         "doc_id": hit.get("doc_id"),
         "chunk_id": hit.get("chunk_id"),
         "chunk_index": hit.get("chunk_index"),
-        "score": hit.get("score") or 0,
+        "score": citation_score or 0,
+        "faiss_score": hit.get("faiss_score"),
+        "rerank_score": hit.get("rerank_score"),
+        "original_rank": hit.get("original_rank"),
         "content": hit.get("content"),
         "snippet": (hit.get("snippet") or hit.get("content") or "")[:300],
         "rank": rank,

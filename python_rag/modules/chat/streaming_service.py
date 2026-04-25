@@ -147,6 +147,10 @@ def stream_chat_for_message(
     top_k = top_k or CHAT_TOP_K
     started_at = time.perf_counter()
     retrieval_ms = None
+    rerank_ms = None
+    candidate_top_k = None
+    final_top_k = top_k
+    rerank_meta = {}
     ttft_ms = None
     prompt_tokens = None
     completion_tokens = None
@@ -173,7 +177,12 @@ def stream_chat_for_message(
                 top_k=top_k,
             )
             raw_hits = retrieval_result.get("hits", [])
-            retrieval_ms = (retrieval_result.get("metrics") or {}).get("retrieval_ms")
+            retrieval_metrics = retrieval_result.get("metrics") or {}
+            retrieval_ms = retrieval_metrics.get("retrieval_ms")
+            rerank_ms = retrieval_metrics.get("rerank_ms")
+            candidate_top_k = retrieval_metrics.get("candidate_top_k")
+            final_top_k = retrieval_metrics.get("final_top_k") or top_k
+            rerank_meta = retrieval_metrics.get("rerank") or {}
             chunks, context_mode = assemble_context(raw_hits, max_chunks=top_k)
             chunk_dicts = _chunks_to_dicts(chunks)
             citation_count = len(raw_hits)
@@ -296,6 +305,9 @@ def stream_chat_for_message(
                 extra_meta={
                     "user_message_id": user_message_id,
                     "retrieval_ms": retrieval_ms,
+                    "rerank_ms": rerank_ms,
+                    "candidate_top_k": candidate_top_k,
+                    "final_top_k": final_top_k,
                     "ttft_ms": ttft_ms,
                     "e2e_latency_ms": e2e_latency_ms,
                     "citation_count": citation_count,
@@ -309,6 +321,7 @@ def stream_chat_for_message(
                     "llm_finish_reason": llm_result.get("finish_reason") if llm_result else None,
                     "llm_latency_ms": llm_result.get("latency_ms") if llm_result else None,
                     "llm_ttft_ms": llm_result.get("ttft_ms") if llm_result else None,
+                    "rerank": rerank_meta,
                 },
             )
             update_message_status(user_message_id, "SUCCESS")
@@ -336,6 +349,10 @@ def stream_chat_for_message(
                     "total_tokens": total_tokens,
                     "llm_latency_ms": llm_result.get("latency_ms") if llm_result else None,
                     "llm_ttft_ms": llm_result.get("ttft_ms") if llm_result else None,
+                    "rerank_ms": rerank_ms,
+                    "candidate_top_k": candidate_top_k,
+                    "final_top_k": final_top_k,
+                    "rerank": rerank_meta,
                     "token_source": usage_metrics["token_source"],
                 },
             )
@@ -348,6 +365,9 @@ def stream_chat_for_message(
                     "retrieved_count": len(chunks),
                     "citation_count": citation_count,
                     "retrieval_ms": retrieval_ms,
+                    "rerank_ms": rerank_ms,
+                    "candidate_top_k": candidate_top_k,
+                    "final_top_k": final_top_k,
                     "ttft_ms": ttft_ms,
                     "e2e_latency_ms": e2e_latency_ms,
                     "prompt_tokens": prompt_tokens,
@@ -390,6 +410,12 @@ def stream_chat_for_message(
             context_mode=context_mode,
             answer_source=answer_source,
             error_message=str(e),
-            extra={"total_tokens": total_tokens},
+            extra={
+                "total_tokens": total_tokens,
+                "rerank_ms": rerank_ms,
+                "candidate_top_k": candidate_top_k,
+                "final_top_k": final_top_k,
+                "rerank": rerank_meta,
+            },
         )
         yield build_error_event(str(e))

@@ -51,6 +51,7 @@ CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
 
 CHAT_MAX_CHUNK_CHARS = int(os.getenv("CHAT_MAX_CHUNK_CHARS", "1000"))
 CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))
+CHAT_CANDIDATE_TOP_K = int(os.getenv("CHAT_CANDIDATE_TOP_K", "30"))
 CHAT_MIN_RETRIEVAL_SCORE = float(os.getenv("CHAT_MIN_RETRIEVAL_SCORE", "0.0"))
 STREAM_DELTA_CHARS = int(os.getenv("STREAM_DELTA_CHARS", "20"))
 STREAM_MOCK_DELAY_MS = int(os.getenv("STREAM_MOCK_DELAY_MS", "30"))
@@ -71,6 +72,24 @@ EMBEDDING_NORMALIZE = os.getenv(
 ).lower() in ("1", "true", "yes", "on")
 EMBEDDING_QUERY_PREFIX = os.getenv("EMBEDDING_QUERY_PREFIX", "")
 EMBEDDING_DOCUMENT_PREFIX = os.getenv("EMBEDDING_DOCUMENT_PREFIX", "")
+
+RERANK_ENABLE = os.getenv("RERANK_ENABLE", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+RERANK_PROVIDER = os.getenv("RERANK_PROVIDER", "cross_encoder").strip().lower()
+RERANK_MODEL = os.getenv(
+    "RERANK_MODEL",
+    "BAAI/bge-reranker-base",
+).strip()
+RERANK_DEVICE = os.getenv("RERANK_DEVICE", EMBEDDING_DEVICE).strip()
+RERANK_BATCH_SIZE = int(os.getenv("RERANK_BATCH_SIZE", "16"))
+RERANK_FALLBACK_TO_FAISS = os.getenv(
+    "RERANK_FALLBACK_TO_FAISS",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 
 LLM_ENABLE = os.getenv("LLM_ENABLE", "true").lower() in ("1", "true", "yes", "on")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")

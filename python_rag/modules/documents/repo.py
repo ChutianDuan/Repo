@@ -210,8 +210,7 @@ def list_chunks_by_doc_id(doc_id, limit=200):
     conn = get_mysql_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                """
+            sql = """
                 SELECT
                     id,
                     doc_id,
@@ -222,10 +221,13 @@ def list_chunks_by_doc_id(doc_id, limit=200):
                 FROM doc_chunks
                 WHERE doc_id=%s
                 ORDER BY chunk_index ASC
-                LIMIT %s
-                """,
-                (doc_id, limit),
-            )
+            """
+            params = [doc_id]
+            if limit is not None:
+                sql += " LIMIT %s"
+                params.append(limit)
+
+            cursor.execute(sql, tuple(params))
             return cursor.fetchall()
     finally:
         conn.close()

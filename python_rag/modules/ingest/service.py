@@ -164,7 +164,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         )
 
         # 一定重新从 DB 读取，拿真实 chunk_id
-        chunk_rows = list_chunks_by_doc_id(doc_id)
+        chunk_rows = list_chunks_by_doc_id(doc_id, limit=None)
         if not chunk_rows:
             raise AppError(ERR_CELERY_ERROR, "no chunks found after insert")
 

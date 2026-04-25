@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -13,7 +13,11 @@ class SearchHit(BaseModel):
     doc_id: int
     chunk_id: int
     chunk_index: int
+    rank: Optional[int] = None
     score: float
+    faiss_score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    original_rank: Optional[int] = None
     content: str
     snippet: str
 
@@ -21,12 +25,17 @@ class SearchHit(BaseModel):
 class SearchMetrics(BaseModel):
     embedding_ms: int | None = None
     faiss_ms: int | None = None
+    rerank_ms: int | None = None
     retrieval_ms: int | None = None
+    candidate_top_k: int | None = None
+    final_top_k: int | None = None
+    rerank: Optional[Dict[str, Any]] = None
 
 class SearchResponseData(BaseModel):
     doc_id: int
     query: str
     top_k: int
+    candidate_top_k: Optional[int] = None
     hits: List[SearchHit]
     metrics: SearchMetrics | None = None
 
@@ -43,6 +52,9 @@ class RetrievedChunk(BaseModel):
     chunk_id: Optional[int] = None
     chunk_index: Optional[int]=None
     score: Optional[float] = None
+    faiss_score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    original_rank: Optional[int] = None
 
 class PromptBuildResult(BaseModel):
     system_instruction: str
@@ -50,4 +62,3 @@ class PromptBuildResult(BaseModel):
     context_text:str
     context_count:int
     mode:str
-

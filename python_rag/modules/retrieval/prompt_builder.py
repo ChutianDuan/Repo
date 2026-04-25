@@ -37,6 +37,10 @@ def build_context_block(chunks: List[RetrievedChunk]) -> str:
             meta_parts.append("chunk_index=%s" % chunk.chunk_index)
         if chunk.score is not None:
             meta_parts.append("score=%.4f" % chunk.score)
+        if chunk.rerank_score is not None:
+            meta_parts.append("rerank_score=%.4f" % chunk.rerank_score)
+        if chunk.original_rank is not None:
+            meta_parts.append("original_rank=%s" % chunk.original_rank)
 
         if meta_parts:
             header += " | " + " | ".join(meta_parts)

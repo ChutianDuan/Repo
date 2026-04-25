@@ -105,6 +105,13 @@ class ConversationAssembler:
                     meta.append(f"score={float(chunk['score']):.4f}")
                 except Exception:
                     meta.append(f"score={chunk['score']}")
+            if chunk.get("rerank_score") is not None:
+                try:
+                    meta.append(f"rerank_score={float(chunk['rerank_score']):.4f}")
+                except Exception:
+                    meta.append(f"rerank_score={chunk['rerank_score']}")
+            if chunk.get("original_rank") is not None:
+                meta.append(f"original_rank={chunk['original_rank']}")
 
             header = f"[Chunk {i}]"
             if meta:

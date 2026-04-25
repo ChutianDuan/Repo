@@ -16,13 +16,16 @@ def bulk_insert_citations(message_id, hits):
             """
             data = []
             for item in hits:
+                citation_score = item.get("rerank_score")
+                if citation_score is None:
+                    citation_score = item.get("score")
                 data.append(
                     (
                         message_id,
                         item["doc_id"],
                         item["chunk_id"],
                         item["chunk_index"],
-                        float(item.get("score") or 0),
+                        float(citation_score or 0),
                         item.get("snippet") or (item.get("content") or "")[:300],
                     )
                 )
