@@ -13,6 +13,8 @@ def internal_search(req: SearchRequest):
             doc_id=req.doc_id,
             query=req.query,
             top_k=req.top_k,
+            relevant_chunk_ids=req.relevant_chunk_ids,
+            relevant_chunk_indexes=req.relevant_chunk_indexes,
         )
         return {
             "code": 0,

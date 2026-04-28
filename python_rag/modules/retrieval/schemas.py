@@ -7,6 +7,8 @@ class SearchRequest(BaseModel):
     doc_id : int = Field(..., gt=0)
     query : str = Field(..., min_length=1)
     top_k : int = Field(5, ge=1, le=100)
+    relevant_chunk_ids: Optional[List[int]] = None
+    relevant_chunk_indexes: Optional[List[int]] = None
 
 
 class SearchHit(BaseModel):
@@ -30,6 +32,10 @@ class SearchMetrics(BaseModel):
     candidate_top_k: int | None = None
     final_top_k: int | None = None
     rerank: Optional[Dict[str, Any]] = None
+    recall_at_k: float | None = None
+    mrr: float | None = None
+    ndcg: float | None = None
+    relevant_count: int | None = None
 
 class SearchResponseData(BaseModel):
     doc_id: int

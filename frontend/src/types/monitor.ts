@@ -33,13 +33,19 @@ export interface QueueMetrics {
   running: number;
   failed: number;
   worker_count?: number | null;
+  worker_concurrency_configured?: number | null;
+  worker_concurrency_observed?: number | null;
 }
 
 export interface LatencyMetrics {
   api_ms?: number | null;
+  ttft_ms?: number | null;
   chat_ms?: number | null;
+  response_ms?: number | null;
   retrieval_ms?: number | null;
+  faiss_ms?: number | null;
   ingest_ms?: number | null;
+  document_parse_ms?: number | null;
 }
 
 export interface LatencyDistribution {
@@ -59,6 +65,11 @@ export interface ExperienceMetrics {
   ingest_ready_ms: LatencyDistribution;
 }
 
+export interface IngestMetrics {
+  document_parse_ms: LatencyDistribution;
+  chunk_count: LatencyDistribution;
+}
+
 export interface CostMetrics {
   prompt_tokens_avg?: number | null;
   prompt_tokens_total?: number | null;
@@ -75,19 +86,28 @@ export interface ThroughputMetrics {
   concurrent_sessions?: number | null;
   worker_queue_depth?: number | null;
   active_sse_connections?: number | null;
+  celery_concurrency_configured?: number | null;
+  celery_concurrency_observed?: number | null;
+  celery_pool?: string | null;
 }
 
 export interface QualityMetrics {
   error_rate?: number | null;
   timeout_rate?: number | null;
   retrieval_ms: LatencyDistribution;
+  faiss_ms: LatencyDistribution;
   citation_count_avg?: number | null;
   no_context_ratio?: number | null;
+  retrieval_eval_samples?: number | null;
+  recall_at_k_avg?: number | null;
+  mrr_avg?: number | null;
+  ndcg_avg?: number | null;
 }
 
 export interface RagMetrics {
   documents_ready: number;
   total_chunks: number | null;
+  max_document_size_bytes?: number | null;
   top_k?: number;
   retrieval_mode?: string;
 }
@@ -99,6 +119,7 @@ export interface MonitorOverview {
   queue: QueueMetrics;
   latency: LatencyMetrics;
   rag: RagMetrics;
+  ingest: IngestMetrics;
   experience: ExperienceMetrics;
   cost: CostMetrics;
   throughput: ThroughputMetrics;

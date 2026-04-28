@@ -111,18 +111,29 @@ function buildFallbackOverview(
       running,
       failed,
       worker_count: null,
+      worker_concurrency_configured: null,
+      worker_concurrency_observed: null,
     },
     latency: {
       api_ms: apiLatencyMs,
+      ttft_ms: null,
       chat_ms: null,
+      response_ms: null,
       retrieval_ms: null,
+      faiss_ms: null,
       ingest_ms: null,
+      document_parse_ms: null,
     },
     rag: {
       documents_ready: readyDocuments.length,
       total_chunks: knownChunks.length > 0 ? knownChunks.reduce((sum, value) => sum + value, 0) : null,
+      max_document_size_bytes: null,
       top_k: topK,
       retrieval_mode: "document",
+    },
+    ingest: {
+      document_parse_ms: {},
+      chunk_count: {},
     },
     experience: {
       ttft_ms: {},
@@ -144,13 +155,21 @@ function buildFallbackOverview(
       concurrent_sessions: null,
       worker_queue_depth: pending + running,
       active_sse_connections: null,
+      celery_concurrency_configured: null,
+      celery_concurrency_observed: null,
+      celery_pool: null,
     },
     quality: {
       retrieval_ms: {},
+      faiss_ms: {},
       error_rate: null,
       timeout_rate: null,
       citation_count_avg: null,
       no_context_ratio: null,
+      retrieval_eval_samples: null,
+      recall_at_k_avg: null,
+      mrr_avg: null,
+      ndcg_avg: null,
     },
     samples: {
       total: tasks.length,
@@ -209,7 +228,7 @@ export default function App() {
   const [newUserName, setNewUserName] = useState("");
   const [topK, setTopKState] = useState(3);
   const [ragEnabled, setRagEnabled] = useState(true);
-  const [streamingEnabled, setStreamingEnabled] = useState(false);
+  const [streamingEnabled, setStreamingEnabled] = useState(true);
   const [chunkSize, setChunkSize] = useState("800");
   const [chunkOverlap, setChunkOverlap] = useState("120");
   const [modelName, setModelName] = useState("local-llm");
@@ -552,7 +571,8 @@ export default function App() {
       setError("文档索引尚未完成，请等待 READY 后再提问");
       return;
     }
-    if (!question.trim()) {
+    const prompt = question.trim();
+    if (!prompt) {
       setError("请输入问题");
       return;
     }
@@ -560,12 +580,41 @@ export default function App() {
     setPending("chat");
     setError(null);
     setChatTask(null);
+    setQuestion("");
     let streamTaskId: string | null = null;
     try {
       if (streamingEnabled) {
-        const userMessage = buildLocalMessage(session.session_id, "user", question.trim(), "SUCCESS");
+        const userMessage = buildLocalMessage(session.session_id, "user", prompt, "SUCCESS");
         const assistantMessage = buildLocalMessage(session.session_id, "assistant", "", "PROCESSING");
         streamTaskId = `stream-${Date.now()}`;
+        let queuedDelta = "";
+        let animationFrame: number | null = null;
+        const flushDelta = () => {
+          const nextDelta = queuedDelta;
+          queuedDelta = "";
+          animationFrame = null;
+          if (!nextDelta) {
+            return;
+          }
+          updateMessagesForSession(session.session_id, (messages) =>
+            messages.map((message) =>
+              message.message_id === assistantMessage.message_id
+                ? {
+                    ...message,
+                    content: message.content + nextDelta,
+                    updated_at: nowIso(),
+                    status: "PROCESSING",
+                  }
+                : message,
+            ),
+          );
+        };
+        const queueDelta = (delta: string) => {
+          queuedDelta += delta;
+          if (animationFrame === null) {
+            animationFrame = window.requestAnimationFrame(flushDelta);
+          }
+        };
 
         updateMessagesForSession(session.session_id, (messages) => [
           ...messages,
@@ -585,58 +634,79 @@ export default function App() {
         });
         setSelectedTaskId(streamTaskId);
 
-        await streamChat(
-          apiBaseUrl,
-          {
-            session_id: session.session_id,
-            doc_id: currentDocument.doc_id,
-            content: question.trim(),
-            top_k: topK,
-          },
-          {
-            onDelta: (delta) => {
-              if (!delta) {
-                return;
-              }
-              updateMessagesForSession(session.session_id, (messages) =>
-                messages.map((message) =>
-                  message.message_id === assistantMessage.message_id
-                    ? {
-                        ...message,
-                        content: message.content + delta,
-                        updated_at: nowIso(),
-                        status: "PROCESSING",
-                      }
-                    : message,
-                ),
-              );
+        try {
+          await streamChat(
+            apiBaseUrl,
+            {
+              session_id: session.session_id,
+              doc_id: currentDocument.doc_id,
+              content: prompt,
+              top_k: topK,
             },
-            onDone: (meta) => {
-              setChatTask({
-                task_id: streamTaskId || `stream-${Date.now()}`,
-                state: "SUCCESS",
-                progress: 100,
-                meta: {
-                  stage: "finished",
-                  session_id: session.session_id,
-                  doc_id: currentDocument.doc_id,
-                  answer_source: meta.answer_source,
-                  context_mode: meta.context_mode,
-                  retrieved_count: meta.retrieved_count,
-                  citation_count: meta.citation_count,
-                  retrieval_ms: meta.retrieval_ms,
-                  ttft_ms: meta.ttft_ms,
-                  e2e_latency_ms: meta.e2e_latency_ms,
-                  prompt_tokens: meta.prompt_tokens,
-                  completion_tokens: meta.completion_tokens,
-                  cost_usd: meta.cost_usd,
-                  no_context: meta.no_context,
-                },
-                error: null,
-              });
+            {
+              onDelta: (delta) => {
+                if (!delta) {
+                  return;
+                }
+                queueDelta(delta);
+              },
+              onDone: (meta) => {
+                if (animationFrame !== null) {
+                  window.cancelAnimationFrame(animationFrame);
+                }
+                flushDelta();
+                updateMessagesForSession(session.session_id, (messages) =>
+                  messages.map((message) =>
+                    message.message_id === assistantMessage.message_id
+                      ? {
+                          ...message,
+                          status: "SUCCESS",
+                          updated_at: nowIso(),
+                          meta: {
+                            ...message.meta,
+                            answer_source: meta.answer_source,
+                            context_mode: meta.context_mode,
+                            retrieved_count: meta.retrieved_count,
+                            citation_count: meta.citation_count,
+                            retrieval_ms: meta.retrieval_ms,
+                            ttft_ms: meta.ttft_ms,
+                            e2e_latency_ms: meta.e2e_latency_ms,
+                          },
+                        }
+                      : message,
+                  ),
+                );
+                setChatTask({
+                  task_id: streamTaskId || `stream-${Date.now()}`,
+                  state: "SUCCESS",
+                  progress: 100,
+                  meta: {
+                    stage: "finished",
+                    session_id: session.session_id,
+                    doc_id: currentDocument.doc_id,
+                    answer_source: meta.answer_source,
+                    context_mode: meta.context_mode,
+                    retrieved_count: meta.retrieved_count,
+                    citation_count: meta.citation_count,
+                    retrieval_ms: meta.retrieval_ms,
+                    ttft_ms: meta.ttft_ms,
+                    e2e_latency_ms: meta.e2e_latency_ms,
+                    prompt_tokens: meta.prompt_tokens,
+                    completion_tokens: meta.completion_tokens,
+                    cost_usd: meta.cost_usd,
+                    no_context: meta.no_context,
+                  },
+                  error: null,
+                });
+              },
             },
-          },
-        );
+          );
+        } finally {
+          if (animationFrame !== null) {
+            window.cancelAnimationFrame(animationFrame);
+            flushDelta();
+          }
+        }
 
         try {
           const messages = await listMessages(apiBaseUrl, session.session_id);
@@ -655,7 +725,7 @@ export default function App() {
         apiBaseUrl,
         session.session_id,
         currentDocument.doc_id,
-        question.trim(),
+        prompt,
         topK,
       );
       const taskDefaults: Partial<TaskRecord> = {
@@ -707,6 +777,7 @@ export default function App() {
         });
       }
       setError(nextError instanceof Error ? nextError.message : "提问失败");
+      setQuestion((current) => current || prompt);
     } finally {
       setPending(null);
     }
@@ -753,7 +824,7 @@ export default function App() {
         return merged;
       });
     } catch {
-      setTaskListError("当前网关暂未暴露 `/v1/tasks` 列表接口，任务页使用本浏览器已知任务并继续轮询单任务状态。");
+      setTaskListError("任务列表暂不可用，已保留本地任务状态。");
     }
     await refreshKnownTasks();
   }
@@ -770,7 +841,7 @@ export default function App() {
       recordMetricPoint(normalized);
     } catch {
       setMonitorOverview(null);
-      setMonitorError("未检测到 `/v1/monitor/overview`，当前 Monitor 使用 `/health` 与前端已知任务的降级数据。");
+      setMonitorError("监控数据暂不可用，已显示基础健康状态。");
     }
   }
 
@@ -844,6 +915,7 @@ export default function App() {
         question={question}
         topK={topK}
         ragEnabled={ragEnabled}
+        streamingEnabled={streamingEnabled}
         pending={pending}
         selectedFileName={selectedFileName}
         error={error}

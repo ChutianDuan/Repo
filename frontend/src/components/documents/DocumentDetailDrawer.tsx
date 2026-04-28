@@ -51,11 +51,8 @@ export function DocumentDetailDrawer({ document, tasks }: DocumentDetailDrawerPr
       </section>
 
       <section className="drawer-section">
-        <h3>Chunk Preview</h3>
-        <p className="muted">
-          当前网关还未暴露 chunk 列表接口；索引完成后可从任务 meta 看到 chunk_count，后续接
-          `/v1/documents/:id/chunks` 后这里直接展示片段。
-        </p>
+        <h3>Chunks</h3>
+        <p className="muted">{document.chunks ? `${document.chunks} chunks indexed` : "暂无 chunk 信息。"}</p>
       </section>
 
       <section className="drawer-section">

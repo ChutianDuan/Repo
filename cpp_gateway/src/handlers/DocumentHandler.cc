@@ -72,6 +72,20 @@ fs::path getUploadDir() {
     return uploadDir.lexically_normal();
 }
 
+long long maxDocumentSizeBytes() {
+    const char* envValue = std::getenv("MAX_DOCUMENT_SIZE_BYTES");
+    if (!envValue || envValue[0] == '\0') {
+        return 100LL * 1024LL * 1024LL;
+    }
+
+    try {
+        const auto parsed = std::stoll(envValue);
+        return parsed > 0 ? parsed : 100LL * 1024LL * 1024LL;
+    } catch (...) {
+        return 100LL * 1024LL * 1024LL;
+    }
+}
+
 void tryDeleteFile(const std::string& storagePath) {
     try {
         if (!storagePath.empty()) {
@@ -209,6 +223,18 @@ void DocumentService::uploadAndSubmit(
     const std::string mime = guessMime(file);
     const std::string sha256 = sha256Hex(std::string(file.fileContent()));
     const auto sizeBytes = static_cast<long long>(file.fileContent().size());
+    const auto maxSizeBytes = maxDocumentSizeBytes();
+    if (sizeBytes > maxSizeBytes) {
+        Json::Value json;
+        json["code"] = 400;
+        json["message"] = "upload file is too large";
+        json["max_document_size_bytes"] = Json::Int64(maxSizeBytes);
+        auto resp = HttpResponse::newHttpJsonResponse(json);
+        resp->setStatusCode(k400BadRequest);
+        (*sharedCallback)(resp);
+        return;
+    }
+
     const std::string storedName = buildStoredFileName(userId, originalName, sha256);
     const std::string storagePath = (getUploadDir() / storedName).string();
 

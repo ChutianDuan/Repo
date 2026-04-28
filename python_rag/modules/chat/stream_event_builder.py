@@ -9,8 +9,7 @@ def build_sse_event(data: Dict[str, Any], event: Optional[str] = None) -> str:
     if event:
         lines.append("event: %s" % event)
     lines.append("data: %s" % json.dumps(data, ensure_ascii=False))
-    lines.append("")
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n\n"
 
 def build_delta_event(delta: str, index: int) -> str:
     return build_sse_event({

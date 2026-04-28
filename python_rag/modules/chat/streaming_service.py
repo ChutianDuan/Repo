@@ -147,6 +147,7 @@ def stream_chat_for_message(
     top_k = top_k or CHAT_TOP_K
     started_at = time.perf_counter()
     retrieval_ms = None
+    faiss_ms = None
     rerank_ms = None
     candidate_top_k = None
     final_top_k = top_k
@@ -179,6 +180,7 @@ def stream_chat_for_message(
             raw_hits = retrieval_result.get("hits", [])
             retrieval_metrics = retrieval_result.get("metrics") or {}
             retrieval_ms = retrieval_metrics.get("retrieval_ms")
+            faiss_ms = retrieval_metrics.get("faiss_ms")
             rerank_ms = retrieval_metrics.get("rerank_ms")
             candidate_top_k = retrieval_metrics.get("candidate_top_k")
             final_top_k = retrieval_metrics.get("final_top_k") or top_k
@@ -305,6 +307,7 @@ def stream_chat_for_message(
                 extra_meta={
                     "user_message_id": user_message_id,
                     "retrieval_ms": retrieval_ms,
+                    "faiss_ms": faiss_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -349,6 +352,7 @@ def stream_chat_for_message(
                     "total_tokens": total_tokens,
                     "llm_latency_ms": llm_result.get("latency_ms") if llm_result else None,
                     "llm_ttft_ms": llm_result.get("ttft_ms") if llm_result else None,
+                    "faiss_ms": faiss_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -365,6 +369,7 @@ def stream_chat_for_message(
                     "retrieved_count": len(chunks),
                     "citation_count": citation_count,
                     "retrieval_ms": retrieval_ms,
+                    "faiss_ms": faiss_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -412,6 +417,7 @@ def stream_chat_for_message(
             error_message=str(e),
             extra={
                 "total_tokens": total_tokens,
+                "faiss_ms": faiss_ms,
                 "rerank_ms": rerank_ms,
                 "candidate_top_k": candidate_top_k,
                 "final_top_k": final_top_k,

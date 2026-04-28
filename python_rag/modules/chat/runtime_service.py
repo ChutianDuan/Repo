@@ -179,6 +179,7 @@ def run_chat_for_message(
     top_k = top_k or 3
     started_at = time.perf_counter()
     retrieval_ms = None
+    faiss_ms = None
     rerank_ms = None
     candidate_top_k = None
     final_top_k = top_k
@@ -248,6 +249,7 @@ def run_chat_for_message(
             raw_hits = retrieval_result.get("hits", [])
             retrieval_metrics = retrieval_result.get("metrics") or {}
             retrieval_ms = retrieval_metrics.get("retrieval_ms")
+            faiss_ms = retrieval_metrics.get("faiss_ms")
             rerank_ms = retrieval_metrics.get("rerank_ms")
             candidate_top_k = retrieval_metrics.get("candidate_top_k")
             final_top_k = retrieval_metrics.get("final_top_k") or top_k
@@ -281,6 +283,7 @@ def run_chat_for_message(
                     "raw_hit_count": len(raw_hits),
                     "context_mode": context_mode,
                     "retrieval_ms": retrieval_ms,
+                    "faiss_ms": faiss_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -355,6 +358,7 @@ def run_chat_for_message(
                 "user_message_id": user_message_id,
                 "context_mode": context_mode,
                 "retrieval_ms": retrieval_ms,
+                "faiss_ms": faiss_ms,
                 "rerank_ms": rerank_ms,
                 "candidate_top_k": candidate_top_k,
                 "final_top_k": final_top_k,
@@ -385,6 +389,7 @@ def run_chat_for_message(
                     "answer_source": answer_source,
                     "context_mode": context_mode,
                     "retrieval_ms": retrieval_ms,
+                    "faiss_ms": faiss_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -418,6 +423,7 @@ def run_chat_for_message(
                 "answer_source": answer_source,
                 "context_mode": context_mode,
                 "retrieval_ms": retrieval_ms,
+                "faiss_ms": faiss_ms,
                 "rerank_ms": rerank_ms,
                 "candidate_top_k": candidate_top_k,
                 "final_top_k": final_top_k,
@@ -465,6 +471,7 @@ def run_chat_for_message(
                     "assistant_message_id": assistant_message_id,
                     "total_tokens": total_tokens,
                     "llm_latency_ms": llm_result.get("latency_ms") if llm_result else None,
+                    "faiss_ms": faiss_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -533,6 +540,7 @@ def run_chat_for_message(
             extra={
                 "total_tokens": total_tokens,
                 "rerank_ms": rerank_ms,
+                "faiss_ms": faiss_ms,
                 "candidate_top_k": candidate_top_k,
                 "final_top_k": final_top_k,
                 "rerank": rerank_meta,

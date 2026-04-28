@@ -1,5 +1,6 @@
 import os
 
+from python_rag.config import MAX_DOCUMENT_SIZE_BYTES
 from python_rag.modules.documents.schemas import DocumentState
 from python_rag.core.error_codes import (
     ERR_DB_ERROR,
@@ -25,6 +26,13 @@ def save_uploaded_document(user_id, upload_file):
         content = upload_file.file.read()
         if not content:
             raise AppError(ERR_INVALID_REQUEST, "empty upload file")
+        if len(content) > MAX_DOCUMENT_SIZE_BYTES:
+            raise AppError(
+                ERR_INVALID_REQUEST,
+                "upload file is too large; max supported size is {0} bytes".format(
+                    MAX_DOCUMENT_SIZE_BYTES,
+                ),
+            )
 
         file_path = build_upload_path(upload_file.filename)
         save_bytes_to_path(content, file_path)

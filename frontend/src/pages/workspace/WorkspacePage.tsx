@@ -12,6 +12,7 @@ interface WorkspacePageProps {
   question: string;
   topK: number;
   ragEnabled: boolean;
+  streamingEnabled: boolean;
   pending: string | null;
   selectedFileName: string | null;
   error: string | null;
@@ -43,6 +44,7 @@ export function WorkspacePage({
   question,
   topK,
   ragEnabled,
+  streamingEnabled,
   pending,
   selectedFileName,
   error,
@@ -74,6 +76,7 @@ export function WorkspacePage({
         question={question}
         topK={topK}
         ragEnabled={ragEnabled}
+        streamingEnabled={streamingEnabled}
         pending={pending}
         canAsk={canAsk}
         selectedFileName={selectedFileName}

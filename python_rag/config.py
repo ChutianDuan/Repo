@@ -29,6 +29,7 @@ APP_PORT = int(os.getenv("APP_PORT", "8000"))
 
 STORAGE_ROOT = _resolve_repo_path(os.getenv("STORAGE_ROOT", "./data"))
 UPLOAD_DIR = _resolve_repo_path(os.getenv("UPLOAD_DIR", "./data/uploads"))
+MAX_DOCUMENT_SIZE_BYTES = int(os.getenv("MAX_DOCUMENT_SIZE_BYTES", str(100 * 1024 * 1024)))
 INGEST_CHUNK_SIZE = int(os.getenv("INGEST_CHUNK_SIZE", "800"))
 INGEST_CHUNK_OVERLAP = int(os.getenv("INGEST_CHUNK_OVERLAP", "100"))
 
@@ -48,6 +49,8 @@ if REDIS_PASSWORD:
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
+CELERY_POOL = os.getenv("CELERY_POOL", "threads")
+CELERY_CONCURRENCY = int(os.getenv("CELERY_CONCURRENCY", "4"))
 
 CHAT_MAX_CHUNK_CHARS = int(os.getenv("CHAT_MAX_CHUNK_CHARS", "1000"))
 CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))

@@ -5,7 +5,7 @@ import { SectionCard } from "../../components/common/SectionCard";
 import { MetricsChartPanel } from "../../components/monitor/MetricsChartPanel";
 import { ResourceOverviewCards } from "../../components/monitor/ResourceOverviewCards";
 import { ServiceHealthPanel } from "../../components/monitor/ServiceHealthPanel";
-import { formatCurrencyUsd, formatDateTime, formatDurationMs, formatNumber, formatRatio } from "../../utils/format";
+import { formatBytes, formatCurrencyUsd, formatDateTime, formatDurationMs, formatNumber, formatRatio } from "../../utils/format";
 
 interface MonitorPageProps {
   overview: MonitorOverview;
@@ -20,7 +20,7 @@ export function MonitorPage({ overview, points, monitorError, onRefreshMonitor }
       <PageTitle
         eyebrow="Operations"
         title="Monitor"
-        description="克制的工程监控页：资源、服务健康、队列、延迟和 RAG 关键指标。"
+        description="资源、服务健康、队列、延迟和 RAG 指标。"
         action={
           <div className="monitor-toolbar">
             <span>Last Update: {formatDateTime(overview.updated_at)}</span>
@@ -48,6 +48,7 @@ export function MonitorPage({ overview, points, monitorError, onRefreshMonitor }
         <MetricCard label="API Latency" value={`${overview.latency.api_ms ?? "--"}ms`} />
         <MetricCard label="Ready Docs" value={formatNumber(overview.rag.documents_ready)} />
         <MetricCard label="Total Chunks" value={overview.rag.total_chunks === null ? "--" : formatNumber(overview.rag.total_chunks)} />
+        <MetricCard label="Max Doc Size" value={formatBytes(overview.rag.max_document_size_bytes)} />
       </div>
 
       <SectionCard title="Experience" description="TTFT、端到端延迟分位数和 ingest 就绪时间。">
@@ -61,7 +62,17 @@ export function MonitorPage({ overview, points, monitorError, onRefreshMonitor }
         </div>
       </SectionCard>
 
-      <SectionCard title="Cost" description="请求和文档成本基于 provider usage 或估算 token，并结合可配置单价计算。">
+      <SectionCard title="Ingest Pipeline" description="文档解析耗时、切片数量和上传限制。">
+        <div className="summary-grid">
+          <MetricCard label="Parse P50" value={formatDurationMs(overview.ingest.document_parse_ms.p50)} />
+          <MetricCard label="Parse P95" value={formatDurationMs(overview.ingest.document_parse_ms.p95)} />
+          <MetricCard label="Chunk Avg" value={formatNumber(overview.ingest.chunk_count.avg)} />
+          <MetricCard label="Chunk P95" value={formatNumber(overview.ingest.chunk_count.p95)} />
+          <MetricCard label="Max Doc Size" value={formatBytes(overview.rag.max_document_size_bytes)} />
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Cost" description="请求、文档和 token 成本概览。">
         <div className="summary-grid">
           <MetricCard label="Prompt Tokens Avg" value={formatNumber(overview.cost.prompt_tokens_avg)} />
           <MetricCard label="Completion Tokens Avg" value={formatNumber(overview.cost.completion_tokens_avg)} />
@@ -79,6 +90,7 @@ export function MonitorPage({ overview, points, monitorError, onRefreshMonitor }
           <MetricCard label="Worker Queue Depth" value={formatNumber(overview.throughput.worker_queue_depth)} />
           <MetricCard label="Active SSE" value={formatNumber(overview.throughput.active_sse_connections)} />
           <MetricCard label="Worker Count" value={formatNumber(overview.queue.worker_count)} />
+          <MetricCard label="Celery Concurrency" value={formatNumber(overview.throughput.celery_concurrency_observed ?? overview.throughput.celery_concurrency_configured)} detail={overview.throughput.celery_pool || undefined} />
         </div>
       </SectionCard>
 
@@ -88,12 +100,18 @@ export function MonitorPage({ overview, points, monitorError, onRefreshMonitor }
           <MetricCard label="Timeout Rate" value={formatRatio(overview.quality.timeout_rate)} tone={overview.quality.timeout_rate && overview.quality.timeout_rate > 0.02 ? "warn" : "default"} />
           <MetricCard label="Retrieval P50" value={formatDurationMs(overview.quality.retrieval_ms.p50)} />
           <MetricCard label="Retrieval P95" value={formatDurationMs(overview.quality.retrieval_ms.p95)} />
+          <MetricCard label="FAISS P50" value={formatDurationMs(overview.quality.faiss_ms.p50)} />
+          <MetricCard label="FAISS P95" value={formatDurationMs(overview.quality.faiss_ms.p95)} />
           <MetricCard label="Citation Avg" value={formatNumber(overview.quality.citation_count_avg)} />
           <MetricCard label="No Context Ratio" value={formatRatio(overview.quality.no_context_ratio)} />
+          <MetricCard label="Recall@K" value={formatRatio(overview.quality.recall_at_k_avg)} />
+          <MetricCard label="MRR" value={formatRatio(overview.quality.mrr_avg)} />
+          <MetricCard label="NDCG" value={formatRatio(overview.quality.ndcg_avg)} />
+          <MetricCard label="Eval Samples" value={formatNumber(overview.quality.retrieval_eval_samples)} />
         </div>
       </SectionCard>
 
-      <SectionCard title="Metrics Panels" description="无第三方图表依赖，使用轻量趋势条展示近端变化。">
+      <SectionCard title="Metrics Panels" description="近端指标趋势。">
         <MetricsChartPanel points={points} />
       </SectionCard>
     </div>

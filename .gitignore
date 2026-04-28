@@ -12,6 +12,7 @@ build/
 cpp_gateway/build/
 
 logs/
+.run/
 data/uploads/
 data/indexes/
 cpp_gateway/uploads/

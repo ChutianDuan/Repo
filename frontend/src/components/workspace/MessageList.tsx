@@ -11,7 +11,7 @@ export function MessageList({ messages }: MessageListProps) {
     return (
       <EmptyState
         title="还没有问答记录"
-        description="先上传并索引一份文档，然后创建会话发起第一个问题。"
+        description="上传文档并创建会话后即可提问。"
       />
     );
   }

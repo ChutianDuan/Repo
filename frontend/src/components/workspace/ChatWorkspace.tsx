@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { ChatMessage } from "../../types/message";
 import type { Session } from "../../types/session";
 import { StatusBadge } from "../common/StatusBadge";
@@ -14,6 +14,7 @@ interface ChatWorkspaceProps {
   question: string;
   topK: number;
   ragEnabled: boolean;
+  streamingEnabled: boolean;
   pending: string | null;
   canAsk: boolean;
   selectedFileName: string | null;
@@ -35,6 +36,7 @@ export function ChatWorkspace({
   question,
   topK,
   ragEnabled,
+  streamingEnabled,
   pending,
   canAsk,
   selectedFileName,
@@ -47,6 +49,20 @@ export function ChatWorkspace({
   onUpload,
   onAsk,
 }: ChatWorkspaceProps) {
+  const messageShellRef = useRef<HTMLDivElement | null>(null);
+  const latestMessage = messages[messages.length - 1];
+
+  useEffect(() => {
+    const shell = messageShellRef.current;
+    if (!shell) {
+      return;
+    }
+    shell.scrollTo({
+      top: shell.scrollHeight,
+      behavior: pending === "chat" ? "smooth" : "auto",
+    });
+  }, [latestMessage?.content, latestMessage?.status, messages.length, pending]);
+
   return (
     <section className="chat-workspace">
       <div className="conversation-header">
@@ -63,7 +79,7 @@ export function ChatWorkspace({
 
       {error ? <div className="error-box">{error}</div> : null}
 
-      <div className="message-list-shell">
+      <div className="message-list-shell" ref={messageShellRef}>
         <MessageList messages={messages} />
       </div>
 
@@ -71,6 +87,7 @@ export function ChatWorkspace({
         question={question}
         topK={topK}
         ragEnabled={ragEnabled}
+        streamingEnabled={streamingEnabled}
         pending={pending}
         canAsk={canAsk}
         selectedFileName={selectedFileName}

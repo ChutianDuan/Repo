@@ -63,7 +63,7 @@ export function TasksPage({ tasks, selectedTaskId, taskListError, onSelectTask, 
 
       <SectionCard
         title="Task Table"
-        description="任务页优先读取后端列表接口；当前网关未暴露时自动使用前端已知任务。"
+        description="按类型和状态筛选任务。"
         action={
           <div className="filter-tabs">
             {(["all", "ingest", "chat", "running", "failed"] as TaskFilter[]).map((item) => (

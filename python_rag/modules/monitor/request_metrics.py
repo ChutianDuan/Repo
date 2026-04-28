@@ -342,6 +342,18 @@ def _extract_numeric_values(rows: Iterable[Dict[str, Any]], field: str) -> List[
     return values
 
 
+def _extract_extra_numeric_values(rows: Iterable[Dict[str, Any]], field: str) -> List[float]:
+    values = []
+    for row in rows:
+        extra = row.get("extra") or {}
+        if not isinstance(extra, dict):
+            continue
+        value = _safe_float(extra.get(field))
+        if value is not None:
+            values.append(value)
+    return values
+
+
 def _round_maybe(value: Optional[float], digits: int = 2) -> Optional[float]:
     if value is None:
         return None
@@ -419,6 +431,12 @@ def summarize_request_metrics(
         [row for row in rows if row.get("retrieval_ms") is not None],
         "retrieval_ms",
     )
+    document_parse_values = _extract_extra_numeric_values(ingest_success_rows, "text_extract_ms")
+    chunk_count_values = _extract_extra_numeric_values(ingest_success_rows, "chunk_count")
+    faiss_values = _extract_extra_numeric_values(rows, "faiss_ms")
+    recall_values = _extract_extra_numeric_values(rows, "recall_at_k")
+    mrr_values = _extract_extra_numeric_values(rows, "mrr")
+    ndcg_values = _extract_extra_numeric_values(rows, "ndcg")
 
     prompt_values = _extract_numeric_values(
         [row for row in chat_success_rows if row.get("prompt_tokens") is not None],
@@ -455,6 +473,10 @@ def summarize_request_metrics(
             "e2e_latency_ms": _latency_summary(e2e_values),
             "ingest_ready_ms": _latency_summary(ingest_ready_values),
         },
+        "ingest": {
+            "document_parse_ms": _latency_summary(document_parse_values),
+            "chunk_count": _latency_summary(chunk_count_values),
+        },
         "cost": {
             "prompt_tokens_avg": _round_maybe(_average(prompt_values), 1),
             "prompt_tokens_total": int(sum(prompt_values)) if prompt_values else 0,
@@ -475,8 +497,13 @@ def summarize_request_metrics(
             "error_rate": _ratio(error_count, len(rows)),
             "timeout_rate": _ratio(timeout_count, len(rows)),
             "retrieval_ms": _latency_summary(retrieval_values),
+            "faiss_ms": _latency_summary(faiss_values),
             "citation_count_avg": _round_maybe(_average(citation_values), 2),
             "no_context_ratio": _ratio(no_context_count, len(chat_success_rows)),
+            "retrieval_eval_samples": len(recall_values) or len(mrr_values) or len(ndcg_values),
+            "recall_at_k_avg": _round_maybe(_average(recall_values), 4),
+            "mrr_avg": _round_maybe(_average(mrr_values), 4),
+            "ndcg_avg": _round_maybe(_average(ndcg_values), 4),
         },
         "samples": {
             "total": len(rows),

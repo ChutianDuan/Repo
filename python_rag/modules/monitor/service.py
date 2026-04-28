@@ -6,8 +6,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from python_rag.config import (
+    CELERY_CONCURRENCY,
+    CELERY_POOL,
     LLM_BASE_URL,
     LLM_ENABLE,
+    MAX_DOCUMENT_SIZE_BYTES,
     MONITOR_METRICS_MAX_ROWS,
     MONITOR_METRICS_WINDOW_SECONDS,
     STORAGE_ROOT,
@@ -21,6 +24,15 @@ from python_rag.modules.tasks.celery_app import celery_app
 def _safe_float(value: Any) -> Optional[float]:
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        if isinstance(value, list):
+            return len(value)
+        return int(value)
     except (TypeError, ValueError):
         return None
 
@@ -111,15 +123,33 @@ def _redis_ok() -> bool:
 
 def _worker_stats() -> Dict[str, Any]:
     try:
+        inspector = celery_app.control.inspect(timeout=0.5)
+        stats = inspector.stats() or {}
+        observed_concurrency = 0
+        for worker_stats in stats.values():
+            pool = worker_stats.get("pool") or {}
+            observed_concurrency += _safe_int(
+                pool.get("max-concurrency")
+                or pool.get("max_concurrency")
+                or pool.get("processes")
+                or 0
+            ) or 0
+
         replies = celery_app.control.ping(timeout=0.5)
         return {
             "ok": len(replies) > 0,
             "count": len(replies),
+            "concurrency_configured": CELERY_CONCURRENCY,
+            "concurrency_observed": observed_concurrency or None,
+            "pool": CELERY_POOL,
         }
     except Exception:
         return {
             "ok": False,
             "count": 0,
+            "concurrency_configured": CELERY_CONCURRENCY,
+            "concurrency_observed": None,
+            "pool": CELERY_POOL,
         }
 
 
@@ -174,6 +204,9 @@ def get_monitor_overview() -> Dict[str, Any]:
     redis_ok: Optional[bool] = None
     worker_ok: Optional[bool] = None
     worker_count = 0
+    worker_concurrency_configured = CELERY_CONCURRENCY
+    worker_concurrency_observed = None
+    worker_pool = CELERY_POOL
 
     try:
         mysql_ok = _mysql_ok()
@@ -189,6 +222,9 @@ def get_monitor_overview() -> Dict[str, Any]:
         worker_info = _worker_stats()
         worker_ok = worker_info["ok"]
         worker_count = worker_info["count"]
+        worker_concurrency_configured = worker_info["concurrency_configured"]
+        worker_concurrency_observed = worker_info["concurrency_observed"]
+        worker_pool = worker_info["pool"]
     except Exception:
         worker_ok = False
         worker_count = 0
@@ -210,7 +246,11 @@ def get_monitor_overview() -> Dict[str, Any]:
     )
     throughput = metric_summary.get("throughput") or {}
     throughput["worker_queue_depth"] = counts["queue"]["pending"] + counts["queue"]["running"]
+    throughput["celery_concurrency_configured"] = worker_concurrency_configured
+    throughput["celery_concurrency_observed"] = worker_concurrency_observed
+    throughput["celery_pool"] = worker_pool
     experience = metric_summary.get("experience") or {}
+    ingest = metric_summary.get("ingest") or {}
     quality = metric_summary.get("quality") or {}
 
     latency_ms = int((time.perf_counter() - started_at) * 1000)
@@ -230,14 +270,24 @@ def get_monitor_overview() -> Dict[str, Any]:
         "queue": {
             **counts["queue"],
             "worker_count": worker_count,
+            "worker_concurrency_configured": worker_concurrency_configured,
+            "worker_concurrency_observed": worker_concurrency_observed,
         },
         "latency": {
             "api_ms": latency_ms,
+            "ttft_ms": (experience.get("ttft_ms") or {}).get("p50"),
             "chat_ms": (experience.get("e2e_latency_ms") or {}).get("p50"),
+            "response_ms": (experience.get("e2e_latency_ms") or {}).get("p50"),
             "retrieval_ms": (quality.get("retrieval_ms") or {}).get("p50"),
+            "faiss_ms": (quality.get("faiss_ms") or {}).get("p50"),
             "ingest_ms": (experience.get("ingest_ready_ms") or {}).get("p50"),
+            "document_parse_ms": (ingest.get("document_parse_ms") or {}).get("p50"),
         },
-        "rag": counts["rag"],
+        "rag": {
+            **counts["rag"],
+            "max_document_size_bytes": MAX_DOCUMENT_SIZE_BYTES,
+        },
+        "ingest": ingest,
         "experience": experience,
         "cost": metric_summary.get("cost") or {},
         "throughput": throughput,

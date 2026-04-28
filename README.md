@@ -172,7 +172,31 @@ cmake --build cpp_gateway/build -j
 -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
-### 5. 启动后端链路
+### 5. 一键启动后端链路
+
+MySQL / Redis 启动后，可以用脚本统一拉起 FastAPI、Celery Worker 和 C++ Gateway：
+
+```bash
+bash scripts/start_all.sh
+bash scripts/start_all.sh status
+```
+
+常用开关：
+
+```bash
+# 启动前先初始化数据库
+START_INIT_DB=true bash scripts/start_all.sh
+
+# 同时启动前端 Vite dev server
+START_FRONTEND=true bash scripts/start_all.sh
+
+# 停止后台服务
+bash scripts/start_all.sh stop
+```
+
+如果 `cpp_gateway/build/cpp_gateway` 不存在，脚本会尝试用 CMake 编译 Gateway；本机仍需要 Drogon、CURL、JsonCpp 以及 MySQL / Redis 相关 Drogon 依赖。使用 vcpkg 时可以通过 `CMAKE_TOOLCHAIN_FILE` / `Drogon_DIR` 环境变量传给脚本。
+
+### 5b. 手动启动后端链路
 
 建议每个服务单独开一个终端：
 
@@ -228,6 +252,14 @@ npm run build
 
 ## E2E 验证
 
+完整链路一键验证：
+
+```bash
+bash scripts/e2e_all.sh ./day7_demo.md
+```
+
+该脚本会创建用户、上传文档、等待 ingest、创建会话、提交 chat、拉取消息，并触发一次带 relevance label 的检索评估，用来验证 Recall@K / MRR / NDCG 指标链路。
+
 先创建用户：
 
 ```bash
@@ -257,7 +289,7 @@ bash scripts/e2e_chat.sh ./day7_demo.md
 | `Workspace` | 核心问答工作区，包含会话、消息、上传、RAG 开关和引用面板。 |
 | `Documents` | 文档上传、索引状态、chunk/向量化摘要和文档详情。 |
 | `Tasks` | ingest/chat 任务表、进度、meta_json 和错误日志。 |
-| `Monitor` | CPU、GPU、内存、MySQL、Redis、Worker、队列和 RAG 摘要。 |
+| `Monitor` | CPU、GPU、内存、MySQL、Redis、Worker、队列、RAG、ingest、FAISS 和检索质量摘要。 |
 | `Settings` | 网关地址、用户、top_k、chunk 参数和模型显示名。 |
 
 ## API 概览
@@ -286,22 +318,24 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - [Embedding 微调实验](docs/embedding_finetune.md)：记录 KALM embedding 的 LoRA triplet 微调流程、指标和结论。
 - [RAG ingest/retrieval 容量说明](docs/rag_ingest_retrieval_capacity.md)：整理 ingest、检索和资源容量相关设计。
 - [性能测试指南](docs/performance_test_guide.md)：提供部署后的性能验证、压测流程和留档模板。
+- [Gateway 鉴权与限流](docs/gateway_auth_rate_limit.md)：说明 Drogon Gateway 的 API Key 鉴权和 Redis 限流配置。
+- [监控指标说明](docs/monitoring_metrics.md)：说明解析耗时、FAISS 耗时、TTFT、Celery 并发和检索质量指标。
 
 ## 当前限制
 
 - Gateway 的 MySQL / Redis 连接还没有完全收敛到根目录 `.env`，目前仍依赖 `cpp_gateway/config.json`。
-- `Monitor` 的历史趋势目前是前端近端采样，尚未落库保存时序指标。
+- `Monitor` 的历史趋势目前是前端近端采样，聚合窗口依赖 `request_metrics` 最近样本。
 - GPU 监控依赖 `nvidia-smi`，非 NVIDIA 环境会返回空数组。
 - 当前索引是单文档单 FAISS 索引，后续可扩展为多文档知识库、分片索引或向量数据库。
 - SSE 流式接口形态完整，但生成侧仍以先得到完整答案再分块输出为主，后续可升级为真实 token streaming。
 - PDF 仅支持可提取文本的电子文档，扫描件 OCR 尚未接入。
-- 尚未接入鉴权、租户隔离、请求限流和审计日志。
+- Gateway 已支持 API Key 鉴权和 Redis 请求限流；租户隔离和审计日志尚未接入。
 
 ## 后续方向
 
 - 提供 Docker Compose，一键启动 MySQL、Redis、FastAPI、Celery Worker 和 C++ Gateway。
-- 完善自动化测试，覆盖文档上传、ingest、chat、citations 和任务状态。
-- Gateway 增加 API Key 鉴权、Redis 限流、request id 透传和统一错误响应。
+- 扩展自动化测试覆盖更多失败路径、鉴权限流边界和检索评估数据集。
+- Gateway 增加 request id 透传、审计日志和更完整的统一错误响应。
 - LLM 调用升级为真实 token streaming，并记录首 token 延迟和总耗时。
 - 从单文档索引扩展到知识库级多文档检索。
 - 将 embedding LoRA 接入方式标准化，支持合并模型路径或 adapter 加载。

@@ -19,6 +19,20 @@ export function formatBytesGb(used: number | null | undefined, total: number | n
   return `${used.toFixed(1)} / ${total.toFixed(1)} GB`;
 }
 
+export function formatBytes(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "--";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let nextValue = value;
+  let unitIndex = 0;
+  while (nextValue >= 1024 && unitIndex < units.length - 1) {
+    nextValue /= 1024;
+    unitIndex += 1;
+  }
+  return `${nextValue >= 10 || unitIndex === 0 ? nextValue.toFixed(0) : nextValue.toFixed(1)} ${units[unitIndex]}`;
+}
+
 export function formatScore(score: number): string {
   return Number.isFinite(score) ? score.toFixed(3) : "--";
 }

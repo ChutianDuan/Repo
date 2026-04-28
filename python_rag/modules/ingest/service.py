@@ -269,7 +269,12 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             embedding_tokens=embedding_tokens,
             cost_usd=cost_usd,
             answer_source="embedding",
-            extra=result["timings_ms"],
+            extra={
+                **result["timings_ms"],
+                "chunk_count": len(chunk_rows),
+                "char_count": len(text),
+                "document_size_bytes": int(doc.get("size_bytes") or 0),
+            },
         )
 
         _emit_progress(

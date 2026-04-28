@@ -1,12 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+if [ -f .env ]; then
+  set -a
+  source ./.env
+  set +a
+fi
+
 PYTHON_BASE_URL="${PYTHON_BASE_URL:-http://127.0.0.1:8000}"
 GATEWAY_BASE_URL="${GATEWAY_BASE_URL:-http://127.0.0.1:8080}"
 TEST_FILE="${1:-./day7_demo.md}"
 USER_ID="${USER_ID:-1}"
 TOP_K="${TOP_K:-3}"
 QUERY_TEXT="${QUERY_TEXT:-这份文档讲了什么？}"
+
+detect_gateway_api_key() {
+  if [ -n "${GATEWAY_API_KEY:-}" ]; then
+    printf "%s" "$GATEWAY_API_KEY"
+    return
+  fi
+
+  local configured_keys="${GATEWAY_API_KEYS:-}"
+  local first_entry="${configured_keys%%,*}"
+  if [ -z "${first_entry:-}" ]; then
+    return
+  fi
+
+  if [[ "$first_entry" == *"="* ]]; then
+    printf "%s" "${first_entry#*=}"
+    return
+  fi
+  if [[ "$first_entry" == *":"* ]]; then
+    printf "%s" "${first_entry#*:}"
+    return
+  fi
+  printf "%s" "$first_entry"
+}
+
+GATEWAY_API_KEY_VALUE="$(detect_gateway_api_key)"
+AUTH_HEADERS=()
+if [ -n "$GATEWAY_API_KEY_VALUE" ]; then
+  AUTH_HEADERS=(-H "X-API-Key: ${GATEWAY_API_KEY_VALUE}")
+fi
 
 if [ ! -f "$TEST_FILE" ]; then
   echo "[ERROR] file not found: $TEST_FILE"
@@ -59,6 +97,7 @@ done
 echo "============================================================"
 echo "[4/7] create session via gateway"
 SESSION_RESP=$(curl -s -X POST "${GATEWAY_BASE_URL}/v1/sessions" \
+  "${AUTH_HEADERS[@]}" \
   -H "Content-Type: application/json" \
   -d "{
     \"user_id\": ${USER_ID},
@@ -73,6 +112,7 @@ echo "[INFO] session_id=${SESSION_ID}"
 echo "============================================================"
 echo "[5/7] submit user message via gateway"
 CHAT_RESP=$(curl -s -X POST "${GATEWAY_BASE_URL}/v1/sessions/${SESSION_ID}/messages" \
+  "${AUTH_HEADERS[@]}" \
   -H "Content-Type: application/json" \
   -d "{
     \"doc_id\": ${DOC_ID},
@@ -110,7 +150,7 @@ done
 
 echo "============================================================"
 echo "[7/7] list messages via gateway"
-MESSAGES_RESP=$(curl -s "${GATEWAY_BASE_URL}/v1/sessions/${SESSION_ID}/messages")
+MESSAGES_RESP=$(curl -s "${AUTH_HEADERS[@]}" "${GATEWAY_BASE_URL}/v1/sessions/${SESSION_ID}/messages")
 echo "$MESSAGES_RESP"
 
 echo "============================================================"

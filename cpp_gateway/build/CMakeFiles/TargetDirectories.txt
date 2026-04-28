@@ -1,3 +1,0 @@
-/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/rebuild_cache.dir
-/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/edit_cache.dir
-/home/ubuntu/Repo/cpp_gateway/build/CMakeFiles/cpp_gateway.dir

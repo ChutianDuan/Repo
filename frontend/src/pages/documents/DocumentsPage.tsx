@@ -59,7 +59,7 @@ export function DocumentsPage({
       <PageTitle
         eyebrow="Knowledge Base"
         title="Documents"
-        description="上传文档、观察索引状态，并保留 chunk / 向量化结果的入口。"
+        description="上传文档，查看索引状态与向量化结果。"
         action={
           <UploadDocumentButton
             selectedFileName={selectedFileName}
@@ -80,7 +80,7 @@ export function DocumentsPage({
 
       <SectionCard
         title="Document Table"
-        description="当前前端展示本次浏览器会话内上传的文档；后端补充列表接口后可替换为真实全量文档库。"
+        description="按状态筛选当前文档。"
         action={
           <div className="filter-tabs">
             {(["all", "ready", "processing", "failed"] as DocumentFilter[]).map((item) => (

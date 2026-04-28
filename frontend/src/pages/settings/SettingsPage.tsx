@@ -43,10 +43,10 @@ export function SettingsPage({
       <PageTitle
         eyebrow="Configuration"
         title="Settings"
-        description="集中配置网关地址、检索参数、chunk 策略和模型显示名称。"
+        description="配置连接、检索参数和流式输出。"
       />
 
-      <SectionCard title="Connection" description="留空 API Base URL 时走 Vite 代理 `/health` 和 `/v1`。">
+      <SectionCard title="Connection" description="配置 API 地址、用户和模型显示名称。">
         <div className="settings-grid">
           <label className="field">
             <span>Gateway Base URL</span>
@@ -67,7 +67,7 @@ export function SettingsPage({
         </div>
       </SectionCard>
 
-      <SectionCard title="Retrieval" description="这些配置会影响前端提交参数；后端持久配置接口接入后可改成保存动作。">
+      <SectionCard title="Retrieval" description="这些参数会随下一次提问提交。">
         <div className="settings-grid">
           <label className="field">
             <span>top_k</span>

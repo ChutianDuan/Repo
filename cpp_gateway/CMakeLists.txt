@@ -13,6 +13,7 @@ add_executable(cpp_gateway
     src/main.cc
 
     src/common/ErrorMapper.cc
+    src/common/GatewaySecurity.cc
 
     src/clients/PythonApiClient.cc
     src/clients/PythonSSEClient.cc

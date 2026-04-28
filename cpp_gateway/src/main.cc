@@ -2,6 +2,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <drogon/drogon.h>
@@ -13,6 +14,7 @@
 #include "handlers/HealthHandler.h"
 #include "handlers/SessionHandler.h"
 #include "handlers/StreamChatHandler.h"
+#include "common/GatewaySecurity.h"
 
 using namespace drogon;
 
@@ -41,7 +43,10 @@ void applyCorsHeaders(const HttpRequestPtr& req, const HttpResponsePtr& resp) {
     if (!requestedHeaders.empty()) {
         resp->addHeader("Access-Control-Allow-Headers", requestedHeaders);
     } else {
-        resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+        resp->addHeader(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-API-Key, X-User-Id, X-Requested-With"
+        );
     }
 
     resp->addHeader("Access-Control-Max-Age", "86400");
@@ -64,6 +69,15 @@ HttpResponsePtr makeOptionsResponse(const HttpRequestPtr& req) {
     applyCorsHeaders(req, resp);
     return resp;
 }
+
+void runSecured(
+    const std::shared_ptr<GatewaySecurity>& security,
+    const HttpRequestPtr& req,
+    std::function<void(const HttpResponsePtr&)>&& callback,
+    GatewaySecurity::Next&& next
+) {
+    security->authorize(req, makeCorsCallback(req, std::move(callback)), std::move(next));
+}
 }  // namespace
 
 int main() {
@@ -78,6 +92,7 @@ int main() {
     auto sessionHandler = std::make_shared<SessionService>(pythonClient);
     auto chatHandler = std::make_shared<ChatService>(pythonClient);
     auto streamChatHandler = std::make_shared<StreamChatService>(pythonSSEClient, pythonClient);
+    auto gatewaySecurity = std::make_shared<GatewaySecurity>(GatewaySecurityConfig::fromEnv());
 
     app().registerHandler(
         "/health",
@@ -99,10 +114,17 @@ int main() {
 
     app().registerHandler(
         "/v1/tasks/{1}",
-        [pythonClient](const HttpRequestPtr& req,
-                       std::function<void(const HttpResponsePtr&)>&& callback,
-                       const std::string& taskId) {
-            pythonClient->proxyTaskStatus(taskId, makeCorsCallback(req, std::move(callback)));
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& taskId) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient, taskId](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    pythonClient->proxyTaskStatus(taskId, std::move(secureCallback));
+                }
+            );
         },
         {Get}
     );
@@ -119,28 +141,35 @@ int main() {
 
     app().registerHandler(
         "/v1/tasks",
-        [pythonClient](const HttpRequestPtr& req,
-                       std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string path = "/internal/tasks";
-            std::vector<std::string> params;
-            const auto limit = req->getParameter("limit");
-            const auto state = req->getParameter("state");
-            if (!limit.empty()) {
-                params.push_back("limit=" + limit);
-            }
-            if (!state.empty()) {
-                params.push_back("state=" + state);
-            }
-            if (!params.empty()) {
-                path += "?";
-                for (size_t i = 0; i < params.size(); ++i) {
-                    if (i > 0) {
-                        path += "&";
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    std::string path = "/internal/tasks";
+                    std::vector<std::string> params;
+                    const auto limit = req->getParameter("limit");
+                    const auto state = req->getParameter("state");
+                    if (!limit.empty()) {
+                        params.push_back("limit=" + limit);
                     }
-                    path += params[i];
+                    if (!state.empty()) {
+                        params.push_back("state=" + state);
+                    }
+                    if (!params.empty()) {
+                        path += "?";
+                        for (size_t i = 0; i < params.size(); ++i) {
+                            if (i > 0) {
+                                path += "&";
+                            }
+                            path += params[i];
+                        }
+                    }
+                    pythonClient->forwardGet(path, std::move(secureCallback));
                 }
-            }
-            pythonClient->forwardGet(path, makeCorsCallback(req, std::move(callback)));
+            );
         },
         {Get}
     );
@@ -156,9 +185,16 @@ int main() {
 
     app().registerHandler(
         "/v1/documents",
-        [documentHandler](const HttpRequestPtr& req,
-                          std::function<void(const HttpResponsePtr&)>&& callback) {
-            documentHandler->uploadAndSubmit(req, makeCorsCallback(req, std::move(callback)));
+        [gatewaySecurity, documentHandler](const HttpRequestPtr& req,
+                                           std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [documentHandler, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    documentHandler->uploadAndSubmit(req, std::move(secureCallback));
+                }
+            );
         },
         {Post}
     );
@@ -174,12 +210,19 @@ int main() {
 
     app().registerHandler(
         "/v1/documents/{1}",
-        [pythonClient](const HttpRequestPtr& req,
-                       std::function<void(const HttpResponsePtr&)>&& callback,
-                       int docId) {
-            pythonClient->forwardGet(
-                "/internal/documents/" + std::to_string(docId),
-                makeCorsCallback(req, std::move(callback))
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback,
+                                        int docId) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient, docId](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    pythonClient->forwardGet(
+                        "/internal/documents/" + std::to_string(docId),
+                        std::move(secureCallback)
+                    );
+                }
             );
         },
         {Get}
@@ -197,15 +240,21 @@ int main() {
 
     app().registerHandler(
         "/v1/users",
-        [pythonClient](const HttpRequestPtr& req,
-                       std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto corsCallback = makeCorsCallback(req, std::move(callback));
-            auto json = req->getJsonObject();
-            if (!json) {
-                corsCallback(makeBadRequestResponse("invalid json"));
-                return;
-            }
-            pythonClient->forwardJsonPost("/internal/users", *json, std::move(corsCallback));
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    auto json = req->getJsonObject();
+                    if (!json) {
+                        secureCallback(makeBadRequestResponse("invalid json"));
+                        return;
+                    }
+                    pythonClient->forwardJsonPost("/internal/users", *json, std::move(secureCallback));
+                }
+            );
         },
         {Post}
     );
@@ -221,14 +270,21 @@ int main() {
 
     app().registerHandler(
         "/v1/users/latest",
-        [pythonClient](const HttpRequestPtr& req,
-                       std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string path = "/internal/users/latest";
-            const auto limit = req->getParameter("limit");
-            if (!limit.empty()) {
-                path += "?limit=" + limit;
-            }
-            pythonClient->forwardGet(path, makeCorsCallback(req, std::move(callback)));
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    std::string path = "/internal/users/latest";
+                    const auto limit = req->getParameter("limit");
+                    if (!limit.empty()) {
+                        path += "?limit=" + limit;
+                    }
+                    pythonClient->forwardGet(path, std::move(secureCallback));
+                }
+            );
         },
         {Get}
     );
@@ -244,15 +300,21 @@ int main() {
 
     app().registerHandler(
         "/v1/sessions",
-        [sessionHandler](const HttpRequestPtr& req,
-                         std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto corsCallback = makeCorsCallback(req, std::move(callback));
-            auto json = req->getJsonObject();
-            if (!json) {
-                corsCallback(makeBadRequestResponse("invalid json"));
-                return;
-            }
-            sessionHandler->createSession(*json, std::move(corsCallback));
+        [gatewaySecurity, sessionHandler](const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [sessionHandler, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    auto json = req->getJsonObject();
+                    if (!json) {
+                        secureCallback(makeBadRequestResponse("invalid json"));
+                        return;
+                    }
+                    sessionHandler->createSession(*json, std::move(secureCallback));
+                }
+            );
         },
         {Post}
     );
@@ -268,26 +330,43 @@ int main() {
 
     app().registerHandler(
         "/v1/sessions/{1}/messages",
-        [chatHandler](const HttpRequestPtr& req,
-                      std::function<void(const HttpResponsePtr&)>&& callback,
-                      int sessionId) {
-            auto corsCallback = makeCorsCallback(req, std::move(callback));
-            auto json = req->getJsonObject();
-            if (!json) {
-                corsCallback(makeBadRequestResponse("invalid json"));
-                return;
-            }
-            chatHandler->createUserMessageAndSubmitChat(sessionId, *json, std::move(corsCallback));
+        [gatewaySecurity, chatHandler](const HttpRequestPtr& req,
+                                       std::function<void(const HttpResponsePtr&)>&& callback,
+                                       int sessionId) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [chatHandler, req, sessionId](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    auto json = req->getJsonObject();
+                    if (!json) {
+                        secureCallback(makeBadRequestResponse("invalid json"));
+                        return;
+                    }
+                    chatHandler->createUserMessageAndSubmitChat(
+                        sessionId,
+                        *json,
+                        std::move(secureCallback)
+                    );
+                }
+            );
         },
         {Post}
     );
 
     app().registerHandler(
         "/v1/sessions/{1}/messages",
-        [sessionHandler](const HttpRequestPtr& req,
-                         std::function<void(const HttpResponsePtr&)>&& callback,
-                         int sessionId) {
-            sessionHandler->listMessages(sessionId, makeCorsCallback(req, std::move(callback)));
+        [gatewaySecurity, sessionHandler](const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback,
+                                          int sessionId) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [sessionHandler, sessionId](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    sessionHandler->listMessages(sessionId, std::move(secureCallback));
+                }
+            );
         },
         {Get}
     );
@@ -304,9 +383,16 @@ int main() {
 
     app().registerHandler(
         "/v1/chat/stream",
-        [streamChatHandler](const HttpRequestPtr& req,
-                            std::function<void(const HttpResponsePtr&)>&& callback) {
-            streamChatHandler->handleStream(req, makeCorsCallback(req, std::move(callback)));
+        [gatewaySecurity, streamChatHandler](const HttpRequestPtr& req,
+                                             std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [streamChatHandler, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    streamChatHandler->handleStream(req, std::move(secureCallback));
+                }
+            );
         },
         {Post}
     );
@@ -322,11 +408,18 @@ int main() {
 
     app().registerHandler(
         "/v1/monitor/overview",
-        [pythonClient](const HttpRequestPtr& req,
-                       std::function<void(const HttpResponsePtr&)>&& callback) {
-            pythonClient->forwardGet(
-                "/internal/monitor/overview",
-                makeCorsCallback(req, std::move(callback))
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    pythonClient->forwardGet(
+                        "/internal/monitor/overview",
+                        std::move(secureCallback)
+                    );
+                }
             );
         },
         {Get}

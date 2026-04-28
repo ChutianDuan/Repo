@@ -4,6 +4,7 @@ interface ChatInputBarProps {
   question: string;
   topK: number;
   ragEnabled: boolean;
+  streamingEnabled: boolean;
   pending: string | null;
   canAsk: boolean;
   selectedFileName: string | null;
@@ -19,6 +20,7 @@ export function ChatInputBar({
   question,
   topK,
   ragEnabled,
+  streamingEnabled,
   pending,
   canAsk,
   selectedFileName,
@@ -29,6 +31,8 @@ export function ChatInputBar({
   onUpload,
   onAsk,
 }: ChatInputBarProps) {
+  const isChatting = pending === "chat";
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     onAsk();
@@ -43,16 +47,17 @@ export function ChatInputBar({
       <textarea
         value={question}
         onChange={(event) => onQuestionChange(event.target.value)}
-        placeholder="询问这份文档中的事实、结论或依据..."
-        rows={4}
+        placeholder={isChatting ? "正在接收回答..." : "输入问题..."}
+        rows={3}
+        disabled={isChatting}
       />
       <div className="chat-input-bar__controls">
         <label className="file-control">
           <input type="file" accept=".md,.txt,.json,.csv,.pdf,.docx" onChange={handleFileChange} />
-          <span>{selectedFileName || "Attach document"}</span>
+          <span>{selectedFileName || "选择文档"}</span>
         </label>
         <button type="button" className="button-secondary" onClick={onUpload} disabled={pending !== null}>
-          {pending === "upload" ? "Indexing" : "Upload"}
+          {pending === "upload" ? "索引中" : "上传"}
         </button>
         <label className="toggle-control">
           <input
@@ -73,7 +78,7 @@ export function ChatInputBar({
           />
         </label>
         <button type="submit" disabled={pending !== null || !canAsk || !question.trim()}>
-          {pending === "chat" ? "Running" : "Send"}
+          {isChatting ? (streamingEnabled ? "Streaming" : "Running") : "Send"}
         </button>
       </div>
     </form>

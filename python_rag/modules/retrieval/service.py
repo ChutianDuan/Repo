@@ -1,4 +1,4 @@
-
+import math
 import time
 
 from python_rag.config import CHAT_CANDIDATE_TOP_K, RERANK_ENABLE
@@ -27,7 +27,52 @@ def _build_snippet(text, max_len=180):
     return text[:max_len] + "..."
 
 
-def search_in_document(doc_id, query, top_k=3, candidate_top_k=None, track_metric=True):
+def _evaluate_retrieval_hits(hits, relevant_chunk_ids=None, relevant_chunk_indexes=None):
+    relevant_ids = {int(item) for item in relevant_chunk_ids or [] if item is not None}
+    relevant_indexes = {int(item) for item in relevant_chunk_indexes or [] if item is not None}
+    relevant_count = len(relevant_ids) + len(relevant_indexes)
+    if relevant_count <= 0:
+        return {}
+
+    matched = 0
+    first_relevant_rank = None
+    dcg = 0.0
+    for rank, hit in enumerate(hits, start=1):
+        chunk_id = hit.get("chunk_id")
+        chunk_index = hit.get("chunk_index")
+        is_relevant = (
+            (chunk_id is not None and int(chunk_id) in relevant_ids)
+            or (chunk_index is not None and int(chunk_index) in relevant_indexes)
+        )
+        if not is_relevant:
+            continue
+
+        matched += 1
+        if first_relevant_rank is None:
+            first_relevant_rank = rank
+        dcg += 1.0 / math.log2(rank + 1)
+
+    ideal_hits = min(relevant_count, len(hits))
+    ideal_dcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_hits + 1))
+
+    return {
+        "relevant_count": relevant_count,
+        "relevant_hit_count": matched,
+        "recall_at_k": round(matched / relevant_count, 6),
+        "mrr": round(1.0 / first_relevant_rank, 6) if first_relevant_rank else 0.0,
+        "ndcg": round(dcg / ideal_dcg, 6) if ideal_dcg > 0 else None,
+    }
+
+
+def search_in_document(
+    doc_id,
+    query,
+    top_k=3,
+    candidate_top_k=None,
+    track_metric=True,
+    relevant_chunk_ids=None,
+    relevant_chunk_indexes=None,
+):
     started_at = time.perf_counter()
     embedding_started_at = time.perf_counter()
     embedding_ms = None
@@ -99,6 +144,11 @@ def search_in_document(doc_id, query, top_k=3, candidate_top_k=None, track_metri
         rerank_ms = int((time.perf_counter() - rerank_started_at) * 1000)
 
         retrieval_ms = int((time.perf_counter() - started_at) * 1000)
+        eval_metrics = _evaluate_retrieval_hits(
+            result_hits,
+            relevant_chunk_ids=relevant_chunk_ids,
+            relevant_chunk_indexes=relevant_chunk_indexes,
+        )
         result = {
             "doc_id": doc_id,
             "query": query,
@@ -113,6 +163,7 @@ def search_in_document(doc_id, query, top_k=3, candidate_top_k=None, track_metri
                 "candidate_top_k": effective_candidate_top_k,
                 "final_top_k": final_top_k,
                 "rerank": rerank_meta,
+                **eval_metrics,
             },
         }
 
@@ -135,6 +186,7 @@ def search_in_document(doc_id, query, top_k=3, candidate_top_k=None, track_metri
                     "hit_count": len(result_hits),
                     "candidate_count": len(candidate_hits),
                     "rerank": rerank_meta,
+                    **eval_metrics,
                 },
             )
 
