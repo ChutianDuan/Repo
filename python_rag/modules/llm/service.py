@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from typing import Any, Dict, Generator, List, Optional
 
@@ -18,6 +19,94 @@ from python_rag.config import (
 
 class LLMServiceError(Exception):
     pass
+
+
+_THINK_OPEN_RE = re.compile(r"<think\b[^>]*>", re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</think>", re.IGNORECASE)
+
+
+class _ThinkingContentFilter:
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._inside_think = False
+
+    def feed(self, text: str) -> str:
+        if not text:
+            return ""
+
+        self._buffer += text
+        output_parts: List[str] = []
+
+        while self._buffer:
+            if self._inside_think:
+                close_match = _THINK_CLOSE_RE.search(self._buffer)
+                if close_match is None:
+                    self._buffer = self._keep_possible_close_tag_suffix(self._buffer)
+                    break
+
+                self._buffer = self._buffer[close_match.end():]
+                self._inside_think = False
+                continue
+
+            open_match = _THINK_OPEN_RE.search(self._buffer)
+            if open_match is not None:
+                output_parts.append(self._buffer[:open_match.start()])
+                self._buffer = self._buffer[open_match.end():]
+                self._inside_think = True
+                continue
+
+            safe_prefix_len = self._safe_visible_prefix_len(self._buffer)
+            if safe_prefix_len <= 0:
+                break
+
+            output_parts.append(self._buffer[:safe_prefix_len])
+            self._buffer = self._buffer[safe_prefix_len:]
+
+        return "".join(output_parts)
+
+    def flush(self) -> str:
+        if self._inside_think:
+            self._buffer = ""
+            self._inside_think = False
+            return ""
+
+        output = self._buffer
+        self._buffer = ""
+        return output
+
+    @staticmethod
+    def _safe_visible_prefix_len(text: str) -> int:
+        lower_text = text.lower()
+        last_tag_start = lower_text.rfind("<")
+        if last_tag_start < 0:
+            return len(text)
+
+        suffix = lower_text[last_tag_start:]
+        if "<think".startswith(suffix):
+            return last_tag_start
+
+        if suffix.startswith("<think") and ">" not in suffix:
+            return last_tag_start
+
+        return len(text)
+
+    @staticmethod
+    def _keep_possible_close_tag_suffix(text: str) -> str:
+        lower_text = text.lower()
+        last_tag_start = lower_text.rfind("<")
+        if last_tag_start < 0:
+            return ""
+
+        suffix = lower_text[last_tag_start:]
+        if "</think>".startswith(suffix):
+            return text[last_tag_start:]
+
+        return ""
+
+
+def _strip_thinking_content(text: str) -> str:
+    content_filter = _ThinkingContentFilter()
+    return (content_filter.feed(text) + content_filter.flush()).strip()
 
 
 def _build_headers() -> Dict[str, str]:
@@ -74,7 +163,7 @@ def _extract_answer(resp_json: Dict[str, Any]) -> Dict[str, Any]:
     if answer is None:
         raise LLMServiceError("llm response missing answer content")
 
-    answer = _normalize_content_parts(answer).strip()
+    answer = _strip_thinking_content(_normalize_content_parts(answer))
     if not answer:
         raise LLMServiceError("llm response answer is empty")
 
@@ -135,8 +224,6 @@ def _extract_stream_delta(chunk_json: Dict[str, Any]) -> str:
     if isinstance(delta, dict):
         if delta.get("content") is not None:
             return _normalize_content_parts(delta.get("content"))
-        if delta.get("reasoning_content") is not None:
-            return _normalize_content_parts(delta.get("reasoning_content"))
 
     if first.get("text") is not None:
         return _normalize_content_parts(first.get("text"))
@@ -218,6 +305,7 @@ def stream_from_messages(messages: List[Dict[str, str]]) -> Generator[Dict[str, 
     usage = None
     finish_reason = None
     model = LLM_MODEL
+    content_filter = _ThinkingContentFilter()
 
     try:
         with requests.post(
@@ -253,10 +341,23 @@ def stream_from_messages(messages: List[Dict[str, str]]) -> Generator[Dict[str, 
                 if choices:
                     finish_reason = choices[0].get("finish_reason") or finish_reason
 
-                delta_text = _extract_stream_delta(chunk_json)
+                raw_delta_text = _extract_stream_delta(chunk_json)
+                delta_text = content_filter.feed(raw_delta_text)
                 if not delta_text:
                     continue
 
+                if first_delta_ts is None:
+                    first_delta_ts = time.time()
+
+                answer_parts.append(delta_text)
+                yield {
+                    "type": "delta",
+                    "delta": delta_text,
+                    "model": model,
+                }
+
+            delta_text = content_filter.flush()
+            if delta_text:
                 if first_delta_ts is None:
                     first_delta_ts = time.time()
 
