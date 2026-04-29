@@ -10,6 +10,17 @@ if [ -f .env ]; then
   set +a
 fi
 
+case "${PYTHON_DISABLE_CUDA:-false}" in
+  true|1|yes|on)
+    export CUDA_VISIBLE_DEVICES=""
+    ;;
+  *)
+    if [ -n "${PYTHON_CUDA_VISIBLE_DEVICES:-}" ]; then
+      export CUDA_VISIBLE_DEVICES="$PYTHON_CUDA_VISIBLE_DEVICES"
+    fi
+    ;;
+esac
+
 export PYTHONPATH="$REPO_ROOT"
 
 CELERY_POOL="${CELERY_POOL:-threads}"

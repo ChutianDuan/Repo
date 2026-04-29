@@ -161,7 +161,7 @@ def _emit_progress(
             error=error,
         )
 
-    if progress_callback:
+    if progress_callback and state != TaskState.FAILURE:
         try:
             progress_callback(state=state, meta=dict(meta or {}, progress=progress))
         except Exception:

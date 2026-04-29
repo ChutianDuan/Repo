@@ -1,3 +1,5 @@
+import logging
+import os
 from typing import Dict, List
 
 import numpy as np
@@ -20,6 +22,7 @@ from python_rag.core.error_codes import ERR_INTERNAL_ERROR
 from python_rag.core.errors import AppError
 
 
+logger = logging.getLogger(__name__)
 _model = None
 
 
@@ -89,7 +92,16 @@ def _get_sentence_transformer_model():
             ) from exc
 
         try:
-            _model = SentenceTransformer(EMBEDDING_MODEL, device=_resolve_device())
+            device = _resolve_device()
+            logger.info(
+                "initializing embedding model provider=%s model=%s requested_device=%s resolved_device=%s cuda_visible_devices=%s",
+                EMBEDDING_PROVIDER,
+                EMBEDDING_MODEL,
+                EMBEDDING_DEVICE,
+                device,
+                os.environ.get("CUDA_VISIBLE_DEVICES"),
+            )
+            _model = SentenceTransformer(EMBEDDING_MODEL, device=device)
         except Exception as exc:
             raise AppError(
                 ERR_INTERNAL_ERROR,

@@ -48,7 +48,7 @@ def _emit_progress(celery_task_id, state, progress, meta, progress_callback=None
         error=error,
     )
 
-    if progress_callback:
+    if progress_callback and state != TaskState.FAILURE:
         try:
             progress_callback(state=state, meta=dict(meta or {}, progress=progress))
         except Exception:
