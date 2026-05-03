@@ -1,13 +1,11 @@
-# FastaAPI 异常服务
-import logging
+# FastAPI exception handlers
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from python_rag.core.error_codes import ERR_INTERNAL_ERROR
 from python_rag.core.errors import AppError
-
-logger = logging.getLogger(__name__)
+from python_rag.core.logger import logger
 
 
 def build_error_response(code: int, message: str, data=None):

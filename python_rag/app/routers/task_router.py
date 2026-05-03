@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
+from python_rag.core.error_codes import ERR_INVALID_REQUEST
+from python_rag.core.errors import AppError
 from python_rag.modules.tasks.schemas import (
     SubmitPingTaskRequest,
     SubmitIngestTaskRequest,
@@ -19,7 +21,7 @@ router = APIRouter(prefix="/internal", tags=["tasks"])
 def create_ping_job(req: SubmitPingTaskRequest):
     seconds = int(req.seconds)
     if seconds <= 0 or seconds > 60:
-        raise HTTPException(status_code=400, detail="seconds must be between 1 and 60")
+        raise AppError(ERR_INVALID_REQUEST, "seconds must be between 1 and 60")
     return submit_ping_job(seconds)
 
 
@@ -27,7 +29,7 @@ def create_ping_job(req: SubmitPingTaskRequest):
 def create_ingest_job(req: SubmitIngestTaskRequest):
     doc_id = int(req.doc_id)
     if doc_id <= 0:
-        raise HTTPException(status_code=400, detail="doc_id must be positive")
+        raise AppError(ERR_INVALID_REQUEST, "doc_id must be positive")
     return submit_ingest_job(doc_id)
 
 
@@ -51,5 +53,5 @@ def query_tasks_by_entity(
     limit: int = Query(20, ge=1, le=100),
 ):
     if entity_id <= 0:
-        raise HTTPException(status_code=400, detail="entity_id must be positive")
+        raise AppError(ERR_INVALID_REQUEST, "entity_id must be positive")
     return list_tasks_by_entity(entity_type=entity_type, entity_id=entity_id, limit=limit)
