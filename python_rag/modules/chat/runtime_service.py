@@ -20,7 +20,7 @@ from python_rag.modules.messages.repo import (
 from python_rag.modules.tasks.repo import update_task_record
 from python_rag.modules.chat.repo import bulk_insert_citations
 
-from python_rag.modules.retrieval.service import search_in_document
+from python_rag.modules.retrieval.service import search_in_documents
 from python_rag.modules.retrieval.context_assembler import assemble_context
 from python_rag.modules.retrieval.prompt_builder import build_prompt, to_messages
 
@@ -72,9 +72,10 @@ def _get_user_message(user_message_id: int) -> Dict[str, Any]:
     return message
 
 
-def _retrieve_hits(question: str, doc_id: int, top_k: int) -> Dict[str, Any]:
-    return search_in_document(
+def _retrieve_hits(question: str, doc_id: Optional[int], doc_ids: Optional[List[int]], top_k: int) -> Dict[str, Any]:
+    return search_in_documents(
         doc_id=doc_id,
+        doc_ids=doc_ids,
         query=question,
         top_k=top_k,
         track_metric=False,
@@ -170,13 +171,15 @@ def _emit_progress(
 
 def run_chat_for_message(
     session_id: int,
-    doc_id: int,
+    doc_id: Optional[int],
     user_message_id: int,
     top_k: Optional[int] = None,
     celery_task_id: Optional[str] = None,
     progress_callback=None,
+    doc_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     top_k = top_k or 3
+    doc_ids = doc_ids or []
     started_at = time.perf_counter()
     retrieval_ms = None
     faiss_ms = None
@@ -191,6 +194,8 @@ def run_chat_for_message(
     context_mode = None
     answer_source = None
     citation_count = 0
+    resolved_doc_ids = []
+    metric_doc_id = doc_id
 
     try:
         with track_session_activity(session_id=session_id, is_stream=False):
@@ -221,6 +226,7 @@ def run_chat_for_message(
                     "stage": "load_user_message",
                     "session_id": session_id,
                     "doc_id": doc_id,
+                    "doc_ids": doc_ids,
                     "user_message_id": user_message_id,
                 },
                 progress_callback=progress_callback,
@@ -236,6 +242,7 @@ def run_chat_for_message(
                     "stage": "retrieve",
                     "session_id": session_id,
                     "doc_id": doc_id,
+                    "doc_ids": doc_ids,
                     "user_message_id": user_message_id,
                 },
                 progress_callback=progress_callback,
@@ -244,9 +251,12 @@ def run_chat_for_message(
             retrieval_result = _retrieve_hits(
                 question=question,
                 doc_id=doc_id,
+                doc_ids=doc_ids,
                 top_k=top_k,
             )
             raw_hits = retrieval_result.get("hits", [])
+            resolved_doc_ids = retrieval_result.get("doc_ids") or ([] if doc_id is None else [doc_id])
+            metric_doc_id = resolved_doc_ids[0] if len(resolved_doc_ids) == 1 else None
             retrieval_metrics = retrieval_result.get("metrics") or {}
             retrieval_ms = retrieval_metrics.get("retrieval_ms")
             faiss_ms = retrieval_metrics.get("faiss_ms")
@@ -278,6 +288,7 @@ def run_chat_for_message(
                     "stage": "generate_answer",
                     "session_id": session_id,
                     "doc_id": doc_id,
+                    "doc_ids": resolved_doc_ids,
                     "user_message_id": user_message_id,
                     "retrieved_count": len(chunks),
                     "raw_hit_count": len(raw_hits),
@@ -355,6 +366,7 @@ def run_chat_for_message(
                 "raw_hit_count": len(raw_hits),
                 "citation_count": citation_count,
                 "doc_id": doc_id,
+                "doc_ids": resolved_doc_ids,
                 "user_message_id": user_message_id,
                 "context_mode": context_mode,
                 "retrieval_ms": retrieval_ms,
@@ -385,6 +397,7 @@ def run_chat_for_message(
                     "stage": "save_assistant_message",
                     "session_id": session_id,
                     "doc_id": doc_id,
+                    "doc_ids": resolved_doc_ids,
                     "user_message_id": user_message_id,
                     "answer_source": answer_source,
                     "context_mode": context_mode,
@@ -415,6 +428,7 @@ def run_chat_for_message(
                 "stage": "finished",
                 "session_id": session_id,
                 "doc_id": doc_id,
+                "doc_ids": resolved_doc_ids,
                 "user_message_id": user_message_id,
                 "assistant_message_id": assistant_message_id,
                 "retrieved_count": len(chunks),
@@ -454,7 +468,7 @@ def run_chat_for_message(
                 status="success",
                 channel="celery",
                 session_id=session_id,
-                doc_id=doc_id,
+                doc_id=metric_doc_id,
                 user_message_id=user_message_id,
                 celery_task_id=celery_task_id,
                 top_k=top_k,
@@ -469,6 +483,7 @@ def run_chat_for_message(
                 answer_source=answer_source,
                 extra={
                     "assistant_message_id": assistant_message_id,
+                    "doc_ids": resolved_doc_ids,
                     "total_tokens": total_tokens,
                     "llm_latency_ms": llm_result.get("latency_ms") if llm_result else None,
                     "faiss_ms": faiss_ms,
@@ -508,6 +523,7 @@ def run_chat_for_message(
                     "stage": "failed",
                     "session_id": session_id,
                     "doc_id": doc_id,
+                    "doc_ids": resolved_doc_ids,
                     "user_message_id": user_message_id,
                     "error": str(e),
                 },
@@ -522,7 +538,7 @@ def run_chat_for_message(
             status="error",
             channel="celery",
             session_id=session_id,
-            doc_id=doc_id,
+            doc_id=metric_doc_id,
             user_message_id=user_message_id,
             celery_task_id=celery_task_id,
             top_k=top_k,
@@ -539,6 +555,7 @@ def run_chat_for_message(
             error_message=str(e),
             extra={
                 "total_tokens": total_tokens,
+                "doc_ids": resolved_doc_ids,
                 "rerank_ms": rerank_ms,
                 "faiss_ms": faiss_ms,
                 "candidate_top_k": candidate_top_k,

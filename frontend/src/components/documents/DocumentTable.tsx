@@ -16,7 +16,7 @@ export function DocumentTable({ documents, selectedDocId, onSelectDocument }: Do
     return (
       <EmptyState
         title="文档库为空"
-        description="上传 .md、.txt、.json、.csv、.pdf 或 .docx 后，索引进度会出现在这里。"
+        description="上传 .md、.txt、.json、.csv、.pdf、.docx 或 .xlsx 后，索引进度会出现在这里。"
       />
     );
   }

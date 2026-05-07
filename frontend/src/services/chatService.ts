@@ -17,7 +17,6 @@ export function createSession(
 export function submitChat(
   baseUrl: string,
   sessionId: number,
-  docId: number,
   content: string,
   topK: number,
 ): Promise<ChatSubmitData> {
@@ -27,7 +26,7 @@ export function submitChat(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ doc_id: docId, content, top_k: topK }),
+      body: JSON.stringify({ content, top_k: topK }),
     },
   );
 }
@@ -42,7 +41,8 @@ export async function listMessages(baseUrl: string, sessionId: number): Promise<
 
 export interface StreamChatRequest {
   session_id: number;
-  doc_id: number;
+  doc_id?: number;
+  doc_ids?: number[];
   content: string;
   top_k: number;
 }
@@ -61,6 +61,7 @@ export interface StreamChatDoneMeta {
   total_tokens?: number;
   cost_usd?: number;
   no_context?: boolean;
+  doc_ids?: number[];
 }
 
 interface StreamChatCallbacks {

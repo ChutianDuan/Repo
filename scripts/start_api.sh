@@ -11,13 +11,16 @@ if [ -f .env ]; then
   set +a
 fi
 
-case "${PYTHON_DISABLE_CUDA:-false}" in
+API_DISABLE_CUDA="${API_DISABLE_CUDA:-${PYTHON_DISABLE_CUDA:-false}}"
+API_CUDA_VISIBLE_DEVICES="${API_CUDA_VISIBLE_DEVICES:-${PYTHON_CUDA_VISIBLE_DEVICES:-}}"
+
+case "$API_DISABLE_CUDA" in
   true|1|yes|on)
     export CUDA_VISIBLE_DEVICES=""
     ;;
   *)
-    if [ -n "${PYTHON_CUDA_VISIBLE_DEVICES:-}" ]; then
-      export CUDA_VISIBLE_DEVICES="$PYTHON_CUDA_VISIBLE_DEVICES"
+    if [ -n "$API_CUDA_VISIBLE_DEVICES" ]; then
+      export CUDA_VISIBLE_DEVICES="$API_CUDA_VISIBLE_DEVICES"
     fi
     ;;
 esac
@@ -25,6 +28,8 @@ esac
 export PYTHONPATH="$REPO_ROOT"
 
 APP_RELOAD="${APP_RELOAD:-false}"
+
+echo "[INFO] api CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>}"
 
 UVICORN_ARGS=(
   python3 -m uvicorn python_rag.app.main:app

@@ -11,6 +11,7 @@ def submit_chat_job_endpoint(request: SubmitChatJobRequest):
     return submit_chat_job(
         session_id=request.session_id,
         doc_id=request.doc_id,
+        doc_ids=request.doc_ids,
         user_message_id=request.user_message_id,
         top_k=request.top_k,
     )

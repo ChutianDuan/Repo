@@ -1,5 +1,5 @@
 import { requestJson } from "./apiClient";
-import type { DocumentDetail, UploadDocumentResponse } from "../types/document";
+import type { DocumentDetail, DocumentListItem, DocumentListResponse, UploadDocumentResponse } from "../types/document";
 
 export function uploadDocument(
   baseUrl: string,
@@ -18,4 +18,15 @@ export function uploadDocument(
 
 export function getDocumentDetail(baseUrl: string, docId: number): Promise<DocumentDetail> {
   return requestJson<DocumentDetail>(baseUrl, `/v1/documents/${docId}`);
+}
+
+export async function listDocuments(
+  baseUrl: string,
+  limit = 200,
+): Promise<DocumentListItem[]> {
+  const data = await requestJson<DocumentListResponse>(
+    baseUrl,
+    `/v1/documents?limit=${limit}`,
+  );
+  return data.items;
 }

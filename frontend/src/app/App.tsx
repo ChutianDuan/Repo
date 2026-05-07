@@ -8,7 +8,7 @@ import { SettingsPage } from "../pages/settings/SettingsPage";
 import { TasksPage } from "../pages/tasks/TasksPage";
 import { WorkspacePage } from "../pages/workspace/WorkspacePage";
 import { createSession, listMessages, streamChat, submitChat } from "../services/chatService";
-import { uploadDocument } from "../services/documentService";
+import { listDocuments, uploadDocument } from "../services/documentService";
 import { getHealth, getMonitorOverview } from "../services/monitorService";
 import { getTaskStatus, listTasks } from "../services/taskService";
 import { createUser, listLatestUsers } from "../services/userService";
@@ -20,12 +20,13 @@ import type { MetricPoint, MonitorOverview, ServiceState } from "../types/monito
 import type { Session, SessionSummary } from "../types/session";
 import type { TaskRecord, TaskStatus } from "../types/task";
 import type { UserItem } from "../types/user";
+import { summarizeGpuMetrics } from "../utils/gpu";
 import { nowIso } from "../utils/format";
 
 const DEFAULT_API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "";
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ROUNDS = 80;
-const SUPPORTED_DOCUMENT_RE = /\.(md|txt|json|csv|pdf|docx)$/i;
+const SUPPORTED_DOCUMENT_RE = /\.(md|txt|json|csv|pdf|docx|xlsx)$/i;
 
 type PendingAction =
   | "health"
@@ -257,6 +258,7 @@ export default function App() {
 
   const currentMessages = session ? messagesBySession[session.session_id] || [] : [];
   const currentDocument = documents.find((document) => document.doc_id === currentDocumentId) || null;
+  const readyDocuments = documents.filter((document) => document.status === "READY");
   const overview = monitorOverview || buildFallbackOverview(health, taskRecords, documents, apiLatencyMs, topK);
   const selectedFileName = selectedFile?.name || null;
 
@@ -276,7 +278,7 @@ export default function App() {
       {
         label: timestamp,
         cpu: nextOverview.system.cpu_percent,
-        gpu: nextOverview.gpu[0]?.util_percent ?? null,
+        gpu: summarizeGpuMetrics(nextOverview.gpu).util_percent,
         api_ms: nextOverview.latency.api_ms,
         throughput: nextOverview.throughput.qps ?? taskRecords.filter((task) => task.state === "SUCCESS").length,
       },
@@ -407,6 +409,28 @@ export default function App() {
     }
   }
 
+  async function refreshDocuments(silent = false) {
+    try {
+      const items = await listDocuments(apiBaseUrl, 200);
+      setDocuments((current) =>
+        items.map((item) => {
+          const local = current.find((document) => document.doc_id === item.doc_id);
+          return {
+            ...item,
+            progress: local?.progress ?? (item.status === "READY" ? 100 : 0),
+            task_id: local?.task_id,
+            error: item.error || item.error_message || local?.error || null,
+          };
+        }),
+      );
+      setCurrentDocumentId((current) => current ?? items[0]?.doc_id ?? null);
+    } catch (nextError) {
+      if (!silent) {
+        setError(nextError instanceof Error ? nextError.message : "刷新文档库失败");
+      }
+    }
+  }
+
   async function handleCreateUser() {
     const trimmedName = newUserName.trim();
     if (!trimmedName) {
@@ -501,7 +525,7 @@ export default function App() {
       return;
     }
     if (!SUPPORTED_DOCUMENT_RE.test(selectedFile.name)) {
-      setError("当前仅支持 .md、.txt、.json、.csv、.pdf、.docx 文件");
+      setError("当前仅支持 .md、.txt、.json、.csv、.pdf、.docx、.xlsx 文件");
       return;
     }
 
@@ -550,6 +574,7 @@ export default function App() {
         updateDocumentFromTask(uploadResult.doc_id, task);
       });
       updateDocumentFromTask(uploadResult.doc_id, finalTask);
+      await refreshDocuments(true);
       setSelectedFile(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "上传失败");
@@ -563,12 +588,8 @@ export default function App() {
       setError("请先创建会话");
       return;
     }
-    if (!currentDocument) {
-      setError("请先上传并选择文档");
-      return;
-    }
-    if (currentDocument.status !== "READY") {
-      setError("文档索引尚未完成，请等待 READY 后再提问");
+    if (readyDocuments.length === 0) {
+      setError("请先上传文档并等待索引 READY 后再提问");
       return;
     }
     const prompt = question.trim();
@@ -581,6 +602,7 @@ export default function App() {
     setError(null);
     setChatTask(null);
     setQuestion("");
+    const readyDocIds = readyDocuments.map((document) => document.doc_id);
     let streamTaskId: string | null = null;
     try {
       if (streamingEnabled) {
@@ -628,7 +650,7 @@ export default function App() {
           meta: {
             stage: "streaming",
             session_id: session.session_id,
-            doc_id: currentDocument.doc_id,
+            doc_ids: readyDocIds,
           },
           error: null,
         });
@@ -639,7 +661,6 @@ export default function App() {
             apiBaseUrl,
             {
               session_id: session.session_id,
-              doc_id: currentDocument.doc_id,
               content: prompt,
               top_k: topK,
             },
@@ -668,6 +689,7 @@ export default function App() {
                             context_mode: meta.context_mode,
                             retrieved_count: meta.retrieved_count,
                             citation_count: meta.citation_count,
+                            doc_ids: meta.doc_ids || readyDocIds,
                             retrieval_ms: meta.retrieval_ms,
                             ttft_ms: meta.ttft_ms,
                             e2e_latency_ms: meta.e2e_latency_ms,
@@ -683,7 +705,7 @@ export default function App() {
                   meta: {
                     stage: "finished",
                     session_id: session.session_id,
-                    doc_id: currentDocument.doc_id,
+                    doc_ids: meta.doc_ids || readyDocIds,
                     answer_source: meta.answer_source,
                     context_mode: meta.context_mode,
                     retrieved_count: meta.retrieved_count,
@@ -724,7 +746,6 @@ export default function App() {
       const submitted = await submitChat(
         apiBaseUrl,
         session.session_id,
-        currentDocument.doc_id,
         prompt,
         topK,
       );
@@ -743,7 +764,7 @@ export default function App() {
           meta: {
             stage: "queued",
             session_id: session.session_id,
-            doc_id: currentDocument.doc_id,
+            doc_ids: readyDocIds,
             user_message_id: submitted.message_id,
           },
           error: null,
@@ -771,7 +792,7 @@ export default function App() {
           meta: {
             stage: "failed",
             session_id: session.session_id,
-            doc_id: currentDocument.doc_id,
+            doc_ids: readyDocIds,
           },
           error: nextError instanceof Error ? nextError.message : "流式提问失败",
         });
@@ -910,7 +931,7 @@ export default function App() {
     return (
       <WorkspacePage
         session={session}
-        currentDocument={currentDocument}
+        readyDocumentCount={readyDocuments.length}
         messages={currentMessages}
         question={question}
         topK={topK}
@@ -935,6 +956,7 @@ export default function App() {
 
   useEffect(() => {
     void refreshUsers(true);
+    void refreshDocuments(true);
   }, [apiBaseUrl]);
 
   usePolling(() => refreshHealth(true), route === "monitor" ? 2000 : 5000, true);
@@ -945,7 +967,7 @@ export default function App() {
     <AppShell
       route={route}
       overview={overview}
-      searchScope={currentDocument ? currentDocument.filename : "No document selected"}
+      searchScope={`Global KB · ${readyDocuments.length} ready docs`}
       sessions={sessions}
       currentSessionId={session?.session_id || null}
       users={latestUsers}

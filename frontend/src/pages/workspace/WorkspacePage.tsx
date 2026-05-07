@@ -1,5 +1,4 @@
 import type { ChatMessage } from "../../types/message";
-import type { DocumentListItem } from "../../types/document";
 import type { Session } from "../../types/session";
 import type { TaskStatus } from "../../types/task";
 import { ChatWorkspace } from "../../components/workspace/ChatWorkspace";
@@ -7,7 +6,7 @@ import { ReferencePanel } from "../../components/workspace/ReferencePanel";
 
 interface WorkspacePageProps {
   session: Session | null;
-  currentDocument: DocumentListItem | null;
+  readyDocumentCount: number;
   messages: ChatMessage[];
   question: string;
   topK: number;
@@ -39,7 +38,7 @@ function latestAssistantMessage(messages: ChatMessage[]): ChatMessage | null {
 
 export function WorkspacePage({
   session,
-  currentDocument,
+  readyDocumentCount,
   messages,
   question,
   topK,
@@ -60,11 +59,9 @@ export function WorkspacePage({
   onAsk,
 }: WorkspacePageProps) {
   const assistantMessage = latestAssistantMessage(messages);
-  const documentLabel = currentDocument
-    ? `KB: ${currentDocument.filename} · doc #${currentDocument.doc_id}`
-    : "KB: 未选择文档";
-  const documentStatus = currentDocument?.status || "NO_DOCUMENT";
-  const canAsk = Boolean(session && currentDocument && currentDocument.status === "READY");
+  const documentLabel = `Global KB · ${readyDocumentCount} ready docs`;
+  const documentStatus = readyDocumentCount > 0 ? "READY" : "EMPTY";
+  const canAsk = Boolean(session);
 
   return (
     <div className="workspace-page">

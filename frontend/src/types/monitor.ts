@@ -19,6 +19,12 @@ export interface GpuMetrics {
   temperature?: number | null;
 }
 
+export interface GpuScope {
+  ids?: number[] | null;
+  source?: string | null;
+  filtered?: boolean | null;
+}
+
 export interface ServiceHealthMap {
   mysql: ServiceState;
   redis: ServiceState;
@@ -115,6 +121,7 @@ export interface RagMetrics {
 export interface MonitorOverview {
   system: SystemMetrics;
   gpu: GpuMetrics[];
+  gpu_scope?: GpuScope;
   services: ServiceHealthMap;
   queue: QueueMetrics;
   latency: LatencyMetrics;

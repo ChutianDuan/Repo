@@ -50,6 +50,92 @@ def get_document_by_id(doc_id):
         conn.close()
 
 
+def list_documents(user_id=None, status=None, limit=100):
+    conn = get_mysql_connection()
+    try:
+        with conn.cursor() as cursor:
+            conditions = []
+            params = []
+            updated_at_field = (
+                "d.updated_at"
+                if has_column("documents", "updated_at")
+                else "d.created_at AS updated_at"
+            )
+
+            if user_id is not None:
+                conditions.append("d.user_id=%s")
+                params.append(user_id)
+            if status:
+                conditions.append("d.status=%s")
+                params.append(status)
+
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+
+            sql = """
+                SELECT
+                    d.id,
+                    d.user_id,
+                    d.filename,
+                    d.mime,
+                    d.sha256,
+                    d.size_bytes,
+                    d.storage_path,
+                    d.status,
+                    d.error_message,
+                    d.created_at,
+                    {updated_at_field},
+                    di.chunk_count,
+                    di.status AS index_status
+                FROM documents d
+                LEFT JOIN document_indexes di ON di.doc_id = d.id
+                {where_clause}
+                ORDER BY d.created_at DESC, d.id DESC
+                LIMIT %s
+            """.format(where_clause=where_clause, updated_at_field=updated_at_field)
+            params.append(max(1, int(limit or 100)))
+
+            cursor.execute(sql, tuple(params))
+            return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def list_ready_document_ids(user_id=None, embedding_model=None, limit=1000):
+    conn = get_mysql_connection()
+    try:
+        with conn.cursor() as cursor:
+            conditions = [
+                "d.status='READY'",
+                "di.status='READY'",
+            ]
+            params = []
+
+            if user_id is not None:
+                conditions.append("d.user_id=%s")
+                params.append(user_id)
+            if embedding_model:
+                conditions.append("di.embedding_model=%s")
+                params.append(embedding_model)
+
+            sql = """
+                SELECT d.id
+                FROM documents d
+                INNER JOIN document_indexes di ON di.doc_id = d.id
+                WHERE {where_clause}
+                ORDER BY d.created_at DESC, d.id DESC
+                LIMIT %s
+            """.format(where_clause=" AND ".join(conditions))
+            params.append(max(1, int(limit or 1000)))
+
+            cursor.execute(sql, tuple(params))
+            rows = cursor.fetchall()
+            return [row["id"] for row in rows]
+    finally:
+        conn.close()
+
+
 def update_document_status(doc_id, status, error_message=None):
     conn = get_mysql_connection()
     try:

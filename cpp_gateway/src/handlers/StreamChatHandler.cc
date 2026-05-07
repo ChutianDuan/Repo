@@ -36,9 +36,21 @@ bool StreamChatService::validateRequestBody(const Json::Value& body, std::string
         error = "missing or invalid session_id";
         return false;
     }
-    if (!body.isMember("doc_id") || !body["doc_id"].isInt()) {
-        error = "missing or invalid doc_id";
+    if (body.isMember("doc_id") && (!body["doc_id"].isInt() || body["doc_id"].asInt() <= 0)) {
+        error = "invalid doc_id";
         return false;
+    }
+    if (body.isMember("doc_ids") && !body["doc_ids"].isArray()) {
+        error = "invalid doc_ids";
+        return false;
+    }
+    if (body.isMember("doc_ids") && body["doc_ids"].isArray()) {
+        for (const auto& item : body["doc_ids"]) {
+            if (!item.isInt() || item.asInt() <= 0) {
+                error = "doc_ids must contain positive integers";
+                return false;
+            }
+        }
     }
     const bool hasUserMessageId = body.isMember("user_message_id") && body["user_message_id"].isInt();
     const bool hasContent = body.isMember("content") && body["content"].isString()

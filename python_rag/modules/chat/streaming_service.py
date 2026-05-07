@@ -12,7 +12,7 @@ from python_rag.modules.messages.repo import (
 )
 from python_rag.modules.sessions.repo import get_session_by_id
 
-from python_rag.modules.retrieval.service import search_in_document
+from python_rag.modules.retrieval.service import search_in_documents
 from python_rag.modules.retrieval.context_assembler import assemble_context
 
 from python_rag.modules.llm.service import LLMServiceError, stream_answer
@@ -71,10 +71,11 @@ def _safe_get_question_from_message(user_message: Dict[str, Any]) -> str:
     return str(content).strip()
 
 
-def _retrieve_hits(question: str, doc_id: int, top_k: int) -> Dict[str, Any]:
-    result = search_in_document(
+def _retrieve_hits(question: str, doc_id: Optional[int], doc_ids: Optional[List[int]], top_k: int) -> Dict[str, Any]:
+    result = search_in_documents(
         query=question,
         doc_id=doc_id,
+        doc_ids=doc_ids,
         top_k=top_k,
         track_metric=False,
     )
@@ -140,11 +141,13 @@ def _stream_fallback_answer(answer_text: str) -> Generator[str, None, None]:
 
 def stream_chat_for_message(
     session_id: int,
-    doc_id: int,
+    doc_id: Optional[int],
     user_message_id: int,
     top_k: Optional[int] = None,
+    doc_ids: Optional[List[int]] = None,
 ) -> Generator[str, None, None]:
     top_k = top_k or CHAT_TOP_K
+    doc_ids = doc_ids or []
     started_at = time.perf_counter()
     retrieval_ms = None
     faiss_ms = None
@@ -160,6 +163,8 @@ def stream_chat_for_message(
     context_mode = None
     answer_source = None
     citation_count = 0
+    resolved_doc_ids = []
+    metric_doc_id = doc_id
 
     try:
         with track_session_activity(session_id=session_id, is_stream=True):
@@ -175,9 +180,12 @@ def stream_chat_for_message(
             retrieval_result = _retrieve_hits(
                 question=question,
                 doc_id=doc_id,
+                doc_ids=doc_ids,
                 top_k=top_k,
             )
             raw_hits = retrieval_result.get("hits", [])
+            resolved_doc_ids = retrieval_result.get("doc_ids") or ([] if doc_id is None else [doc_id])
+            metric_doc_id = resolved_doc_ids[0] if len(resolved_doc_ids) == 1 else None
             retrieval_metrics = retrieval_result.get("metrics") or {}
             retrieval_ms = retrieval_metrics.get("retrieval_ms")
             faiss_ms = retrieval_metrics.get("faiss_ms")
@@ -306,6 +314,8 @@ def stream_chat_for_message(
                 context_mode=context_mode,
                 extra_meta={
                     "user_message_id": user_message_id,
+                    "doc_id": doc_id,
+                    "doc_ids": resolved_doc_ids,
                     "retrieval_ms": retrieval_ms,
                     "faiss_ms": faiss_ms,
                     "rerank_ms": rerank_ms,
@@ -334,7 +344,7 @@ def stream_chat_for_message(
                 status="success",
                 channel="sse",
                 session_id=session_id,
-                doc_id=doc_id,
+                doc_id=metric_doc_id,
                 user_message_id=user_message_id,
                 top_k=top_k,
                 ttft_ms=ttft_ms,
@@ -349,6 +359,7 @@ def stream_chat_for_message(
                 answer_source=answer_source,
                 extra={
                     "assistant_message_id": assistant_message["message_id"],
+                    "doc_ids": resolved_doc_ids,
                     "total_tokens": total_tokens,
                     "llm_latency_ms": llm_result.get("latency_ms") if llm_result else None,
                     "llm_ttft_ms": llm_result.get("ttft_ms") if llm_result else None,
@@ -364,6 +375,7 @@ def stream_chat_for_message(
             yield build_done_event(
                 {
                     "assistant_message_id": assistant_message["message_id"],
+                    "doc_ids": resolved_doc_ids,
                     "answer_source": answer_source,
                     "context_mode": context_mode,
                     "retrieved_count": len(chunks),
@@ -400,7 +412,7 @@ def stream_chat_for_message(
             status="error",
             channel="sse",
             session_id=session_id,
-            doc_id=doc_id,
+            doc_id=metric_doc_id,
             user_message_id=user_message_id,
             top_k=top_k,
             ttft_ms=ttft_ms,
@@ -417,6 +429,7 @@ def stream_chat_for_message(
             error_message=str(e),
             extra={
                 "total_tokens": total_tokens,
+                "doc_ids": resolved_doc_ids,
                 "faiss_ms": faiss_ms,
                 "rerank_ms": rerank_ms,
                 "candidate_top_k": candidate_top_k,

@@ -20,10 +20,11 @@ export interface DocumentDetail {
   updated_at?: string | null;
 }
 
-export type DocumentStatus = "UPLOADED" | "PROCESSING" | "READY" | "FAILED";
+export type DocumentStatus = "UPLOADED" | "PROCESSING" | "INGESTING" | "READY" | "FAILED";
 
 export interface DocumentListItem {
   doc_id: number;
+  user_id?: number;
   filename: string;
   status: DocumentStatus;
   chunks: number | null;
@@ -33,4 +34,10 @@ export interface DocumentListItem {
   task_id?: string;
   progress?: number;
   error?: string | null;
+  error_message?: string | null;
+  index_status?: string | null;
+}
+
+export interface DocumentListResponse {
+  items: DocumentListItem[];
 }

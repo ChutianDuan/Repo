@@ -13,6 +13,7 @@ from python_rag.infra.storage import build_upload_path, save_bytes_to_path
 from python_rag.modules.documents.repo import (
     create_document_record,
     get_document_by_id,
+    list_documents,
 )
 from python_rag.modules.ingest.chunking_service import validate_supported_document_filename
 from python_rag.utils.hash_utils import sha256_bytes
@@ -90,3 +91,34 @@ def get_document_detail(doc_id):
     except Exception as e:
         logger.exception("get_document_detail failed")
         raise AppError(ERR_DB_ERROR, "get_document_detail failed: {0}".format(e))
+
+
+def list_document_items(user_id=None, status=None, limit=100):
+    try:
+        rows = list_documents(user_id=user_id, status=status, limit=limit)
+        result = []
+        for row in rows:
+            chunk_count = row.get("chunk_count")
+            index_status = row.get("index_status")
+            result.append(
+                {
+                    "doc_id": row["id"],
+                    "user_id": row["user_id"],
+                    "filename": row["filename"],
+                    "mime": row["mime"],
+                    "size_bytes": row["size_bytes"],
+                    "status": row["status"],
+                    "storage_path": row["storage_path"],
+                    "error_message": row.get("error_message"),
+                    "error": row.get("error_message"),
+                    "chunks": chunk_count,
+                    "vectorized": index_status == "READY",
+                    "index_status": index_status,
+                    "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+                    "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
+                }
+            )
+        return {"items": result}
+    except Exception as e:
+        logger.exception("list_document_items failed")
+        raise AppError(ERR_DB_ERROR, "list_document_items failed: {0}".format(e))

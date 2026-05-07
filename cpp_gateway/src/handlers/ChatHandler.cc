@@ -26,9 +26,10 @@ void ChatService::createUserMessageAndSubmitChat(
 ) {
     // body 约定:
     // {
-    //   "doc_id": 11,
     //   "content": "这份文档讲了什么？",
-    //   "top_k": 3
+    //   "top_k": 3,
+    //   "doc_id": 11,          // optional: omitted means global READY documents
+    //   "doc_ids": [11, 12]    // optional: explicit document scope
     // }
     auto sharedCallback =
         std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
@@ -61,9 +62,14 @@ void ChatService::createUserMessageAndSubmitChat(
 
             Json::Value chatJobBody;
             chatJobBody["session_id"] = sessionId;
-            chatJobBody["doc_id"] = body.get("doc_id", 0).asInt();
             chatJobBody["user_message_id"] = userMessageId;
             chatJobBody["top_k"] = body.get("top_k", 3).asInt();
+            if (body.isMember("doc_id") && body["doc_id"].isInt() && body["doc_id"].asInt() > 0) {
+                chatJobBody["doc_id"] = body["doc_id"].asInt();
+            }
+            if (body.isMember("doc_ids") && body["doc_ids"].isArray()) {
+                chatJobBody["doc_ids"] = body["doc_ids"];
+            }
 
             pythonClient_->forwardJsonPost(
                 "/internal/jobs/chat",

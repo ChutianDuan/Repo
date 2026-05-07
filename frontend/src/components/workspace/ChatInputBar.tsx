@@ -53,7 +53,7 @@ export function ChatInputBar({
       />
       <div className="chat-input-bar__controls">
         <label className="file-control">
-          <input type="file" accept=".md,.txt,.json,.csv,.pdf,.docx" onChange={handleFileChange} />
+          <input type="file" accept=".md,.txt,.json,.csv,.pdf,.docx,.xlsx" onChange={handleFileChange} />
           <span>{selectedFileName || "选择文档"}</span>
         </label>
         <button type="button" className="button-secondary" onClick={onUpload} disabled={pending !== null}>

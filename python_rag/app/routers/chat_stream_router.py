@@ -13,6 +13,7 @@ def chat_stream(req: ChatStreamRequest):
     generator = stream_chat_for_message(
         session_id=req.session_id,
         doc_id=req.doc_id,
+        doc_ids=req.doc_ids,
         user_message_id=req.user_message_id,
         top_k=req.top_k,
     )

@@ -15,7 +15,7 @@ export function UploadDocumentButton({ selectedFileName, pending, onFileChange, 
   return (
     <div className="upload-document-button">
       <label className="file-control">
-        <input type="file" accept=".md,.txt,.json,.csv,.pdf,.docx" onChange={handleFileChange} />
+        <input type="file" accept=".md,.txt,.json,.csv,.pdf,.docx,.xlsx" onChange={handleFileChange} />
         <span>{selectedFileName || "Select document"}</span>
       </label>
       <button type="button" onClick={onUpload} disabled={pending !== null}>

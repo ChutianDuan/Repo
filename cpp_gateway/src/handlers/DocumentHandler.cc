@@ -33,11 +33,12 @@ std::string fileExtension(std::string name) {
 
 bool isSupportedTextExtension(const std::string& ext) {
     return ext == "md" || ext == "txt" || ext == "json"
-        || ext == "csv" || ext == "pdf" || ext == "docx";
+        || ext == "csv" || ext == "pdf" || ext == "docx"
+        || ext == "xlsx";
 }
 
 std::string supportedDocumentTypesText() {
-    return ".md, .txt, .json, .csv, .pdf, .docx";
+    return ".md, .txt, .json, .csv, .pdf, .docx, .xlsx";
 }
 
 std::string buildUniqueSuffix() {
@@ -137,6 +138,9 @@ std::string DocumentService::guessMime(const HttpFile& file) {
     if (ext == "pdf") return "application/pdf";
     if (ext == "docx") {
         return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    }
+    if (ext == "xlsx") {
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     }
     return "application/octet-stream";
 }

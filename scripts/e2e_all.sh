@@ -125,7 +125,7 @@ echo "[5/7] submit chat"
 CHAT_RESP="$(curl -fsS -X POST "${GATEWAY_BASE_URL}/v1/sessions/${SESSION_ID}/messages" \
   "${AUTH_HEADERS[@]}" \
   -H "Content-Type: application/json" \
-  -d "{\"doc_id\":${DOC_ID},\"content\":\"${QUERY_TEXT}\",\"top_k\":${TOP_K}}")"
+  -d "{\"content\":\"${QUERY_TEXT}\",\"top_k\":${TOP_K}}")"
 echo "$CHAT_RESP"
 CHAT_TASK_ID="$(printf "%s" "$CHAT_RESP" | json_read "data['data']['task_id']")"
 echo "[INFO] chat_task_id=${CHAT_TASK_ID}"

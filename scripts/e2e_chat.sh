@@ -115,7 +115,6 @@ CHAT_RESP=$(curl -s -X POST "${GATEWAY_BASE_URL}/v1/sessions/${SESSION_ID}/messa
   "${AUTH_HEADERS[@]}" \
   -H "Content-Type: application/json" \
   -d "{
-    \"doc_id\": ${DOC_ID},
     \"content\": \"${QUERY_TEXT}\",
     \"top_k\": ${TOP_K}
   }")

@@ -14,7 +14,7 @@ from python_rag.modules.tasks.repo import create_task_record, update_task_record
 from python_rag.modules.tasks.worker_tasks.chat_task import chat_task
 
 
-def submit_chat_job(session_id, doc_id, user_message_id, top_k=3):
+def submit_chat_job(session_id, doc_id=None, user_message_id=None, top_k=3, doc_ids=None):
     session = get_session_by_id(session_id)
     if not session:
         raise AppError(ERR_SESSION_NOT_FOUND, "session not found", http_status=404)
@@ -42,6 +42,7 @@ def submit_chat_job(session_id, doc_id, user_message_id, top_k=3):
             "stage": "queued",
             "session_id": session_id,
             "doc_id": doc_id,
+            "doc_ids": doc_ids or [],
             "user_message_id": user_message_id,
         },
     )
@@ -51,6 +52,7 @@ def submit_chat_job(session_id, doc_id, user_message_id, top_k=3):
             kwargs={
                 "session_id": session_id,
                 "doc_id": doc_id,
+                "doc_ids": doc_ids or [],
                 "user_message_id": user_message_id,
                 "top_k": top_k,
             },
@@ -65,6 +67,7 @@ def submit_chat_job(session_id, doc_id, user_message_id, top_k=3):
                 "stage": "queue_failed",
                 "session_id": session_id,
                 "doc_id": doc_id,
+                "doc_ids": doc_ids or [],
                 "user_message_id": user_message_id,
             },
             error=str(exc),

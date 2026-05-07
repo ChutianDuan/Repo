@@ -2,6 +2,7 @@ import type { AppRoute } from "../../app/router";
 import { HealthDot } from "../common/HealthDot";
 import type { MonitorOverview } from "../../types/monitor";
 import { formatBytesGb, formatPercent } from "../../utils/format";
+import { summarizeGpuMetrics } from "../../utils/gpu";
 
 interface AppHeaderProps {
   route: AppRoute;
@@ -13,7 +14,7 @@ interface AppHeaderProps {
 }
 
 export function AppHeader({ route, overview, searchScope, onNavigate, onRefresh, refreshing }: AppHeaderProps) {
-  const gpuUsage = overview.gpu.length > 0 ? overview.gpu[0]?.util_percent : null;
+  const gpuUsage = summarizeGpuMetrics(overview.gpu).util_percent;
   const serviceDots = [
     ["MySQL", overview.services.mysql] as const,
     ["Redis", overview.services.redis] as const,

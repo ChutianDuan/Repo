@@ -11,6 +11,7 @@ from python_rag.config import (
     LLM_BASE_URL,
     LLM_ENABLE,
     MAX_DOCUMENT_SIZE_BYTES,
+    MONITOR_GPU_IDS,
     MONITOR_METRICS_MAX_ROWS,
     MONITOR_METRICS_WINDOW_SECONDS,
     STORAGE_ROOT,
@@ -45,6 +46,131 @@ def _service_state(ok: Optional[bool]) -> str:
     return "unknown"
 
 
+def _env_truthy(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _parse_gpu_id_list(value: Optional[str]) -> Optional[List[int]]:
+    if value is None:
+        return None
+
+    raw_value = value.strip()
+    if not raw_value:
+        return None
+
+    gpu_ids: List[int] = []
+    for item in raw_value.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        if token.startswith("cuda:"):
+            token = token.split(":", 1)[1]
+        try:
+            gpu_id = int(token)
+        except ValueError:
+            continue
+        if gpu_id >= 0 and gpu_id not in gpu_ids:
+            gpu_ids.append(gpu_id)
+    return gpu_ids
+
+
+def _env_value(name: str) -> Optional[str]:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    return value
+
+
+def _collect_gpu_ids_from_env(
+    env_names: List[str],
+    disabled: bool = False,
+) -> List[int]:
+    if disabled:
+        return []
+
+    gpu_ids: List[int] = []
+    for env_name in env_names:
+        for gpu_id in _parse_gpu_id_list(_env_value(env_name)) or []:
+            if gpu_id not in gpu_ids:
+                gpu_ids.append(gpu_id)
+    return gpu_ids
+
+
+def _resolve_monitor_gpu_scope() -> Dict[str, Any]:
+    explicit_value = MONITOR_GPU_IDS.strip()
+    explicit_normalized = explicit_value.lower()
+    if explicit_normalized in ("all", "*"):
+        return {
+            "ids": None,
+            "source": "MONITOR_GPU_IDS",
+            "filtered": False,
+        }
+    if explicit_normalized in ("none", "off", "false", "disabled", "-1"):
+        return {
+            "ids": [],
+            "source": "MONITOR_GPU_IDS",
+            "filtered": True,
+        }
+
+    explicit_gpu_ids = _parse_gpu_id_list(explicit_value)
+    if explicit_value:
+        return {
+            "ids": explicit_gpu_ids or [],
+            "source": "MONITOR_GPU_IDS",
+            "filtered": True,
+        }
+
+    python_disabled = _env_truthy(os.getenv("PYTHON_DISABLE_CUDA"))
+    api_disable_value = _env_value("API_DISABLE_CUDA")
+    worker_disable_value = _env_value("WORKER_DISABLE_CUDA")
+    api_disabled = (
+        _env_truthy(api_disable_value)
+        if api_disable_value is not None
+        else python_disabled
+    )
+    worker_disabled = (
+        _env_truthy(worker_disable_value)
+        if worker_disable_value is not None
+        else python_disabled
+    )
+
+    gpu_ids: List[int] = []
+    for gpu_id in _collect_gpu_ids_from_env(["VLLM_CUDA_VISIBLE_DEVICES"]):
+        if gpu_id not in gpu_ids:
+            gpu_ids.append(gpu_id)
+    for gpu_id in _collect_gpu_ids_from_env(
+        ["API_CUDA_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"],
+        disabled=api_disabled,
+    ):
+        if gpu_id not in gpu_ids:
+            gpu_ids.append(gpu_id)
+    for gpu_id in _collect_gpu_ids_from_env(
+        ["WORKER_CUDA_VISIBLE_DEVICES"],
+        disabled=worker_disabled,
+    ):
+        if gpu_id not in gpu_ids:
+            gpu_ids.append(gpu_id)
+    for gpu_id in _collect_gpu_ids_from_env(
+        ["PYTHON_CUDA_VISIBLE_DEVICES"],
+        disabled=python_disabled,
+    ):
+        if gpu_id not in gpu_ids:
+            gpu_ids.append(gpu_id)
+
+    if gpu_ids:
+        return {
+            "ids": gpu_ids,
+            "source": "service_cuda_env",
+            "filtered": True,
+        }
+
+    return {
+        "ids": None,
+        "source": "all",
+        "filtered": False,
+    }
+
+
 def _get_system_metrics() -> Dict[str, Optional[float]]:
     try:
         import psutil
@@ -74,7 +200,7 @@ def _get_system_metrics() -> Dict[str, Optional[float]]:
     }
 
 
-def _get_gpu_metrics() -> List[Dict[str, Any]]:
+def _get_gpu_metrics(scope: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not shutil.which("nvidia-smi"):
         return []
 
@@ -89,13 +215,18 @@ def _get_gpu_metrics() -> List[Dict[str, Any]]:
     except Exception:
         return []
 
+    selected_ids = scope.get("ids")
+    selected_id_set = set(selected_ids) if selected_ids is not None else None
     gpus = []
     for line in result.stdout.splitlines():
         parts = [part.strip() for part in line.split(",")]
         if len(parts) < 6:
             continue
+        gpu_id = int(_safe_float(parts[0]) or 0)
+        if selected_id_set is not None and gpu_id not in selected_id_set:
+            continue
         gpus.append({
-            "id": int(_safe_float(parts[0]) or 0),
+            "id": gpu_id,
             "name": parts[1],
             "util_percent": _safe_float(parts[2]),
             "memory_used_mb": _safe_float(parts[3]),
@@ -255,10 +386,12 @@ def get_monitor_overview() -> Dict[str, Any]:
 
     latency_ms = int((time.perf_counter() - started_at) * 1000)
     llm_state = "ok" if LLM_ENABLE and LLM_BASE_URL else "unknown"
+    gpu_scope = _resolve_monitor_gpu_scope()
 
     return {
         "system": _get_system_metrics(),
-        "gpu": _get_gpu_metrics(),
+        "gpu": _get_gpu_metrics(gpu_scope),
+        "gpu_scope": gpu_scope,
         "services": {
             "mysql": _service_state(mysql_ok),
             "redis": _service_state(redis_ok),

@@ -1,13 +1,14 @@
 import type { MonitorOverview } from "../../types/monitor";
 import { MetricCard } from "../common/MetricCard";
 import { formatBytesGb, formatNumber, formatPercent } from "../../utils/format";
+import { summarizeGpuMetrics } from "../../utils/gpu";
 
 interface ResourceOverviewCardsProps {
   overview: MonitorOverview;
 }
 
 export function ResourceOverviewCards({ overview }: ResourceOverviewCardsProps) {
-  const primaryGpu = overview.gpu[0];
+  const gpuSummary = summarizeGpuMetrics(overview.gpu);
 
   return (
     <div className="resource-overview-cards">
@@ -19,14 +20,14 @@ export function ResourceOverviewCards({ overview }: ResourceOverviewCardsProps) 
       />
       <MetricCard
         label="GPU Usage"
-        value={formatPercent(primaryGpu?.util_percent)}
-        detail={primaryGpu?.name || "No GPU telemetry"}
+        value={formatPercent(gpuSummary.util_percent)}
+        detail={gpuSummary.label}
       />
       <MetricCard
         label="GPU Memory"
         value={
-          primaryGpu?.memory_used_mb && primaryGpu.memory_total_mb
-            ? `${formatNumber(primaryGpu.memory_used_mb)} / ${formatNumber(primaryGpu.memory_total_mb)} MB`
+          gpuSummary.memory_used_mb !== null && gpuSummary.memory_total_mb !== null
+            ? `${formatNumber(gpuSummary.memory_used_mb)} / ${formatNumber(gpuSummary.memory_total_mb)} MB`
             : "--"
         }
       />

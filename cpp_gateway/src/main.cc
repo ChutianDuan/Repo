@@ -185,6 +185,45 @@ int main() {
 
     app().registerHandler(
         "/v1/documents",
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    std::string path = "/internal/documents";
+                    std::vector<std::string> params;
+                    const auto userId = req->getParameter("user_id");
+                    const auto status = req->getParameter("status");
+                    const auto limit = req->getParameter("limit");
+                    if (!userId.empty()) {
+                        params.push_back("user_id=" + userId);
+                    }
+                    if (!status.empty()) {
+                        params.push_back("status=" + status);
+                    }
+                    if (!limit.empty()) {
+                        params.push_back("limit=" + limit);
+                    }
+                    if (!params.empty()) {
+                        path += "?";
+                        for (size_t i = 0; i < params.size(); ++i) {
+                            if (i > 0) {
+                                path += "&";
+                            }
+                            path += params[i];
+                        }
+                    }
+                    pythonClient->forwardGet(path, std::move(secureCallback));
+                }
+            );
+        },
+        {Get}
+    );
+
+    app().registerHandler(
+        "/v1/documents",
         [gatewaySecurity, documentHandler](const HttpRequestPtr& req,
                                            std::function<void(const HttpResponsePtr&)>&& callback) {
             runSecured(

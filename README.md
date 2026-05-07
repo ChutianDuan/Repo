@@ -1,6 +1,6 @@
 # RAG Gateway Stack
 
-面向文档知识库问答的工程化 RAG 后端项目。它不是单页问答 demo，而是一套把外部 API 网关、内部业务服务、异步任务、数据库、向量索引、LLM 调用和监控工作台拆开的可扩展系统骨架。
+面向全局文档知识库问答的工程化 RAG 后端项目。它不是单页问答 demo，而是一套把外部 API 网关、内部业务服务、异步任务、数据库、向量索引、LLM 调用和监控工作台拆开的可扩展系统骨架。
 
 项目当前由 `C++ Drogon Gateway`、`FastAPI Internal Service`、`Celery Worker`、`MySQL`、`Redis`、`FAISS`、`Embedding Model`、`OpenAI-compatible LLM / vLLM` 和 `React Workbench` 组成。前端主要用于调试、演示和观测，核心能力集中在后端 RAG 链路。
 
@@ -10,8 +10,8 @@
 
 这个项目适合用来验证和展示一套真实 RAG 应用后端应该具备的基础能力：
 
-- 文档上传、去重、解析、切片、向量化和索引构建。
-- 基于 FAISS 的 Top-K 检索、可选 rerank、Prompt 组装和 LLM 回答。
+- 文档上传、去重、解析、切片、向量化、索引构建和全局归档。
+- 基于全局 READY 文档库的 FAISS Top-K 检索、可选 rerank、Prompt 组装和 LLM 回答。
 - 会话、消息、任务状态、引用来源和索引元数据的持久化。
 - C++ 网关统一承载外部 API、上传控制、CORS、健康检查聚合和 SSE 代理。
 - Celery 异步化处理 ingest 和 chat，避免长耗时流程阻塞请求。
@@ -22,6 +22,7 @@
 | 能力 | 说明 |
 | --- | --- |
 | 分层架构 | 浏览器只访问 C++ Gateway，内部业务逻辑收敛在 FastAPI 服务中，便于后续接入鉴权、限流和审计。 |
+| 全局知识库 | 文档上传仍记录归属用户，但索引完成后进入全局 READY 文档库；任意用户的会话默认都能检索这些文档。 |
 | 异步任务 | 文档解析、embedding、FAISS 构建和问答任务交给 Celery Worker 执行，任务进度可查询。 |
 | 可追溯回答 | 每条 assistant 消息都会保存 citations，前端可展示引用片段、chunk、score 和来源文档。 |
 | 模型切换保护 | `document_indexes.embedding_model` 记录索引所用 embedding 模型，避免模型切换后误用旧向量空间。 |
@@ -52,7 +53,7 @@ FastAPI Internal Service
         +--> MySQL        : users, documents, chunks, indexes, sessions, messages, citations, tasks
         +--> Redis        : Celery broker / result backend
         +--> Celery       : ingest and chat async jobs
-        +--> FAISS        : per-document vector index
+        +--> FAISS        : per-document vector indexes, global retrieval fan-out
         +--> Embedding    : sentence-transformers or OpenAI-compatible provider
         +--> LLM / vLLM   : OpenAI-compatible chat completion endpoint
 ```
@@ -74,18 +75,20 @@ FastAPI Internal Service
 
 ### 文档 Ingest
 
-1. 客户端上传文档到 `POST /v1/documents`。
+1. 客户端上传文档到 `POST /v1/documents`，请求中仍携带 `user_id` 用于归档和审计。
 2. C++ Gateway 校验文件类型、计算 SHA-256、保存文件，并写入文档记录。
 3. Gateway 调用 FastAPI 内部接口提交 ingest 任务。
 4. Celery Worker 抽取文本、切片、生成 embedding、构建 FAISS 索引。
-5. Worker 写入 `doc_chunks`、`document_indexes`，并更新任务和文档状态。
+5. Worker 写入 `doc_chunks`、`document_indexes`，并更新任务和文档状态；READY 后文档进入全局知识库。
 6. 客户端通过 `GET /v1/tasks/{task_id}` 查看处理进度。
+
+解析器支持 `.md`、`.txt`、`.json`、`.csv`、`.pdf`、`.docx` 和 `.xlsx`。其中 CSV、JSON records、DOCX 表格和 XLSX 工作表会尽量转换为 Markdown 表格再进入切片和 embedding，以保留列名、行关系和 sheet/table 来源。
 
 ### RAG 问答
 
-1. 客户端创建 session 并提交用户问题。
+1. 客户端创建 session 并提交用户问题；新流程不要求会话绑定某个 `doc_id`。
 2. Gateway 创建 user message，再提交 chat task。
-3. Worker 基于 FAISS 检索候选片段，并按配置执行 rerank。
+3. Worker 默认在全局 READY 文档索引中检索候选片段，并按配置执行 rerank。兼容旧调用：如果请求显式传 `doc_id` 或 `doc_ids`，则只检索指定文档范围。
 4. 系统组装上下文和 Prompt，调用 OpenAI-compatible LLM。
 5. assistant message 与 citations 落库。
 6. 前端刷新消息列表，展示回答和引用来源。
@@ -258,7 +261,7 @@ npm run build
 bash scripts/e2e_all.sh ./day7_demo.md
 ```
 
-该脚本会创建用户、上传文档、等待 ingest、创建会话、提交 chat、拉取消息，并触发一次带 relevance label 的检索评估，用来验证 Recall@K / MRR / NDCG 指标链路。
+该脚本会创建用户、上传文档、等待 ingest、创建会话、在不传 `doc_id` 的情况下提交 chat、拉取消息，并触发一次带 relevance label 的检索评估，用来验证全局知识库检索以及 Recall@K / MRR / NDCG 指标链路。
 
 先创建用户：
 
@@ -302,9 +305,10 @@ bash scripts/e2e_chat.sh ./day7_demo.md
 | `POST` | `/v1/users` | 创建用户。 |
 | `GET` | `/v1/users/latest` | 最近用户列表。 |
 | `POST` | `/v1/documents` | 上传文档并提交 ingest 任务。 |
+| `GET` | `/v1/documents` | 查询全局文档归档和索引状态，可选 `user_id`、`status`、`limit`。 |
 | `GET` | `/v1/documents/{doc_id}` | 查询文档详情。 |
 | `POST` | `/v1/sessions` | 创建会话。 |
-| `POST` | `/v1/sessions/{session_id}/messages` | 创建用户消息并提交 chat 任务。 |
+| `POST` | `/v1/sessions/{session_id}/messages` | 创建用户消息并提交 chat 任务；默认检索全局 READY 文档，兼容可选 `doc_id` / `doc_ids` 限定范围。 |
 | `GET` | `/v1/sessions/{session_id}/messages` | 获取消息和 citations。 |
 | `GET` | `/v1/tasks` | 查询任务列表。 |
 | `GET` | `/v1/tasks/{task_id}` | 查询单个任务状态。 |
@@ -326,7 +330,7 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - Gateway 的 MySQL / Redis 连接还没有完全收敛到根目录 `.env`，目前仍依赖 `cpp_gateway/config.json`。
 - `Monitor` 的历史趋势目前是前端近端采样，聚合窗口依赖 `request_metrics` 最近样本。
 - GPU 监控依赖 `nvidia-smi`，非 NVIDIA 环境会返回空数组。
-- 当前索引是单文档单 FAISS 索引，后续可扩展为多文档知识库、分片索引或向量数据库。
+- 当前仍是单文档单 FAISS 索引文件，查询时会对全局 READY 文档 fan-out 检索再合并排序；文档规模继续增大后需要索引缓存、分片索引或向量数据库。
 - SSE 流式接口形态完整，但生成侧仍以先得到完整答案再分块输出为主，后续可升级为真实 token streaming。
 - PDF 仅支持可提取文本的电子文档，扫描件 OCR 尚未接入。
 - Gateway 已支持 API Key 鉴权和 Redis 请求限流；租户隔离和审计日志尚未接入。
@@ -337,7 +341,7 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - 扩展自动化测试覆盖更多失败路径、鉴权限流边界和检索评估数据集。
 - Gateway 增加 request id 透传、审计日志和更完整的统一错误响应。
 - LLM 调用升级为真实 token streaming，并记录首 token 延迟和总耗时。
-- 从单文档索引扩展到知识库级多文档检索。
+- 将全局知识库检索从多 FAISS 文件 fan-out 优化为知识库级索引、分片索引或向量数据库。
 - 将 embedding LoRA 接入方式标准化，支持合并模型路径或 adapter 加载。
 
 ## 推荐验证命令

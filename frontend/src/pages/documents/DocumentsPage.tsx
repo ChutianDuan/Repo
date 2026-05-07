@@ -41,7 +41,7 @@ export function DocumentsPage({
       return document.status === "READY";
     }
     if (filter === "processing") {
-      return document.status === "PROCESSING" || document.status === "UPLOADED";
+      return document.status === "PROCESSING" || document.status === "INGESTING" || document.status === "UPLOADED";
     }
     return document.status === "FAILED";
   });
@@ -50,7 +50,7 @@ export function DocumentsPage({
     ? tasks.filter((task) => task.entity_type === "document" && task.entity_id === selectedDocument.doc_id)
     : [];
   const readyCount = documents.filter((document) => document.status === "READY").length;
-  const processingCount = documents.filter((document) => document.status === "PROCESSING" || document.status === "UPLOADED").length;
+  const processingCount = documents.filter((document) => document.status === "PROCESSING" || document.status === "INGESTING" || document.status === "UPLOADED").length;
   const failedCount = documents.filter((document) => document.status === "FAILED").length;
   const totalChunks = documents.reduce((sum, document) => sum + (document.chunks || 0), 0);
 
@@ -59,7 +59,7 @@ export function DocumentsPage({
       <PageTitle
         eyebrow="Knowledge Base"
         title="Documents"
-        description="上传文档，查看索引状态与向量化结果。"
+        description="上传文档归档到全局知识库，查看索引状态与向量化结果。"
         action={
           <UploadDocumentButton
             selectedFileName={selectedFileName}
@@ -80,7 +80,7 @@ export function DocumentsPage({
 
       <SectionCard
         title="Document Table"
-        description="按状态筛选当前文档。"
+        description="按状态筛选全局文档。"
         action={
           <div className="filter-tabs">
             {(["all", "ready", "processing", "failed"] as DocumentFilter[]).map((item) => (
