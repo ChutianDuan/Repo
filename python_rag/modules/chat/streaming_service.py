@@ -2,15 +2,10 @@ import logging
 import time
 from typing import Any, Dict, Generator, List, Optional
 
-from python_rag.core.error_codes import ERR_INTERNAL_ERROR, ERR_SESSION_NOT_FOUND
-from python_rag.core.errors import AppError
-
 from python_rag.modules.messages.repo import (
-    get_message_by_id,
     list_recent_messages_by_session_id,
     update_message_status,
 )
-from python_rag.modules.sessions.repo import get_session_by_id
 
 from python_rag.modules.retrieval.service import search_in_documents
 from python_rag.modules.retrieval.context_assembler import assemble_context
@@ -25,6 +20,7 @@ from python_rag.modules.chat.stream_event_builder import (
 )
 from python_rag.modules.chat.conversation_assembler import ConversationAssembler
 from python_rag.modules.chat.prompt_templates import SYSTEM_PROMPT
+from python_rag.modules.chat.validation import validate_chat_user_message
 
 from python_rag.config import (
     STREAM_DELTA_CHARS,
@@ -44,31 +40,6 @@ from python_rag.modules.monitor.request_metrics import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class StreamingChatServiceError(Exception):
-    pass
-
-
-def _get_user_message(user_message_id: int) -> Dict[str, Any]:
-    message = get_message_by_id(user_message_id)
-    if not message:
-        raise StreamingChatServiceError("user message not found")
-    return message
-
-
-def _get_session(session_id: int) -> Dict[str, Any]:
-    session = get_session_by_id(session_id)
-    if not session:
-        raise AppError(ERR_SESSION_NOT_FOUND, "session not found", http_status=404)
-    return session
-
-
-def _safe_get_question_from_message(user_message: Dict[str, Any]) -> str:
-    content = user_message.get("content")
-    if not content:
-        raise StreamingChatServiceError("user message content is empty")
-    return str(content).strip()
 
 
 def _retrieve_hits(question: str, doc_id: Optional[int], doc_ids: Optional[List[int]], top_k: int) -> Dict[str, Any]:
@@ -168,14 +139,12 @@ def stream_chat_for_message(
 
     try:
         with track_session_activity(session_id=session_id, is_stream=True):
-            _get_session(session_id)
-
-            user_message = _get_user_message(user_message_id)
-            if user_message.get("session_id") != session_id:
-                raise AppError(ERR_INTERNAL_ERROR, "user message does not belong to session")
+            _, _, question = validate_chat_user_message(
+                session_id=session_id,
+                user_message_id=user_message_id,
+            )
 
             update_message_status(user_message_id, "PROCESSING")
-            question = _safe_get_question_from_message(user_message)
 
             retrieval_result = _retrieve_hits(
                 question=question,

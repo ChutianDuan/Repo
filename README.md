@@ -330,6 +330,7 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - [性能测试指南](docs/performance_test_guide.md)：提供部署后的性能验证、压测流程和留档模板。
 - [Gateway 鉴权与限流](docs/gateway_auth_rate_limit.md)：说明 Drogon Gateway 的 API Key 鉴权和 Redis 限流配置。
 - [监控指标说明](docs/monitoring_metrics.md)：说明解析耗时、FAISS 耗时、TTFT、Celery 并发和检索质量指标。
+- [代码审核与完成度评估](docs/code_review_completion_assessment.md)：记录当前 Gateway / `python_rag` 审核结果、完成度和后续路线图。
 
 ## 当前限制
 
@@ -337,25 +338,27 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - `Monitor` 的历史趋势目前是前端近端采样，聚合窗口依赖 `request_metrics` 最近样本。
 - GPU 监控依赖 `nvidia-smi`，非 NVIDIA 环境会返回空数组。
 - 当前仍是单文档单 FAISS 索引文件，BM25 也复用单文档 mapping 做 fan-out 召回；文档规模继续增大后需要索引缓存、知识库级稀疏/向量索引、分片索引或向量数据库。
-- SSE 流式接口形态完整，但生成侧仍以先得到完整答案再分块输出为主，后续可升级为真实 token streaming。
+- SSE 流式接口形态完整，真实 LLM 路径已走 OpenAI-compatible stream；`no_context` 和 mock fallback 会在本地按字符块输出。高并发下还需要把 Gateway 当前的一请求一线程代理方式改成受控线程池或异步流式客户端。
+- 异步 chat、Celery chat runtime 和流式 chat 已复用同一套 `user_message_id` 校验，要求消息属于当前 session 且角色为 `user`。
 - PDF 仅支持可提取文本的电子文档，扫描件 OCR 尚未接入。
 - Gateway 已支持 API Key 鉴权和 Redis 请求限流；租户隔离和审计日志尚未接入。
 
 ## 后续方向
 
 - 提供 Docker Compose，一键启动 MySQL、Redis、FastAPI、Celery Worker 和 C++ Gateway。
-- 扩展自动化测试覆盖更多失败路径、鉴权限流边界和检索评估数据集。
+- 扩展自动化测试覆盖更多失败路径、鉴权限流边界、API contract 和检索评估数据集。
 - Gateway 增加 request id 透传、审计日志和更完整的统一错误响应。
-- LLM 调用升级为真实 token streaming，并记录首 token 延迟和总耗时。
+- 继续完善流式 TTFT、客户端断连、上游异常和高并发 SSE 代理处理。
 - 将全局知识库检索从多 FAISS 文件 fan-out 优化为知识库级索引、分片索引或向量数据库。
 - 将 embedding LoRA 接入方式标准化，支持合并模型路径或 adapter 加载。
 
 ## 推荐验证命令
 
 ```bash
+pip install -r python_rag/requirements-dev.txt
 python3 -m compileall python_rag
-cd frontend && npm run build
-bash -n scripts/init_db.sh scripts/start_api.sh scripts/start_worker.sh scripts/start_vllm.sh cpp_gateway/scripts/start_gateway.sh
+python3 -m pytest tests
+bash scripts/ci_smoke.sh
 ```
 
-当前机器如果没有 Drogon 开发包，需要先安装 Drogon 或设置 `Drogon_DIR` / `CMAKE_PREFIX_PATH` 后再编译 `cpp_gateway`。
+`scripts/ci_smoke.sh` 会执行 Python 编译、pytest、shell 语法检查；如果本机安装了 `npm`，还会执行前端构建。当前机器如果没有 Drogon 开发包，需要先安装 Drogon 或设置 `Drogon_DIR` / `CMAKE_PREFIX_PATH` 后再编译 `cpp_gateway`。

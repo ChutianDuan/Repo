@@ -1,33 +1,18 @@
 import uuid
 
 from python_rag.core.error_codes import (
-    ERR_INVALID_REQUEST,
-    ERR_MESSAGE_NOT_FOUND,
-    ERR_SESSION_NOT_FOUND,
     TaskState,
 )
-from python_rag.core.errors import AppError
-
-from python_rag.modules.sessions.repo import get_session_by_id
-from python_rag.modules.messages.repo import get_message_by_id
+from python_rag.modules.chat.validation import validate_chat_user_message
 from python_rag.modules.tasks.repo import create_task_record, update_task_record
 from python_rag.modules.tasks.worker_tasks.chat_task import chat_task
 
 
 def submit_chat_job(session_id, doc_id=None, user_message_id=None, top_k=3, doc_ids=None):
-    session = get_session_by_id(session_id)
-    if not session:
-        raise AppError(ERR_SESSION_NOT_FOUND, "session not found", http_status=404)
-
-    user_msg = get_message_by_id(user_message_id)
-    if not user_msg:
-        raise AppError(ERR_MESSAGE_NOT_FOUND, "user message not found", http_status=404)
-
-    if user_msg["session_id"] != session_id:
-        raise AppError(ERR_INVALID_REQUEST, "user message does not belong to session")
-
-    if user_msg["role"] != "user":
-        raise AppError(ERR_INVALID_REQUEST, "message role must be user")
+    validate_chat_user_message(
+        session_id=session_id,
+        user_message_id=user_message_id,
+    )
 
     celery_task_id = str(uuid.uuid4())
 

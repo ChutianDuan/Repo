@@ -2,23 +2,17 @@
 import time
 from typing import Any, Dict, List, Optional
 
-from python_rag.core.error_codes import (
-    ERR_INTERNAL_ERROR,
-    ERR_SESSION_NOT_FOUND,
-    TaskState,
-)
-from python_rag.core.errors import AppError
+from python_rag.core.error_codes import TaskState
 from python_rag.core.logger import logger
 from python_rag.config import CHAT_ENABLE_MOCK_FALLBACK
 
-from python_rag.modules.sessions.repo import get_session_by_id
 from python_rag.modules.messages.repo import (
-    get_message_by_id,
     create_message,
     update_message_status,
 )
 from python_rag.modules.tasks.repo import update_task_record
 from python_rag.modules.chat.repo import bulk_insert_citations
+from python_rag.modules.chat.validation import validate_chat_user_message
 
 from python_rag.modules.retrieval.service import search_in_documents
 from python_rag.modules.retrieval.context_assembler import assemble_context
@@ -61,20 +55,6 @@ def _build_citations_from_hits(hits: List[Dict[str, Any]]) -> List[Dict[str, Any
             "preview": (hit.get("content") or hit.get("text") or hit.get("chunk_text") or "")[:200],
         })
     return citations
-
-
-def _safe_get_question_from_message(user_message: Dict[str, Any]) -> str:
-    content = user_message.get("content")
-    if not content:
-        raise ChatServiceError("user message content is empty")
-    return str(content).strip()
-
-
-def _get_user_message(user_message_id: int) -> Dict[str, Any]:
-    message = get_message_by_id(user_message_id)
-    if not message:
-        raise ChatServiceError("user message not found")
-    return message
 
 
 def _retrieve_hits(question: str, doc_id: Optional[int], doc_ids: Optional[List[int]], top_k: int) -> Dict[str, Any]:
@@ -204,15 +184,10 @@ def run_chat_for_message(
 
     try:
         with track_session_activity(session_id=session_id, is_stream=False):
-            session = get_session_by_id(session_id)
-            if not session:
-                raise AppError(ERR_SESSION_NOT_FOUND, "session not found", http_status=404)
-
-            user_message = _get_user_message(user_message_id)
-            if user_message["session_id"] != session_id:
-                raise AppError(ERR_INTERNAL_ERROR, "user message does not belong to session")
-
-            question = _safe_get_question_from_message(user_message)
+            _, _, question = validate_chat_user_message(
+                session_id=session_id,
+                user_message_id=user_message_id,
+            )
 
             logger.info(
                 "chat start session_id=%s doc_id=%s user_message_id=%s top_k=%s celery_task_id=%s",

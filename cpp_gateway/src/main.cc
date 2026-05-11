@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cctype>
 #include <functional>
 #include <memory>
 #include <string>
@@ -78,6 +79,54 @@ void runSecured(
 ) {
     security->authorize(req, makeCorsCallback(req, std::move(callback)), std::move(next));
 }
+
+std::string urlEncode(const std::string& value) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve(value.size());
+
+    for (const unsigned char ch : value) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+            encoded.push_back(static_cast<char>(ch));
+            continue;
+        }
+
+        encoded.push_back('%');
+        encoded.push_back(hex[(ch >> 4) & 0x0F]);
+        encoded.push_back(hex[ch & 0x0F]);
+    }
+
+    return encoded;
+}
+
+void appendQueryParam(
+    std::vector<std::string>& params,
+    const std::string& name,
+    const std::string& value
+) {
+    if (value.empty()) {
+        return;
+    }
+    params.push_back(urlEncode(name) + "=" + urlEncode(value));
+}
+
+std::string buildPathWithQuery(
+    const std::string& basePath,
+    const std::vector<std::string>& params
+) {
+    if (params.empty()) {
+        return basePath;
+    }
+
+    std::string path = basePath + "?";
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i > 0) {
+            path += "&";
+        }
+        path += params[i];
+    }
+    return path;
+}
 }  // namespace
 
 int main() {
@@ -148,25 +197,10 @@ int main() {
                 req,
                 std::move(callback),
                 [pythonClient, req](GatewaySecurity::ResponseCallback&& secureCallback) {
-                    std::string path = "/internal/tasks";
                     std::vector<std::string> params;
-                    const auto limit = req->getParameter("limit");
-                    const auto state = req->getParameter("state");
-                    if (!limit.empty()) {
-                        params.push_back("limit=" + limit);
-                    }
-                    if (!state.empty()) {
-                        params.push_back("state=" + state);
-                    }
-                    if (!params.empty()) {
-                        path += "?";
-                        for (size_t i = 0; i < params.size(); ++i) {
-                            if (i > 0) {
-                                path += "&";
-                            }
-                            path += params[i];
-                        }
-                    }
+                    appendQueryParam(params, "limit", req->getParameter("limit"));
+                    appendQueryParam(params, "state", req->getParameter("state"));
+                    const auto path = buildPathWithQuery("/internal/tasks", params);
                     pythonClient->forwardGet(path, std::move(secureCallback));
                 }
             );
@@ -192,29 +226,11 @@ int main() {
                 req,
                 std::move(callback),
                 [pythonClient, req](GatewaySecurity::ResponseCallback&& secureCallback) {
-                    std::string path = "/internal/documents";
                     std::vector<std::string> params;
-                    const auto userId = req->getParameter("user_id");
-                    const auto status = req->getParameter("status");
-                    const auto limit = req->getParameter("limit");
-                    if (!userId.empty()) {
-                        params.push_back("user_id=" + userId);
-                    }
-                    if (!status.empty()) {
-                        params.push_back("status=" + status);
-                    }
-                    if (!limit.empty()) {
-                        params.push_back("limit=" + limit);
-                    }
-                    if (!params.empty()) {
-                        path += "?";
-                        for (size_t i = 0; i < params.size(); ++i) {
-                            if (i > 0) {
-                                path += "&";
-                            }
-                            path += params[i];
-                        }
-                    }
+                    appendQueryParam(params, "user_id", req->getParameter("user_id"));
+                    appendQueryParam(params, "status", req->getParameter("status"));
+                    appendQueryParam(params, "limit", req->getParameter("limit"));
+                    const auto path = buildPathWithQuery("/internal/documents", params);
                     pythonClient->forwardGet(path, std::move(secureCallback));
                 }
             );
@@ -316,11 +332,9 @@ int main() {
                 req,
                 std::move(callback),
                 [pythonClient, req](GatewaySecurity::ResponseCallback&& secureCallback) {
-                    std::string path = "/internal/users/latest";
-                    const auto limit = req->getParameter("limit");
-                    if (!limit.empty()) {
-                        path += "?limit=" + limit;
-                    }
+                    std::vector<std::string> params;
+                    appendQueryParam(params, "limit", req->getParameter("limit"));
+                    const auto path = buildPathWithQuery("/internal/users/latest", params);
                     pythonClient->forwardGet(path, std::move(secureCallback));
                 }
             );
