@@ -34,6 +34,18 @@ def normalize_raw_hit(raw_hit: Dict[str, Any], rank: int) -> RetrievedChunk:
     except Exception:
         faiss_score = None
 
+    bm25_score = raw_hit.get("bm25_score")
+    try:
+        bm25_score = float(bm25_score) if bm25_score is not None else None
+    except Exception:
+        bm25_score = None
+
+    rrf_score = raw_hit.get("rrf_score")
+    try:
+        rrf_score = float(rrf_score) if rrf_score is not None else None
+    except Exception:
+        rrf_score = None
+
     rerank_score = raw_hit.get("rerank_score")
     try:
         rerank_score = float(rerank_score) if rerank_score is not None else None
@@ -48,7 +60,12 @@ def normalize_raw_hit(raw_hit: Dict[str, Any], rank: int) -> RetrievedChunk:
         chunk_index=raw_hit.get("chunk_index", raw_hit.get("seq", raw_hit.get("index"))),
         score=score,
         faiss_score=faiss_score,
+        bm25_score=bm25_score,
+        rrf_score=rrf_score,
         rerank_score=rerank_score,
+        faiss_rank=raw_hit.get("faiss_rank"),
+        bm25_rank=raw_hit.get("bm25_rank"),
+        rrf_rank=raw_hit.get("rrf_rank"),
         original_rank=raw_hit.get("original_rank"),
     )
 
@@ -88,7 +105,12 @@ def renumber_chunks(chunks: List[RetrievedChunk]) -> List[RetrievedChunk]:
                 chunk_index=chunk.chunk_index,
                 score=chunk.score,
                 faiss_score=chunk.faiss_score,
+                bm25_score=chunk.bm25_score,
+                rrf_score=chunk.rrf_score,
                 rerank_score=chunk.rerank_score,
+                faiss_rank=chunk.faiss_rank,
+                bm25_rank=chunk.bm25_rank,
+                rrf_rank=chunk.rrf_rank,
                 original_rank=chunk.original_rank,
             )
         )

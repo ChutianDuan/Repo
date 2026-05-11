@@ -105,6 +105,16 @@ class ConversationAssembler:
                     meta.append(f"score={float(chunk['score']):.4f}")
                 except Exception:
                     meta.append(f"score={chunk['score']}")
+            if chunk.get("bm25_score") is not None:
+                try:
+                    meta.append(f"bm25_score={float(chunk['bm25_score']):.4f}")
+                except Exception:
+                    meta.append(f"bm25_score={chunk['bm25_score']}")
+            if chunk.get("rrf_score") is not None:
+                try:
+                    meta.append(f"rrf_score={float(chunk['rrf_score']):.4f}")
+                except Exception:
+                    meta.append(f"rrf_score={chunk['rrf_score']}")
             if chunk.get("rerank_score") is not None:
                 try:
                     meta.append(f"rerank_score={float(chunk['rerank_score']):.4f}")

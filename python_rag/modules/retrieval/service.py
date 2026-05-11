@@ -1,7 +1,11 @@
 import math
 import time
 
-from python_rag.config import CHAT_CANDIDATE_TOP_K, RERANK_ENABLE
+from python_rag.config import (
+    CHAT_CANDIDATE_TOP_K,
+    RERANK_ENABLE,
+    RETRIEVAL_RECALL_PROVIDER,
+)
 from python_rag.core.error_codes import ERR_INDEX_NOT_FOUND, ERR_INTERNAL_ERROR
 from python_rag.core.errors import AppError
 from python_rag.core.logger import logger
@@ -16,8 +20,25 @@ from python_rag.modules.monitor.request_metrics import (
     is_timeout_error,
     record_request_metric,
 )
+from python_rag.modules.retrieval.bm25_service import search_doc_bm25_index
 from python_rag.modules.retrieval.faiss_service import search_doc_faiss_index
+from python_rag.modules.retrieval.fusion_service import fuse_hits_with_rrf
 from python_rag.modules.retrieval.reranker_service import rerank_hits
+
+
+def _normalize_recall_provider():
+    provider = (RETRIEVAL_RECALL_PROVIDER or "hybrid_rrf").strip().lower()
+    if provider in ("hybrid", "hybrid_rrf", "rrf"):
+        return "hybrid_rrf"
+    if provider in ("bm25", "sparse"):
+        return "bm25"
+    if provider in ("faiss", "dense"):
+        return "faiss"
+    raise AppError(
+        ERR_INTERNAL_ERROR,
+        f"unsupported retrieval recall provider: {RETRIEVAL_RECALL_PROVIDER}",
+        http_status=500,
+    )
 
 
 def _build_snippet(text, max_len=180):
@@ -25,6 +46,44 @@ def _build_snippet(text, max_len=180):
     if len(text) <= max_len:
         return text
     return text[:max_len] + "..."
+
+
+def _format_faiss_hit(item):
+    content = item.get("content", "")
+    score = round(float(item["score"]), 6)
+    return {
+        "doc_id": item["doc_id"],
+        "chunk_id": item["chunk_id"],
+        "chunk_index": item["chunk_index"],
+        "score": score,
+        "faiss_score": score,
+        "content": content,
+        "snippet": _build_snippet(content),
+    }
+
+
+def _format_bm25_hit(item):
+    content = item.get("content", "")
+    score = round(float(item["bm25_score"]), 6)
+    return {
+        "doc_id": item["doc_id"],
+        "chunk_id": item["chunk_id"],
+        "chunk_index": item["chunk_index"],
+        "score": score,
+        "bm25_score": score,
+        "content": content,
+        "snippet": _build_snippet(content),
+    }
+
+
+def _rank_source_hits(hits, score_field, rank_field):
+    hits.sort(
+        key=lambda item: item.get(score_field) if item.get(score_field) is not None else float("-inf"),
+        reverse=True,
+    )
+    for rank, item in enumerate(hits, start=1):
+        item[rank_field] = rank
+    return hits
 
 
 def _evaluate_retrieval_hits(hits, relevant_chunk_ids=None, relevant_chunk_indexes=None):
@@ -130,13 +189,18 @@ def search_in_documents(
     relevant_chunk_indexes=None,
 ):
     started_at = time.perf_counter()
-    embedding_started_at = time.perf_counter()
     embedding_ms = None
     faiss_ms = None
+    bm25_ms = None
+    rrf_ms = None
     doc_faiss_ms = {}
+    doc_bm25_ms = {}
     rerank_ms = None
     rerank_meta = {}
     resolved_doc_ids = []
+    recall_provider = _normalize_recall_provider()
+    use_faiss = recall_provider in ("faiss", "hybrid_rrf")
+    use_bm25 = recall_provider in ("bm25", "hybrid_rrf")
     final_top_k = max(1, int(top_k or 1))
     configured_candidate_top_k = int(candidate_top_k or CHAT_CANDIDATE_TOP_K)
     effective_candidate_top_k = (
@@ -158,47 +222,69 @@ def search_in_documents(
             for item in resolved_doc_ids
         ]
 
-        query_vector = embed_query(query)
-        embedding_ms = int((time.perf_counter() - embedding_started_at) * 1000)
+        query_vector = None
+        if use_faiss:
+            embedding_started_at = time.perf_counter()
+            query_vector = embed_query(query)
+            embedding_ms = int((time.perf_counter() - embedding_started_at) * 1000)
 
-        faiss_started_at = time.perf_counter()
-        candidate_hits = []
+        faiss_hits = []
+        bm25_hits = []
         for index_meta in index_metas:
-            doc_search_started_at = time.perf_counter()
-            hits = search_doc_faiss_index(
-                index_path=index_meta["index_path"],
-                mapping_path=index_meta["mapping_path"],
-                query_vector=query_vector,
-                top_k=effective_candidate_top_k,
-            )
-            doc_faiss_ms[str(index_meta["doc_id"])] = int(
-                (time.perf_counter() - doc_search_started_at) * 1000
-            )
-            for item in hits:
-                content = item.get("content", "")
-                score = round(float(item["score"]), 6)
-                candidate_hits.append(
-                    {
-                        "doc_id": item["doc_id"],
-                        "chunk_id": item["chunk_id"],
-                        "chunk_index": item["chunk_index"],
-                        "score": score,
-                        "faiss_score": score,
-                        "content": content,
-                        "snippet": _build_snippet(content),
-                    }
+            if use_faiss:
+                doc_search_started_at = time.perf_counter()
+                hits = search_doc_faiss_index(
+                    index_path=index_meta["index_path"],
+                    mapping_path=index_meta["mapping_path"],
+                    query_vector=query_vector,
+                    top_k=effective_candidate_top_k,
                 )
-        faiss_ms = int((time.perf_counter() - faiss_started_at) * 1000)
-        candidate_hits.sort(
-            key=lambda item: item.get("score") if item.get("score") is not None else float("-inf"),
-            reverse=True,
-        )
+                elapsed_ms = int((time.perf_counter() - doc_search_started_at) * 1000)
+                doc_faiss_ms[str(index_meta["doc_id"])] = elapsed_ms
+                faiss_ms = (faiss_ms or 0) + elapsed_ms
+                faiss_hits.extend(_format_faiss_hit(item) for item in hits)
+
+            if use_bm25:
+                doc_search_started_at = time.perf_counter()
+                hits = search_doc_bm25_index(
+                    mapping_path=index_meta["mapping_path"],
+                    query=query,
+                    top_k=effective_candidate_top_k,
+                )
+                elapsed_ms = int((time.perf_counter() - doc_search_started_at) * 1000)
+                doc_bm25_ms[str(index_meta["doc_id"])] = elapsed_ms
+                bm25_ms = (bm25_ms or 0) + elapsed_ms
+                bm25_hits.extend(_format_bm25_hit(item) for item in hits)
+
+        candidate_hits = []
+        if recall_provider == "hybrid_rrf":
+            _rank_source_hits(faiss_hits, "faiss_score", "faiss_rank")
+            _rank_source_hits(bm25_hits, "bm25_score", "bm25_rank")
+            rrf_started_at = time.perf_counter()
+            candidate_hits = fuse_hits_with_rrf(
+                [("bm25", bm25_hits), ("faiss", faiss_hits)],
+                limit=effective_candidate_top_k * max(1, len(index_metas)),
+            )
+            rrf_ms = int((time.perf_counter() - rrf_started_at) * 1000)
+        elif recall_provider == "bm25":
+            candidate_hits = _rank_source_hits(bm25_hits, "bm25_score", "bm25_rank")
+        else:
+            candidate_hits = _rank_source_hits(faiss_hits, "faiss_score", "faiss_rank")
 
         rerank_started_at = time.perf_counter()
         result_hits, rerank_meta = rerank_hits(
             query=query,
             hits=candidate_hits,
             final_top_k=final_top_k,
+            recall_provider=recall_provider,
+        )
+        rerank_meta.update(
+            {
+                "recall_provider": recall_provider,
+                "bm25_candidate_count": len(bm25_hits),
+                "faiss_candidate_count": len(faiss_hits),
+                "rrf_candidate_count": len(candidate_hits) if recall_provider == "hybrid_rrf" else None,
+            }
         )
         rerank_ms = int((time.perf_counter() - rerank_started_at) * 1000)
 
@@ -219,11 +305,18 @@ def search_in_documents(
             "metrics": {
                 "embedding_ms": embedding_ms,
                 "faiss_ms": faiss_ms,
+                "bm25_ms": bm25_ms,
+                "rrf_ms": rrf_ms,
                 "rerank_ms": rerank_ms,
                 "retrieval_ms": retrieval_ms,
                 "doc_faiss_ms": doc_faiss_ms,
+                "doc_bm25_ms": doc_bm25_ms,
                 "candidate_top_k": effective_candidate_top_k,
                 "final_top_k": final_top_k,
+                "recall_provider": recall_provider,
+                "candidate_count": len(candidate_hits),
+                "bm25_candidate_count": len(bm25_hits),
+                "faiss_candidate_count": len(faiss_hits),
                 "rerank": rerank_meta,
                 **eval_metrics,
             },
@@ -237,17 +330,23 @@ def search_in_documents(
                 doc_id=resolved_doc_ids[0] if len(resolved_doc_ids) == 1 else None,
                 top_k=final_top_k,
                 retrieval_ms=retrieval_ms,
-                embedding_tokens=estimate_text_tokens(query),
+                embedding_tokens=estimate_text_tokens(query) if use_faiss else 0,
                 cost_usd=0.0,
                 extra={
                     "embedding_ms": embedding_ms,
                     "faiss_ms": faiss_ms,
+                    "bm25_ms": bm25_ms,
+                    "rrf_ms": rrf_ms,
                     "doc_faiss_ms": doc_faiss_ms,
+                    "doc_bm25_ms": doc_bm25_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": effective_candidate_top_k,
                     "final_top_k": final_top_k,
+                    "recall_provider": recall_provider,
                     "hit_count": len(result_hits),
                     "candidate_count": len(candidate_hits),
+                    "bm25_candidate_count": len(bm25_hits),
+                    "faiss_candidate_count": len(faiss_hits),
                     "doc_ids": resolved_doc_ids,
                     "doc_count": len(resolved_doc_ids),
                     "rerank": rerank_meta,
@@ -277,10 +376,14 @@ def search_in_documents(
                 extra={
                     "embedding_ms": embedding_ms,
                     "faiss_ms": faiss_ms,
+                    "bm25_ms": bm25_ms,
+                    "rrf_ms": rrf_ms,
                     "doc_faiss_ms": doc_faiss_ms,
+                    "doc_bm25_ms": doc_bm25_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": effective_candidate_top_k,
                     "final_top_k": final_top_k,
+                    "recall_provider": recall_provider,
                     "doc_ids": resolved_doc_ids,
                     "doc_count": len(resolved_doc_ids),
                     "rerank": rerank_meta,

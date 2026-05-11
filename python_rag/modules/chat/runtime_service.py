@@ -51,7 +51,12 @@ def _build_citations_from_hits(hits: List[Dict[str, Any]]) -> List[Dict[str, Any
             "chunk_index": hit.get("chunk_index", hit.get("seq", hit.get("index"))),
             "score": hit.get("score"),
             "faiss_score": hit.get("faiss_score"),
+            "bm25_score": hit.get("bm25_score"),
+            "rrf_score": hit.get("rrf_score"),
             "rerank_score": hit.get("rerank_score"),
+            "faiss_rank": hit.get("faiss_rank"),
+            "bm25_rank": hit.get("bm25_rank"),
+            "rrf_rank": hit.get("rrf_rank"),
             "original_rank": hit.get("original_rank"),
             "preview": (hit.get("content") or hit.get("text") or hit.get("chunk_text") or "")[:200],
         })

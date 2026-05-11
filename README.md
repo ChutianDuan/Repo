@@ -2,7 +2,7 @@
 
 面向全局文档知识库问答的工程化 RAG 后端项目。它不是单页问答 demo，而是一套把外部 API 网关、内部业务服务、异步任务、数据库、向量索引、LLM 调用和监控工作台拆开的可扩展系统骨架。
 
-项目当前由 `C++ Drogon Gateway`、`FastAPI Internal Service`、`Celery Worker`、`MySQL`、`Redis`、`FAISS`、`Embedding Model`、`OpenAI-compatible LLM / vLLM` 和 `React Workbench` 组成。前端主要用于调试、演示和观测，核心能力集中在后端 RAG 链路。
+项目当前由 `C++ Drogon Gateway`、`FastAPI Internal Service`、`Celery Worker`、`MySQL`、`Redis`、`BM25`、`FAISS`、`Embedding Model`、`OpenAI-compatible LLM / vLLM` 和 `React Workbench` 组成。前端主要用于调试、演示和观测，核心能力集中在后端 RAG 链路。
 
 ![项目运行效果](./docs/项目运行前端界面.png)
 
@@ -11,7 +11,7 @@
 这个项目适合用来验证和展示一套真实 RAG 应用后端应该具备的基础能力：
 
 - 文档上传、去重、解析、切片、向量化、索引构建和全局归档。
-- 基于全局 READY 文档库的 FAISS Top-K 检索、可选 rerank、Prompt 组装和 LLM 回答。
+- 基于全局 READY 文档库的 BM25 稀疏召回、FAISS 向量召回、RRF 融合、CrossEncoder rerank、Prompt 组装和 LLM 回答。
 - 会话、消息、任务状态、引用来源和索引元数据的持久化。
 - C++ 网关统一承载外部 API、上传控制、CORS、健康检查聚合和 SSE 代理。
 - Celery 异步化处理 ingest 和 chat，避免长耗时流程阻塞请求。
@@ -53,7 +53,7 @@ FastAPI Internal Service
         +--> MySQL        : users, documents, chunks, indexes, sessions, messages, citations, tasks
         +--> Redis        : Celery broker / result backend
         +--> Celery       : ingest and chat async jobs
-        +--> FAISS        : per-document vector indexes, global retrieval fan-out
+        +--> BM25 + FAISS : sparse/dense recall, RRF fusion, cross-encoder rerank
         +--> Embedding    : sentence-transformers or OpenAI-compatible provider
         +--> LLM / vLLM   : OpenAI-compatible chat completion endpoint
 ```
@@ -66,7 +66,7 @@ FastAPI Internal Service
 | 内部服务 | Python, FastAPI, Pydantic |
 | 异步任务 | Celery, Redis |
 | 数据存储 | MySQL |
-| 向量检索 | FAISS, sentence-transformers, reranker |
+| 检索排序 | BM25 sparse recall, FAISS dense recall, RRF, sentence-transformers, CrossEncoder reranker |
 | 大模型调用 | OpenAI-compatible API, vLLM |
 | 前端工作台 | Vite, React, TypeScript |
 | 运维脚本 | Bash, curl, benchmark scripts |
@@ -88,7 +88,7 @@ FastAPI Internal Service
 
 1. 客户端创建 session 并提交用户问题；新流程不要求会话绑定某个 `doc_id`。
 2. Gateway 创建 user message，再提交 chat task。
-3. Worker 默认在全局 READY 文档索引中检索候选片段，并按配置执行 rerank。兼容旧调用：如果请求显式传 `doc_id` 或 `doc_ids`，则只检索指定文档范围。
+3. Worker 默认在全局 READY 文档索引中执行 BM25 + FAISS 双路召回，使用 RRF（Reciprocal Rank Fusion）融合候选，再按配置交给 CrossEncoder rerank。兼容旧调用：如果请求显式传 `doc_id` 或 `doc_ids`，则只检索指定文档范围。
 4. 系统组装上下文和 Prompt，调用 OpenAI-compatible LLM。
 5. assistant message 与 citations 落库。
 6. 前端刷新消息列表，展示回答和引用来源。
@@ -129,6 +129,10 @@ EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 
 CHAT_TOP_K=5
 CHAT_CANDIDATE_TOP_K=30
+RETRIEVAL_RECALL_PROVIDER=hybrid_rrf
+RRF_K=60
+BM25_K1=1.5
+BM25_B=0.75
 CHAT_ENABLE_MOCK_FALLBACK=true
 ```
 
@@ -283,7 +287,9 @@ bash scripts/e2e_ingest.sh ./day7_demo.md
 bash scripts/e2e_chat.sh ./day7_demo.md
 ```
 
-如果切换 embedding 模型，历史文档需要重新 ingest，否则 FAISS 索引维度或向量空间可能不一致。
+默认检索链路为 `RETRIEVAL_RECALL_PROVIDER=hybrid_rrf`：每个 READY 文档分别取 BM25 和 FAISS 候选，按 RRF 公式 `1 / (RRF_K + rank)` 融合后，再进入 CrossEncoder rerank。可将该变量设为 `bm25` 或 `faiss` 做单路召回对照实验。
+
+如果切换 embedding 模型，历史文档需要重新 ingest，否则 FAISS 索引维度或向量空间可能不一致。BM25 召回复用现有 chunk mapping，不需要额外索引文件。
 
 ## 前端页面
 
@@ -330,7 +336,7 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - Gateway 的 MySQL / Redis 连接还没有完全收敛到根目录 `.env`，目前仍依赖 `cpp_gateway/config.json`。
 - `Monitor` 的历史趋势目前是前端近端采样，聚合窗口依赖 `request_metrics` 最近样本。
 - GPU 监控依赖 `nvidia-smi`，非 NVIDIA 环境会返回空数组。
-- 当前仍是单文档单 FAISS 索引文件，查询时会对全局 READY 文档 fan-out 检索再合并排序；文档规模继续增大后需要索引缓存、分片索引或向量数据库。
+- 当前仍是单文档单 FAISS 索引文件，BM25 也复用单文档 mapping 做 fan-out 召回；文档规模继续增大后需要索引缓存、知识库级稀疏/向量索引、分片索引或向量数据库。
 - SSE 流式接口形态完整，但生成侧仍以先得到完整答案再分块输出为主，后续可升级为真实 token streaming。
 - PDF 仅支持可提取文本的电子文档，扫描件 OCR 尚未接入。
 - Gateway 已支持 API Key 鉴权和 Redis 请求限流；租户隔离和审计日志尚未接入。

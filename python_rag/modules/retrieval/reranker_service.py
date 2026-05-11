@@ -88,13 +88,18 @@ def _with_ranks(hits: List[Dict[str, Any]], final_top_k: int) -> List[Dict[str, 
     for rank, hit in enumerate(hits[:final_top_k], start=1):
         item = dict(hit)
         item["rank"] = rank
-        if "faiss_score" not in item and item.get("score") is not None:
+        if (
+            "faiss_score" not in item
+            and "bm25_score" not in item
+            and "rrf_score" not in item
+            and item.get("score") is not None
+        ):
             item["faiss_score"] = item.get("score")
         result.append(item)
     return result
 
 
-def _faiss_fallback(
+def _recall_order_fallback(
     hits: List[Dict[str, Any]],
     final_top_k: int,
     meta: Dict[str, Any],
@@ -104,7 +109,7 @@ def _faiss_fallback(
             "enabled": False,
             "used": False,
             "fallback": True,
-            "provider": "faiss",
+            "fallback_provider": meta.get("recall_provider", "input_order"),
             "model": None,
         }
     )
@@ -115,6 +120,7 @@ def rerank_hits(
     query: str,
     hits: List[Dict[str, Any]],
     final_top_k: int,
+    recall_provider: str = "faiss",
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     meta: Dict[str, Any] = {
         "enabled": bool(RERANK_ENABLE),
@@ -122,6 +128,7 @@ def rerank_hits(
         "fallback": False,
         "provider": RERANK_PROVIDER,
         "model": RERANK_MODEL if RERANK_ENABLE else None,
+        "recall_provider": recall_provider,
         "candidate_count": len(hits),
         "returned_count": 0,
     }
@@ -134,7 +141,7 @@ def rerank_hits(
         meta.update(
             {
                 "enabled": False,
-                "provider": "faiss",
+                "provider": "none",
                 "model": None,
                 "returned_count": len(ranked_hits),
             }
@@ -154,7 +161,12 @@ def rerank_hits(
         for original_rank, (hit, rerank_score) in enumerate(zip(hits, scores), start=1):
             item = dict(hit)
             item["original_rank"] = original_rank
-            item["faiss_score"] = item.get("score")
+            if (
+                "faiss_score" not in item
+                and "bm25_score" not in item
+                and "rrf_score" not in item
+            ):
+                item["faiss_score"] = item.get("score")
             item["rerank_score"] = round(float(rerank_score), 6)
             scored_hits.append(item)
 
@@ -179,12 +191,12 @@ def rerank_hits(
             raise
 
         logger.exception(
-            "rerank failed provider=%s model=%s candidate_count=%s; falling back to faiss order",
+            "rerank failed provider=%s model=%s candidate_count=%s; falling back to recall order",
             RERANK_PROVIDER,
             RERANK_MODEL,
             len(hits),
         )
         meta["error"] = str(exc)
-        ranked_hits, meta = _faiss_fallback(hits, final_top_k, meta)
+        ranked_hits, meta = _recall_order_fallback(hits, final_top_k, meta)
         meta["returned_count"] = len(ranked_hits)
         return ranked_hits, meta

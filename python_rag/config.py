@@ -56,6 +56,13 @@ CHAT_MAX_CHUNK_CHARS = int(os.getenv("CHAT_MAX_CHUNK_CHARS", "1000"))
 CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))
 CHAT_CANDIDATE_TOP_K = int(os.getenv("CHAT_CANDIDATE_TOP_K", "30"))
 CHAT_MIN_RETRIEVAL_SCORE = float(os.getenv("CHAT_MIN_RETRIEVAL_SCORE", "0.0"))
+RETRIEVAL_RECALL_PROVIDER = os.getenv(
+    "RETRIEVAL_RECALL_PROVIDER",
+    "hybrid_rrf",
+).strip().lower()
+BM25_K1 = float(os.getenv("BM25_K1", "1.5"))
+BM25_B = float(os.getenv("BM25_B", "0.75"))
+RRF_K = int(os.getenv("RRF_K", "60"))
 STREAM_DELTA_CHARS = int(os.getenv("STREAM_DELTA_CHARS", "20"))
 STREAM_MOCK_DELAY_MS = int(os.getenv("STREAM_MOCK_DELAY_MS", "30"))
 
