@@ -38,7 +38,7 @@ GATEWAY_API_KEY_HEADER=X-API-Key
 
 1. IP 维度：按客户端 IP 计数。
 2. User 维度：优先使用 `X-User-Id`，没有时使用 API Key principal；如果二者都没有，则只做 IP 限流。
-3. Redis key 使用固定窗口，执行 `INCR`；首次命中时设置 `EXPIRE`。
+3. Redis key 使用固定窗口，Lua 脚本一次完成 `INCR`、首次 `EXPIRE` 和 `TTL` 查询，避免 `INCR` 成功但过期时间设置失败导致 key 长期驻留。
 
 可配置项：
 
@@ -59,6 +59,20 @@ GATEWAY_TRUST_X_FORWARDED_FOR=false
 - `GATEWAY_RATE_LIMIT_FAIL_OPEN=false` 时 Redis 异常返回 `503 RATE_LIMIT_UNAVAILABLE`；设置为 `true` 时 Redis 异常会放行并写 warning 日志。
 - `GATEWAY_TRUST_X_FORWARDED_FOR=true` 时才信任 `X-Forwarded-For` / `X-Real-IP`，否则使用连接 peer IP。
 - 限流命中返回 `429`，并带 `Retry-After` 以及 `X-RateLimit-IP-*` / `X-RateLimit-User-*` 响应头。
+
+## SSE 并发保护
+
+`POST /v1/chat/stream` 会在开始流式代理前申请一个 stream slot，超过上限会返回 `429`：
+
+```bash
+GATEWAY_MAX_STREAMS=64
+```
+
+说明：
+
+- 默认最多允许 64 个并发 SSE 流。
+- 直接携带 `user_message_id` 的请求和需要先创建 user message 的请求都会占用同一个并发配额。
+- slot 会在上游流结束、上游失败或下游断开后释放，避免原先一请求一 detached thread 的并发数量失控。
 
 ## 验证示例
 

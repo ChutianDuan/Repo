@@ -15,10 +15,11 @@ HttpResponsePtr buildForwardedJsonResponse(const HttpResponsePtr& resp) {
 }  // namespace
 
 PythonApiClient::PythonApiClient(const std::string& baseUrl)
-    : baseUrl_(baseUrl) {}
+    : baseUrl_(baseUrl),
+      client_(HttpClient::newHttpClient(baseUrl_)) {}
 
 drogon::HttpClientPtr PythonApiClient::makeClient() const {
-    return HttpClient::newHttpClient(baseUrl_);
+    return client_;
 }
 
 void PythonApiClient::getInternalHealth(

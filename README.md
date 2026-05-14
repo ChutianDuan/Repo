@@ -338,7 +338,7 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - `Monitor` 的历史趋势目前是前端近端采样，聚合窗口依赖 `request_metrics` 最近样本。
 - GPU 监控依赖 `nvidia-smi`，非 NVIDIA 环境会返回空数组。
 - 当前仍是单文档单 FAISS 索引文件，BM25 也复用单文档 mapping 做 fan-out 召回；文档规模继续增大后需要索引缓存、知识库级稀疏/向量索引、分片索引或向量数据库。
-- SSE 流式接口形态完整，真实 LLM 路径已走 OpenAI-compatible stream；`no_context` 和 mock fallback 会在本地按字符块输出。高并发下还需要把 Gateway 当前的一请求一线程代理方式改成受控线程池或异步流式客户端。
+- SSE 流式接口形态完整，真实 LLM 路径已走 OpenAI-compatible stream；`no_context` 和 mock fallback 会在本地按字符块输出。Gateway 已用 `GATEWAY_MAX_STREAMS` 限制并发流数量，后续可继续把当前的一请求一线程代理方式改成受控线程池或异步流式客户端。
 - 异步 chat、Celery chat runtime 和流式 chat 已复用同一套 `user_message_id` 校验，要求消息属于当前 session 且角色为 `user`。
 - PDF 仅支持可提取文本的电子文档，扫描件 OCR 尚未接入。
 - Gateway 已支持 API Key 鉴权和 Redis 请求限流；租户隔离和审计日志尚未接入。

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -21,14 +22,24 @@ public:
     );
 
 private:
+    struct StreamSlotLease;
+
     std::shared_ptr<PythonSSEClient> pythonSSEClient_;
     std::shared_ptr<PythonApiClient> pythonApiClient_;
+    int maxConcurrentStreams_{64};
+    std::shared_ptr<std::atomic<int>> activeStreams_;
 
     static bool validateRequestBody(const Json::Value& body, std::string& error);
     static std::string buildSseErrorEvent(const std::string& message);
-    static drogon::HttpResponsePtr buildJsonErrorResponse(int code, const std::string& message);
+    static drogon::HttpResponsePtr buildJsonErrorResponse(
+        int code,
+        const std::string& message,
+        drogon::HttpStatusCode status
+    );
+    std::shared_ptr<StreamSlotLease> acquireStreamSlot() const;
     void startStreamResponse(
         const Json::Value& body,
+        std::shared_ptr<StreamSlotLease> streamSlot,
         std::function<void(const drogon::HttpResponsePtr&)>&& callback
     );
 };

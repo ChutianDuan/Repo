@@ -153,6 +153,25 @@ long long nowEpochSeconds() {
                std::chrono::system_clock::now().time_since_epoch()
     ).count();
 }
+
+bool parseRateLimitScriptResult(
+    const std::string& value,
+    long long& count,
+    int& ttlSeconds
+) {
+    const auto separator = value.find(':');
+    if (separator == std::string::npos) {
+        return false;
+    }
+
+    try {
+        count = std::stoll(value.substr(0, separator));
+        ttlSeconds = std::stoi(value.substr(separator + 1));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
 }  // namespace
 
 GatewaySecurityConfig GatewaySecurityConfig::fromEnv() {
@@ -365,38 +384,42 @@ void GatewaySecurity::checkLimit(
     int limit,
     RateLimitCallback&& callback
 ) const {
+    static constexpr const char* kRateLimitScript =
+        "local count=redis.call('INCR',KEYS[1]);"
+        "if count==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]);end;"
+        "local ttl=redis.call('TTL',KEYS[1]);"
+        "return tostring(count)..':'..tostring(ttl);";
+
     auto key = config_.redisKeyPrefix + ":" + sanitizeIdentity(scope) + ":" + sanitizeIdentity(identity);
     auto callbackPtr = std::make_shared<RateLimitCallback>(std::move(callback));
     try {
         auto redisClient = app().getRedisClient("default");
         redisClient->execCommandAsync(
-            [this, scope, limit, key, callbackPtr](
+            [this, scope, limit, callbackPtr](
                 const drogon::nosql::RedisResult& result
             ) {
                 long long count = 0;
+                int ttlSeconds = config_.windowSeconds;
                 try {
-                    count = result.asInteger();
+                    const std::string raw = result.asString();
+                    if (!parseRateLimitScriptResult(raw, count, ttlSeconds)) {
+                        (*callbackPtr)({
+                            false,
+                            true,
+                            scope,
+                            limit,
+                            0,
+                            config_.windowSeconds,
+                            "invalid redis rate limit script response: " + raw
+                        });
+                        return;
+                    }
                 } catch (const std::exception& e) {
                     (*callbackPtr)({false, true, scope, limit, 0, config_.windowSeconds, e.what()});
                     return;
                 }
 
-                if (count == 1) {
-                    try {
-                        auto redisClient = app().getRedisClient("default");
-                        redisClient->execCommandAsync(
-                            [](const drogon::nosql::RedisResult&) {},
-                            [](const std::exception& e) {
-                                LOG_WARN << "Failed to set rate limit key expiry: " << e.what();
-                            },
-                            "EXPIRE %s %d",
-                            key.c_str(),
-                            config_.windowSeconds
-                        );
-                    } catch (const std::exception& e) {
-                        LOG_WARN << "Failed to schedule rate limit key expiry: " << e.what();
-                    }
-                }
+                const int retryAfterSeconds = ttlSeconds > 0 ? ttlSeconds : config_.windowSeconds;
 
                 (*callbackPtr)({
                     count <= limit,
@@ -404,7 +427,7 @@ void GatewaySecurity::checkLimit(
                     scope,
                     limit,
                     count,
-                    config_.windowSeconds,
+                    retryAfterSeconds,
                     ""
                 });
             },
@@ -413,8 +436,10 @@ void GatewaySecurity::checkLimit(
             ) {
                 (*callbackPtr)({false, true, scope, limit, 0, config_.windowSeconds, e.what()});
             },
-            "INCR %s",
-            key.c_str()
+            "EVAL %s 1 %s %d",
+            kRateLimitScript,
+            key.c_str(),
+            config_.windowSeconds
         );
     } catch (const std::exception& e) {
         (*callbackPtr)({false, true, scope, limit, 0, config_.windowSeconds, e.what()});
