@@ -1,0 +1,8 @@
+# Install this in the separate vLLM runtime environment, for example:
+#   conda create -n vllm-qwen3 python=3.11
+#   conda activate vllm-qwen3
+#   pip install -r python_rag/requirements-vllm.txt
+#
+# Keep vLLM isolated from rag-api because its torch/CUDA dependency set often
+# differs from sentence-transformers/faiss used by the RAG API and worker.
+vllm

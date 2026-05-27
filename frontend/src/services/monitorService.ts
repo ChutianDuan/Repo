@@ -1,4 +1,4 @@
-import { joinUrl, requestJson } from "./apiClient";
+import { joinUrl, requestEnvelope } from "./apiClient";
 import type { HealthSnapshot } from "../types/api";
 import type { MonitorOverview } from "../types/monitor";
 
@@ -17,7 +17,7 @@ export async function getHealth(baseUrl: string): Promise<HealthSnapshot> {
 }
 
 export function getMonitorOverview(baseUrl: string): Promise<MonitorOverview> {
-  return requestJson<unknown>(baseUrl, "/v1/monitor/overview").then((payload) => {
+  return requestEnvelope<unknown>(baseUrl, "/v1/monitor/overview").then((payload) => {
     if (
       !payload ||
       typeof payload !== "object" ||

@@ -52,7 +52,7 @@ export function DocumentDetailDrawer({ document, tasks }: DocumentDetailDrawerPr
 
       <section className="drawer-section">
         <h3>Chunks</h3>
-        <p className="muted">{document.chunks ? `${document.chunks} chunks indexed` : "暂无 chunk 信息。"}</p>
+        <p className="muted">{document.chunks ? `${document.chunks} 个切片已索引` : "暂无切片信息。"}</p>
       </section>
 
       <section className="drawer-section">

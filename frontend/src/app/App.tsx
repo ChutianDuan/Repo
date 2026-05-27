@@ -1,5 +1,22 @@
 import { useEffect, useState } from "react";
 
+import {
+  DEFAULT_API_BASE_URL,
+  POLL_INTERVAL_MS,
+  POLL_MAX_ROUNDS,
+  SUPPORTED_DOCUMENT_RE,
+} from "./appConfig";
+import {
+  buildFallbackOverview,
+  buildLocalMessage,
+  buildMetricPoint,
+  getChunkCount,
+  isTerminalTask,
+  normalizeTopK,
+  parsePositiveInteger,
+  sleep,
+  taskRecordFromStatus,
+} from "./appState";
 import { useHashRoute } from "./router";
 import { AppShell } from "../components/layout/AppShell";
 import { DocumentsPage } from "../pages/documents/DocumentsPage";
@@ -7,8 +24,20 @@ import { MonitorPage } from "../pages/monitor/MonitorPage";
 import { SettingsPage } from "../pages/settings/SettingsPage";
 import { TasksPage } from "../pages/tasks/TasksPage";
 import { WorkspacePage } from "../pages/workspace/WorkspacePage";
-import { createSession, listMessages, streamChat, submitChat } from "../services/chatService";
-import { listDocuments, uploadDocument } from "../services/documentService";
+import {
+  createSession,
+  listMessages,
+  streamAgentChat,
+  streamChat,
+  submitChat,
+  type AgentFinalEvent,
+  type AgentStepEvent,
+  type AgentToolCallEvent,
+  type AgentToolResultEvent,
+  type StreamChatCallbacks,
+  type StreamChatDoneMeta,
+} from "../services/chatService";
+import { deleteDocument, listDocuments, uploadDocument } from "../services/documentService";
 import { getHealth, getMonitorOverview } from "../services/monitorService";
 import { getTaskStatus, listTasks } from "../services/taskService";
 import { createUser, listLatestUsers } from "../services/userService";
@@ -16,210 +45,55 @@ import { usePolling } from "../hooks/usePolling";
 import type { HealthSnapshot } from "../types/api";
 import type { DocumentListItem } from "../types/document";
 import type { ChatMessage } from "../types/message";
-import type { MetricPoint, MonitorOverview, ServiceState } from "../types/monitor";
+import type { MetricPoint, MonitorOverview } from "../types/monitor";
 import type { Session, SessionSummary } from "../types/session";
 import type { TaskRecord, TaskStatus } from "../types/task";
 import type { UserItem } from "../types/user";
-import { summarizeGpuMetrics } from "../utils/gpu";
 import { nowIso } from "../utils/format";
+import type { PendingAction } from "./appState";
+import type { AgentTraceRow } from "../components/AgentTracePanel";
 
-const DEFAULT_API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "";
-const POLL_INTERVAL_MS = 1500;
-const POLL_MAX_ROUNDS = 80;
-const SUPPORTED_DOCUMENT_RE = /\.(md|txt|json|csv|pdf|docx|xlsx)$/i;
+type AgentTracePatch = Omit<AgentTraceRow, "step">;
 
-type PendingAction =
-  | "health"
-  | "user"
-  | "upload"
-  | "session"
-  | "chat"
-  | "messages"
-  | null;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function parsePositiveInteger(value: string, fieldName: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${fieldName} 必须是正整数`);
+function summarizeValue(value: unknown, maxLength = 140): string {
+  if (value === null || value === undefined) {
+    return "";
   }
-  return parsed;
-}
-
-function normalizeTopK(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 3;
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (!text) {
+    return "";
   }
-  return Math.max(1, Math.min(20, Math.round(value)));
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
-function serviceState(ok: boolean | undefined): ServiceState {
-  if (ok === true) {
-    return "ok";
+function getResultCount(result: unknown): number | null {
+  if (!result || typeof result !== "object") {
+    return null;
   }
-  if (ok === false) {
-    return "error";
+  const data = result as { total?: unknown; results?: unknown };
+  if (typeof data.total === "number") {
+    return data.total;
   }
-  return "unknown";
+  if (Array.isArray(data.results)) {
+    return data.results.length;
+  }
+  return null;
 }
 
-function isTerminalTask(state: string): boolean {
-  return ["SUCCESS", "FAILURE", "FAILED"].includes(state);
+function getResultError(result: unknown): string | null {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  const error = (result as { error?: unknown }).error;
+  return typeof error === "string" && error.trim() ? error.trim() : null;
 }
 
-function getChunkCount(meta: Record<string, unknown> | null | undefined): number | null {
-  const value = meta?.chunk_count;
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function isTerminalTraceStatus(status: string | undefined): boolean {
+  return ["SUCCESS", "FAILED", "FAILURE", "ERROR", "CANCELLED"].includes(String(status || "").toUpperCase());
 }
 
-function buildFallbackOverview(
-  health: HealthSnapshot | null,
-  tasks: TaskRecord[],
-  documents: DocumentListItem[],
-  apiLatencyMs: number | null,
-  topK: number,
-): MonitorOverview {
-  const pending = tasks.filter((task) => task.state === "PENDING").length;
-  const running = tasks.filter((task) => !isTerminalTask(task.state) && task.state !== "PENDING").length;
-  const failed = tasks.filter((task) => task.state === "FAILURE" || task.state === "FAILED").length;
-  const readyDocuments = documents.filter((document) => document.status === "READY");
-  const knownChunks = readyDocuments
-    .map((document) => document.chunks)
-    .filter((value): value is number => typeof value === "number");
-
-  return {
-    system: {
-      cpu_percent: null,
-      memory_percent: null,
-      memory_used_gb: null,
-      memory_total_gb: null,
-      disk_percent: null,
-    },
-    gpu: [],
-    services: {
-      mysql: serviceState(health?.mysql?.ok),
-      redis: serviceState(health?.redis?.ok),
-      worker: tasks.length > 0 ? "ok" : "unknown",
-      llm: "unknown",
-      embedding: "unknown",
-      api: serviceState(health?.ok),
-    },
-    queue: {
-      pending,
-      running,
-      failed,
-      worker_count: null,
-      worker_concurrency_configured: null,
-      worker_concurrency_observed: null,
-    },
-    latency: {
-      api_ms: apiLatencyMs,
-      ttft_ms: null,
-      chat_ms: null,
-      response_ms: null,
-      retrieval_ms: null,
-      faiss_ms: null,
-      ingest_ms: null,
-      document_parse_ms: null,
-    },
-    rag: {
-      documents_ready: readyDocuments.length,
-      total_chunks: knownChunks.length > 0 ? knownChunks.reduce((sum, value) => sum + value, 0) : null,
-      max_document_size_bytes: null,
-      top_k: topK,
-      retrieval_mode: "document",
-    },
-    ingest: {
-      document_parse_ms: {},
-      chunk_count: {},
-    },
-    experience: {
-      ttft_ms: {},
-      e2e_latency_ms: {},
-      ingest_ready_ms: {},
-    },
-    cost: {
-      prompt_tokens_avg: null,
-      prompt_tokens_total: null,
-      completion_tokens_avg: null,
-      completion_tokens_total: null,
-      cost_per_request_usd: null,
-      cost_per_document_usd: null,
-      chat_cost_total_usd: null,
-      ingest_cost_total_usd: null,
-    },
-    throughput: {
-      qps: null,
-      concurrent_sessions: null,
-      worker_queue_depth: pending + running,
-      active_sse_connections: null,
-      celery_concurrency_configured: null,
-      celery_concurrency_observed: null,
-      celery_pool: null,
-    },
-    quality: {
-      retrieval_ms: {},
-      faiss_ms: {},
-      error_rate: null,
-      timeout_rate: null,
-      citation_count_avg: null,
-      no_context_ratio: null,
-      retrieval_eval_samples: null,
-      recall_at_k_avg: null,
-      mrr_avg: null,
-      ndcg_avg: null,
-    },
-    samples: {
-      total: tasks.length,
-      chat: null,
-      ingest: null,
-    },
-    updated_at: nowIso(),
-    source: "health-fallback",
-  };
-}
-
-function taskRecordFromStatus(
-  status: TaskStatus,
-  existing: TaskRecord | undefined,
-  defaults: Partial<TaskRecord>,
-): TaskRecord {
-  return {
-    task_id: status.task_id,
-    type: defaults.type || existing?.type || "system",
-    entity_type: defaults.entity_type || existing?.entity_type || "system",
-    entity_id: defaults.entity_id ?? existing?.entity_id ?? 0,
-    db_task_id: defaults.db_task_id ?? existing?.db_task_id,
-    state: status.state,
-    progress: status.progress,
-    meta: status.meta ?? null,
-    error: status.error ?? null,
-    created_at: existing?.created_at || defaults.created_at || nowIso(),
-    updated_at: nowIso(),
-  };
-}
-
-function buildLocalMessage(
-  sessionId: number,
-  role: ChatMessage["role"],
-  content: string,
-  status: string,
-): ChatMessage {
-  const timestamp = nowIso();
-  return {
-    message_id: -Math.floor(Date.now() + Math.random() * 1000000),
-    session_id: sessionId,
-    role,
-    content,
-    status,
-    citations: [],
-    meta: {},
-    created_at: timestamp,
-    updated_at: timestamp,
-  };
+function normalizeTraceStatus(status: string | undefined, fallback = "RUNNING"): string {
+  return String(status || fallback).toUpperCase();
 }
 
 export default function App() {
@@ -248,6 +122,7 @@ export default function App() {
   const [taskRecords, setTaskRecords] = useState<TaskRecord[]>([]);
   const [ingestTask, setIngestTask] = useState<TaskStatus | null>(null);
   const [chatTask, setChatTask] = useState<TaskStatus | null>(null);
+  const [agentTraceRows, setAgentTraceRows] = useState<AgentTraceRow[]>([]);
   const [monitorOverview, setMonitorOverview] = useState<MonitorOverview | null>(null);
   const [metricPoints, setMetricPoints] = useState<MetricPoint[]>([]);
   const [pending, setPending] = useState<PendingAction>(null);
@@ -267,21 +142,10 @@ export default function App() {
   }
 
   function recordMetricPoint(nextOverview: MonitorOverview) {
-    const timestamp = new Date().toLocaleTimeString("zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
+    const fallbackThroughput = taskRecords.filter((task) => task.state === "SUCCESS").length;
     setMetricPoints((current) => [
       ...current.slice(-17),
-      {
-        label: timestamp,
-        cpu: nextOverview.system.cpu_percent,
-        gpu: summarizeGpuMetrics(nextOverview.gpu).util_percent,
-        api_ms: nextOverview.latency.api_ms,
-        throughput: nextOverview.throughput.qps ?? taskRecords.filter((task) => task.state === "SUCCESS").length,
-      },
+      buildMetricPoint(nextOverview, fallbackThroughput),
     ]);
   }
 
@@ -322,6 +186,189 @@ export default function App() {
       const nextMessages = updater(current[sessionId] || []);
       updateSessionSummary(sessionId, nextMessages);
       return { ...current, [sessionId]: nextMessages };
+    });
+  }
+
+  function upsertAgentTraceRow(patch: AgentTracePatch) {
+    const now = performance.now();
+    setAgentTraceRows((current) => {
+      const index = current.findIndex((row) => row.id === patch.id);
+      const status = normalizeTraceStatus(patch.status);
+
+      if (index >= 0) {
+        const next = current.map((row, rowIndex) => {
+          if (rowIndex !== index) {
+            return row;
+          }
+
+          const updated: AgentTraceRow = {
+            ...row,
+            ...patch,
+            status,
+          };
+          if (!updated.startedAtMs && !isTerminalTraceStatus(status)) {
+            updated.startedAtMs = now;
+          }
+          if (updated.latencyMs === undefined && row.startedAtMs && isTerminalTraceStatus(status)) {
+            updated.latencyMs = Math.max(1, Math.round(now - row.startedAtMs));
+          }
+          return updated;
+        });
+
+        return next.map((row, rowIndex) => ({ ...row, step: rowIndex + 1 }));
+      }
+
+      const row: AgentTraceRow = {
+        ...patch,
+        step: current.length + 1,
+        status,
+        startedAtMs: patch.startedAtMs ?? (isTerminalTraceStatus(status) ? undefined : now),
+      };
+      return [...current, row].map((item, rowIndex) => ({ ...item, step: rowIndex + 1 }));
+    });
+  }
+
+  function startAgentTrace(prompt: string) {
+    setAgentTraceRows([
+      {
+        id: "agent-decision",
+        step: 1,
+        type: "agent_step",
+        tool: "-",
+        input: summarizeValue(prompt),
+        output: "Agent 正在判断是否需要检索",
+        status: "RUNNING",
+        startedAtMs: performance.now(),
+      },
+    ]);
+  }
+
+  function agentToolTraceId(event: AgentToolCallEvent | AgentToolResultEvent): string {
+    return String(event.tool_call_id || event.tool_call_row_id || event.tool_name || "knowledge_search");
+  }
+
+  function handleAgentStepEvent(event: AgentStepEvent, prompt: string) {
+    const status = normalizeTraceStatus(event.status);
+    const stepIndex = Number(event.step_index ?? 0);
+
+    if (stepIndex === 0 && status === "RUNNING") {
+      upsertAgentTraceRow({
+        id: "agent-decision",
+        type: event.step_type || "agent_step",
+        tool: "-",
+        input: summarizeValue(prompt),
+        output: "Agent 正在判断是否需要检索",
+        status,
+      });
+      return;
+    }
+
+    if (event.decision === "tool_call") {
+      upsertAgentTraceRow({
+        id: "agent-decision",
+        type: event.step_type || "agent_step",
+        tool: "-",
+        input: summarizeValue(prompt),
+        output: "需要检索",
+        latencyMs: event.latency_ms,
+        status: "SUCCESS",
+      });
+      return;
+    }
+
+    if (stepIndex > 0 && status === "RUNNING") {
+      upsertAgentTraceRow({
+        id: "agent-generation",
+        type: event.step_type || "agent_step",
+        tool: "-",
+        input: "检索结果",
+        output: "正在生成答案",
+        status,
+      });
+      return;
+    }
+
+    if (event.decision === "final_answer" || event.answer) {
+      const answeredDirectly = stepIndex === 0;
+      upsertAgentTraceRow({
+        id: answeredDirectly ? "agent-decision" : "agent-generation",
+        type: event.step_type || "agent_step",
+        tool: "-",
+        input: answeredDirectly ? summarizeValue(prompt) : "检索结果",
+        output: answeredDirectly ? "无需检索，直接回答" : "答案已生成",
+        latencyMs: event.latency_ms,
+        status: "SUCCESS",
+      });
+    }
+  }
+
+  function handleAgentToolCallEvent(event: AgentToolCallEvent) {
+    const toolName = event.tool_name || "knowledge_search";
+    upsertAgentTraceRow({
+      id: "agent-decision",
+      type: "agent_step",
+      tool: "-",
+      output: "需要检索",
+      status: "SUCCESS",
+    });
+    upsertAgentTraceRow({
+      id: `tool-call-${agentToolTraceId(event)}`,
+      type: "tool_call",
+      tool: toolName,
+      input: summarizeValue(event.arguments),
+      output: `调用 ${toolName}`,
+      latencyMs: event.latency_ms,
+      status: normalizeTraceStatus(event.status),
+    });
+  }
+
+  function handleAgentToolResultEvent(event: AgentToolResultEvent) {
+    const toolName = event.tool_name || "knowledge_search";
+    const resultCount = getResultCount(event.result);
+    const errorMessage = event.error_message || getResultError(event.result);
+    const output = errorMessage
+      ? `工具失败：${errorMessage}`
+      : resultCount === null
+        ? "获得工具结果"
+        : `获得 ${resultCount} 条结果`;
+    const status = normalizeTraceStatus(event.status, "SUCCESS");
+
+    upsertAgentTraceRow({
+      id: `tool-call-${agentToolTraceId(event)}`,
+      type: "tool_call",
+      tool: toolName,
+      input: summarizeValue(event.arguments),
+      output: `调用 ${toolName}`,
+      latencyMs: event.latency_ms,
+      status,
+    });
+    upsertAgentTraceRow({
+      id: `tool-result-${agentToolTraceId(event)}`,
+      type: "tool_result",
+      tool: toolName,
+      input: "-",
+      output,
+      latencyMs: event.latency_ms,
+      status,
+    });
+    upsertAgentTraceRow({
+      id: "agent-generation",
+      type: "agent_step",
+      tool: "-",
+      input: output,
+      output: status === "FAILED" ? "检索失败，正在降级生成答案" : "正在生成答案",
+      status: "RUNNING",
+    });
+  }
+
+  function handleAgentFinalEvent(event: AgentFinalEvent) {
+    upsertAgentTraceRow({
+      id: "agent-generation",
+      type: "agent_step",
+      tool: "-",
+      input: "检索结果",
+      output: "答案已生成",
+      status: "SUCCESS",
     });
   }
 
@@ -475,6 +522,7 @@ export default function App() {
         ...current.map((item) => ({ ...item, status: "idle" as const })),
       ]);
       setMessagesBySession((current) => ({ ...current, [nextSession.session_id]: [] }));
+      setAgentTraceRows([]);
       navigate("workspace");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "创建会话失败");
@@ -498,6 +546,7 @@ export default function App() {
     setSessions((current) =>
       current.map((item) => ({ ...item, status: item.session_id === sessionId ? "active" : "idle" })),
     );
+    setAgentTraceRows([]);
     navigate("workspace");
   }
 
@@ -583,6 +632,31 @@ export default function App() {
     }
   }
 
+  async function handleDeleteDocument(docId: number) {
+    const target = documents.find((document) => document.doc_id === docId);
+    const label = target?.filename || `doc ${docId}`;
+    if (!window.confirm(`删除 ${label}？这会同步删除数据库记录、chunk 和 FAISS 索引文件。`)) {
+      return;
+    }
+
+    setPending(`delete-document-${docId}`);
+    setError(null);
+    try {
+      await deleteDocument(apiBaseUrl, docId);
+      setDocuments((current) => current.filter((document) => document.doc_id !== docId));
+      setTaskRecords((current) => current.filter((task) => !(task.entity_type === "document" && task.entity_id === docId)));
+      if (currentDocumentId === docId) {
+        const nextDocument = documents.find((document) => document.doc_id !== docId) || null;
+        setCurrentDocumentId(nextDocument?.doc_id ?? null);
+      }
+      await refreshDocuments(true);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "删除文档失败");
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function handleAsk() {
     if (!session) {
       setError("请先创建会话");
@@ -606,9 +680,15 @@ export default function App() {
     let streamTaskId: string | null = null;
     try {
       if (streamingEnabled) {
+        const useAgentStream = ragEnabled;
         const userMessage = buildLocalMessage(session.session_id, "user", prompt, "SUCCESS");
         const assistantMessage = buildLocalMessage(session.session_id, "assistant", "", "PROCESSING");
         streamTaskId = `stream-${Date.now()}`;
+        if (useAgentStream) {
+          startAgentTrace(prompt);
+        } else {
+          setAgentTraceRows([]);
+        }
         let queuedDelta = "";
         let animationFrame: number | null = null;
         const flushDelta = () => {
@@ -648,7 +728,7 @@ export default function App() {
           state: "PROCESSING",
           progress: 50,
           meta: {
-            stage: "streaming",
+            stage: useAgentStream ? "agent_streaming" : "streaming",
             session_id: session.session_id,
             doc_ids: readyDocIds,
           },
@@ -657,72 +737,93 @@ export default function App() {
         setSelectedTaskId(streamTaskId);
 
         try {
-          await streamChat(
-            apiBaseUrl,
-            {
-              session_id: session.session_id,
-              content: prompt,
-              top_k: topK,
+          const callbacks: StreamChatCallbacks = {
+            onDelta: (delta: string) => {
+              if (!delta) {
+                return;
+              }
+              queueDelta(delta);
             },
-            {
-              onDelta: (delta) => {
-                if (!delta) {
-                  return;
-                }
-                queueDelta(delta);
-              },
-              onDone: (meta) => {
-                if (animationFrame !== null) {
-                  window.cancelAnimationFrame(animationFrame);
-                }
-                flushDelta();
-                updateMessagesForSession(session.session_id, (messages) =>
-                  messages.map((message) =>
-                    message.message_id === assistantMessage.message_id
-                      ? {
-                          ...message,
-                          status: "SUCCESS",
-                          updated_at: nowIso(),
-                          meta: {
-                            ...message.meta,
-                            answer_source: meta.answer_source,
-                            context_mode: meta.context_mode,
-                            retrieved_count: meta.retrieved_count,
-                            citation_count: meta.citation_count,
-                            doc_ids: meta.doc_ids || readyDocIds,
-                            retrieval_ms: meta.retrieval_ms,
-                            ttft_ms: meta.ttft_ms,
-                            e2e_latency_ms: meta.e2e_latency_ms,
-                          },
-                        }
-                      : message,
-                  ),
-                );
-                setChatTask({
-                  task_id: streamTaskId || `stream-${Date.now()}`,
-                  state: "SUCCESS",
-                  progress: 100,
-                  meta: {
-                    stage: "finished",
-                    session_id: session.session_id,
-                    doc_ids: meta.doc_ids || readyDocIds,
-                    answer_source: meta.answer_source,
-                    context_mode: meta.context_mode,
-                    retrieved_count: meta.retrieved_count,
-                    citation_count: meta.citation_count,
-                    retrieval_ms: meta.retrieval_ms,
-                    ttft_ms: meta.ttft_ms,
-                    e2e_latency_ms: meta.e2e_latency_ms,
-                    prompt_tokens: meta.prompt_tokens,
-                    completion_tokens: meta.completion_tokens,
-                    cost_usd: meta.cost_usd,
-                    no_context: meta.no_context,
-                  },
-                  error: null,
-                });
-              },
+            onDone: (meta: StreamChatDoneMeta) => {
+              if (animationFrame !== null) {
+                window.cancelAnimationFrame(animationFrame);
+              }
+              flushDelta();
+              updateMessagesForSession(session.session_id, (messages) =>
+                messages.map((message) =>
+                  message.message_id === assistantMessage.message_id
+                    ? {
+                        ...message,
+                        status: "SUCCESS",
+                        updated_at: nowIso(),
+                        meta: {
+                          ...message.meta,
+                          agent_run_id: meta.agent_run_id,
+                          answer_source: meta.answer_source || (useAgentStream ? "agent" : undefined),
+                          context_mode: meta.context_mode,
+                          retrieved_count: meta.retrieved_count,
+                          citation_count: meta.citation_count,
+                          doc_ids: meta.doc_ids || readyDocIds,
+                          retrieval_ms: meta.retrieval_ms,
+                          ttft_ms: meta.ttft_ms,
+                          e2e_latency_ms: meta.e2e_latency_ms,
+                          steps_used: meta.steps_used,
+                        },
+                      }
+                    : message,
+                ),
+              );
+              setChatTask({
+                task_id: streamTaskId || `stream-${Date.now()}`,
+                state: "SUCCESS",
+                progress: 100,
+                meta: {
+                  stage: useAgentStream ? "agent_finished" : "finished",
+                  session_id: session.session_id,
+                  doc_ids: meta.doc_ids || readyDocIds,
+                  agent_run_id: meta.agent_run_id,
+                  answer_source: meta.answer_source || (useAgentStream ? "agent" : undefined),
+                  context_mode: meta.context_mode,
+                  retrieved_count: meta.retrieved_count,
+                  citation_count: meta.citation_count,
+                  retrieval_ms: meta.retrieval_ms,
+                  ttft_ms: meta.ttft_ms,
+                  e2e_latency_ms: meta.e2e_latency_ms,
+                  prompt_tokens: meta.prompt_tokens,
+                  completion_tokens: meta.completion_tokens,
+                  cost_usd: meta.cost_usd,
+                  no_context: meta.no_context,
+                  steps_used: meta.steps_used,
+                },
+                error: null,
+              });
             },
-          );
+            onAgentStep: (event: AgentStepEvent) => handleAgentStepEvent(event, prompt),
+            onToolCall: handleAgentToolCallEvent,
+            onToolResult: handleAgentToolResultEvent,
+            onFinal: handleAgentFinalEvent,
+          };
+
+          if (useAgentStream) {
+            await streamAgentChat(
+              apiBaseUrl,
+              {
+                session_id: session.session_id,
+                message: prompt,
+              },
+              callbacks,
+            );
+          } else {
+            await streamChat(
+              apiBaseUrl,
+              {
+                session_id: session.session_id,
+                content: prompt,
+                top_k: topK,
+              },
+              callbacks,
+            );
+          }
         } finally {
           if (animationFrame !== null) {
             window.cancelAnimationFrame(animationFrame);
@@ -878,6 +979,7 @@ export default function App() {
           onSelectDocument={setCurrentDocumentId}
           onFileChange={setSelectedFile}
           onUpload={handleUploadDocument}
+          onDeleteDocument={handleDeleteDocument}
         />
       );
     }
@@ -942,6 +1044,7 @@ export default function App() {
         error={error}
         ingestTask={ingestTask}
         chatTask={chatTask}
+        agentTraceRows={agentTraceRows}
         onCreateSession={handleCreateSession}
         onRefreshMessages={handleRefreshMessages}
         onQuestionChange={setQuestion}

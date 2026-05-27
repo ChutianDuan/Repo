@@ -38,7 +38,7 @@ void applyCorsHeaders(const HttpRequestPtr& req, const HttpResponsePtr& resp) {
     const auto origin = req ? req->getHeader("Origin") : std::string();
     resp->addHeader("Access-Control-Allow-Origin", origin.empty() ? "*" : origin);
     resp->addHeader("Vary", "Origin");
-    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
 
     const auto requestedHeaders = req ? req->getHeader("Access-Control-Request-Headers") : std::string();
     if (!requestedHeaders.empty()) {
@@ -294,6 +294,26 @@ int main() {
     );
 
     app().registerHandler(
+        "/v1/documents/{1}",
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback,
+                                        int docId) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient, docId](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    pythonClient->forwardDelete(
+                        "/internal/documents/" + std::to_string(docId),
+                        std::move(secureCallback)
+                    );
+                }
+            );
+        },
+        {Delete}
+    );
+
+    app().registerHandler(
         "/v1/users",
         [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback) {
@@ -452,6 +472,31 @@ int main() {
 
     app().registerHandler(
         "/v1/chat/stream",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
+    );
+
+    app().registerHandler(
+        "/v1/agent/chat/stream",
+        [gatewaySecurity, streamChatHandler](const HttpRequestPtr& req,
+                                             std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [streamChatHandler, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    streamChatHandler->handleAgentStream(req, std::move(secureCallback));
+                }
+            );
+        },
+        {Post}
+    );
+
+    app().registerHandler(
+        "/v1/agent/chat/stream",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             callback(makeOptionsResponse(req));

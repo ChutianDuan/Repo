@@ -47,17 +47,17 @@ export function ChatInputBar({
       <textarea
         value={question}
         onChange={(event) => onQuestionChange(event.target.value)}
-        placeholder={isChatting ? "正在接收回答..." : "输入问题..."}
+        placeholder={isChatting ? "正在生成回答..." : "基于已上传笔记提问..."}
         rows={3}
         disabled={isChatting}
       />
       <div className="chat-input-bar__controls">
         <label className="file-control">
           <input type="file" accept=".md,.txt,.json,.csv,.pdf,.docx,.xlsx" onChange={handleFileChange} />
-          <span>{selectedFileName || "选择文档"}</span>
+          <span>{selectedFileName || "选择笔记"}</span>
         </label>
         <button type="button" className="button-secondary" onClick={onUpload} disabled={pending !== null}>
-          {pending === "upload" ? "索引中" : "上传"}
+          {pending === "upload" ? "索引中" : "上传并索引"}
         </button>
         <label className="toggle-control">
           <input
@@ -65,10 +65,10 @@ export function ChatInputBar({
             checked={ragEnabled}
             onChange={(event) => onRagEnabledChange(event.target.checked)}
           />
-          <span>RAG {ragEnabled ? "ON" : "OFF"}</span>
+          <span>使用知识库</span>
         </label>
         <label className="mini-field">
-          <span>top_k</span>
+          <span>引用数</span>
           <input
             type="number"
             min={1}
@@ -78,7 +78,7 @@ export function ChatInputBar({
           />
         </label>
         <button type="submit" disabled={pending !== null || !canAsk || !question.trim()}>
-          {isChatting ? (streamingEnabled ? "Streaming" : "Running") : "Send"}
+          {isChatting ? (streamingEnabled ? "回答中" : "处理中") : "提问"}
         </button>
       </div>
     </form>

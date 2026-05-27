@@ -109,6 +109,7 @@ pre {
 .app-footer-status,
 .section-card,
 .chat-workspace,
+.agent-trace-panel,
 .reference-panel {
   border: 1px solid var(--line);
   background: var(--panel);
@@ -284,6 +285,7 @@ pre {
 .sidebar-block__head,
 .section-card__header,
 .message-bubble__head,
+.agent-trace-panel__head,
 .reference-panel__head,
 .detail-drawer__head,
 .pipeline-card > div,
@@ -367,6 +369,7 @@ pre {
 }
 
 .chat-workspace,
+.agent-trace-panel,
 .reference-panel,
 .section-card {
   border-radius: var(--radius-xl);
@@ -380,7 +383,15 @@ pre {
   overflow: hidden;
 }
 
+.workspace-side-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
 .conversation-header,
+.agent-trace-panel__head,
 .reference-panel__head {
   padding: 18px;
   border-bottom: 1px solid var(--line);
@@ -578,6 +589,79 @@ h3 {
   overflow: auto;
 }
 
+.agent-trace-panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.agent-trace-section {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.agent-trace-timeline {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-trace-timeline > div {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.agent-trace-timeline strong {
+  color: var(--primary-strong);
+  font-size: 0.82rem;
+}
+
+.agent-trace-timeline span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+}
+
+.agent-trace-table {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.agent-trace-table__row {
+  display: grid;
+  grid-template-columns: 48px 104px 132px minmax(160px, 1fr) minmax(160px, 1fr) 82px 92px;
+  min-width: 780px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 0.82rem;
+}
+
+.agent-trace-table__row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-trace-table__row--head {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(245, 247, 248, 0.8);
+}
+
 .reference-section {
   padding: 18px;
   border-bottom: 1px solid var(--line);
@@ -733,7 +817,7 @@ h3 {
 }
 
 .document-table .data-table__row {
-  grid-template-columns: minmax(160px, 1.5fr) 110px 90px 100px minmax(140px, 1fr) minmax(120px, 0.9fr);
+  grid-template-columns: minmax(160px, 1.5fr) 110px 90px 100px minmax(140px, 1fr) minmax(120px, 0.9fr) 88px;
 }
 
 .task-table .data-table__row {
@@ -904,6 +988,7 @@ h3 {
 }
 
 .button-secondary,
+.button-danger,
 .button-ghost,
 .filter-tab {
   box-shadow: none;
@@ -912,6 +997,16 @@ h3 {
 .button-secondary {
   background: rgba(24, 33, 44, 0.08);
   color: var(--ink);
+}
+
+.button-danger {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.button-compact {
+  padding: 0.46rem 0.62rem;
+  font-size: 0.82rem;
 }
 
 .button-ghost {
@@ -1013,6 +1108,10 @@ h3 {
   }
 
   .reference-panel {
+    max-height: none;
+  }
+
+  .agent-trace-panel {
     max-height: none;
   }
 

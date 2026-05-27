@@ -95,6 +95,13 @@ void tryDeleteFile(const std::string& storagePath) {
     } catch (...) {
     }
 }
+
+const Json::Value& responseDataOrSelf(const Json::Value& json) {
+    if (json.isObject() && json.isMember("data") && !json["data"].isNull()) {
+        return json["data"];
+    }
+    return json;
+}
 }  // namespace
 
 DocumentService::DocumentService(std::shared_ptr<PythonApiClient> pythonClient)
@@ -316,13 +323,20 @@ void DocumentService::uploadAndSubmit(
                         return;
                     }
 
+                    const Json::Value& jobJson = responseDataOrSelf(pythonJson);
+
+                    Json::Value data;
+                    data["doc_id"] = Json::Int64(docId);
+                    data["filename"] = originalName;
+                    data["task_id"] = jobJson["task_id"];
+                    data["db_task_id"] = jobJson["db_task_id"];
+                    data["state"] = jobJson["state"];
+                    data["status_url"] = "/v1/tasks/" + jobJson["task_id"].asString();
+
                     Json::Value out;
-                    out["doc_id"] = Json::Int64(docId);
-                    out["filename"] = originalName;
-                    out["task_id"] = pythonJson["task_id"];
-                    out["db_task_id"] = pythonJson["db_task_id"];
-                    out["state"] = pythonJson["state"];
-                    out["status_url"] = "/v1/tasks/" + pythonJson["task_id"].asString();
+                    out["code"] = 0;
+                    out["message"] = "ok";
+                    out["data"] = data;
 
                     auto resp = HttpResponse::newHttpJsonResponse(out);
                     resp->setStatusCode(k200OK);

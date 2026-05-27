@@ -57,14 +57,14 @@ export function AppSidebar({
 
       <div className="sidebar-block">
         <div className="sidebar-block__head">
-          <span>Sessions</span>
+          <span>问答会话</span>
           <button type="button" className="icon-button" onClick={onNewSession} disabled={pending !== null}>
             +
           </button>
         </div>
         <div className="session-list">
           {sessions.length === 0 ? (
-            <p className="sidebar-muted">暂无会话，点击 + 创建。</p>
+            <p className="sidebar-muted">暂无会话，创建后即可开始提问。</p>
           ) : (
             sessions.map((session) => (
               <button
@@ -74,7 +74,7 @@ export function AppSidebar({
                 onClick={() => onSelectSession(session.session_id)}
               >
                 <strong>{session.title}</strong>
-                <span>{session.message_count} messages</span>
+                <span>{session.message_count} 条消息</span>
                 <TimestampText value={session.updated_at} />
               </button>
             ))
@@ -84,17 +84,17 @@ export function AppSidebar({
 
       <div className="sidebar-block">
         <div className="sidebar-block__head">
-          <span>Operator</span>
-          <small>User #{userId || "--"}</small>
+          <span>用户</span>
+          <small>#{userId || "--"}</small>
         </div>
         <div className="compact-form">
           <input
             value={newUserName}
             onChange={(event) => onNewUserNameChange(event.target.value)}
-            placeholder="new user name"
+            placeholder="新用户名"
           />
           <button type="button" className="button-secondary" onClick={onCreateUser} disabled={pending !== null}>
-            Create
+            创建
           </button>
         </div>
         <div className="user-list">
@@ -112,9 +112,9 @@ export function AppSidebar({
       </div>
 
       <div className="sidebar-health">
-        <HealthDot label="MySQL" state={overview.services.mysql} />
-        <HealthDot label="Redis" state={overview.services.redis} />
+        <HealthDot label="API" state={overview.services.api} />
         <HealthDot label="Worker" state={overview.services.worker} />
+        <HealthDot label="Embedding" state={overview.services.embedding} />
         <HealthDot label="LLM" state={overview.services.llm} />
       </div>
     </aside>

@@ -1,4 +1,3 @@
-# python_rag/services/chat_service.py
 import time
 from typing import Any, Dict, List, Optional
 
@@ -12,13 +11,18 @@ from python_rag.modules.messages.repo import (
 )
 from python_rag.modules.tasks.repo import update_task_record
 from python_rag.modules.chat.repo import bulk_insert_citations
+from python_rag.modules.chat.common import (
+    NO_CONTEXT_ANSWER,
+    build_citations_from_hits as _build_citations_from_hits,
+    chunks_to_dicts as _chunks_to_dicts,
+    generate_mock_answer,
+    retrieve_hits as _retrieve_hits,
+)
 from python_rag.modules.chat.validation import validate_chat_user_message
 
-from python_rag.modules.retrieval.service import search_in_documents
 from python_rag.modules.retrieval.context_assembler import assemble_context
 from python_rag.modules.retrieval.prompt_builder import build_prompt, to_messages
 
-from python_rag.modules.llm.mock_service import build_mock_answer
 from python_rag.modules.llm.service import LLMServiceError, generate_answer
 from python_rag.modules.monitor.request_metrics import (
     build_usage_metrics,
@@ -30,65 +34,8 @@ from python_rag.modules.monitor.request_metrics import (
 )
 
 
-
 class ChatServiceError(Exception):
     pass
-
-
-def _build_citations_from_hits(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    citations = []
-    for idx, hit in enumerate(hits):
-        citations.append({
-            "rank": idx + 1,
-            "chunk_id": hit.get("chunk_id") or hit.get("id"),
-            "doc_id": hit.get("doc_id"),
-            "chunk_index": hit.get("chunk_index", hit.get("seq", hit.get("index"))),
-            "score": hit.get("score"),
-            "faiss_score": hit.get("faiss_score"),
-            "bm25_score": hit.get("bm25_score"),
-            "rrf_score": hit.get("rrf_score"),
-            "rerank_score": hit.get("rerank_score"),
-            "faiss_rank": hit.get("faiss_rank"),
-            "bm25_rank": hit.get("bm25_rank"),
-            "rrf_rank": hit.get("rrf_rank"),
-            "original_rank": hit.get("original_rank"),
-            "preview": (hit.get("content") or hit.get("text") or hit.get("chunk_text") or "")[:200],
-        })
-    return citations
-
-
-def _retrieve_hits(question: str, doc_id: Optional[int], doc_ids: Optional[List[int]], top_k: int) -> Dict[str, Any]:
-    return search_in_documents(
-        doc_id=doc_id,
-        doc_ids=doc_ids,
-        query=question,
-        top_k=top_k,
-        track_metric=False,
-    )
-
-
-def _chunk_to_dict(chunk: Any) -> Dict[str, Any]:
-    if isinstance(chunk, dict):
-        return chunk
-
-    if hasattr(chunk, "__dict__"):
-        return dict(chunk.__dict__)
-
-    # 最后的兜底，避免异常对象导致整个回答链路失败
-    return {
-        "content": str(chunk),
-    }
-
-
-def _chunks_to_dicts(chunks: List[Any]) -> List[Dict[str, Any]]:
-    return [_chunk_to_dict(c) for c in chunks]
-
-
-def generate_mock_answer(question: str, context_chunks: List[Dict[str, Any]]) -> str:
-    return build_mock_answer(
-        user_query=question,
-        hits=context_chunks,
-    )
 
 
 def _create_assistant_message(
@@ -295,7 +242,7 @@ def run_chat_for_message(
             llm_result = None
 
             if context_mode == "no_context":
-                answer_text = "根据当前检索内容无法确定该问题的答案，因为没有检索到可用文档片段。"
+                answer_text = NO_CONTEXT_ANSWER
                 answer_source = "no_context"
             else:
                 try:

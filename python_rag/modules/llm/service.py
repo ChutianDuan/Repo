@@ -1,7 +1,8 @@
+import copy
 import json
 import re
 import time
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 import requests
 
@@ -10,11 +11,17 @@ from python_rag.config import (
     LLM_MODEL,
     LLM_TEMPERATURE,
     LLM_MAX_TOKENS,
+    LLM_TOKEN_LIMIT_FIELD,
+    LLM_MAX_GENERATION_ROUNDS,
     LLM_ENABLE,
     LLM_PROVIDER,
     LLM_BASE_URL,
     LLM_TIMEOUT_SECONDS,
+    LLM_TOP_P,
+    LLM_FREQUENCY_PENALTY,
+    LLM_PRESENCE_PENALTY,
 )
+from python_rag.utils import http_client
 
 
 class LLMServiceError(Exception):
@@ -23,6 +30,27 @@ class LLMServiceError(Exception):
 
 _THINK_OPEN_RE = re.compile(r"<think\b[^>]*>", re.IGNORECASE)
 _THINK_CLOSE_RE = re.compile(r"</think>", re.IGNORECASE)
+_LOOP_DONE_MARKER = "[[LLM_DONE]]"
+_LOOP_DONE_MARKER_RE = re.compile(r"\s*" + re.escape(_LOOP_DONE_MARKER) + r"\s*", re.IGNORECASE)
+_LOOP_CONTROL_INSTRUCTION = (
+    "你需要自主判断最终答案是否已经完整。\n"
+    "当答案完整时，请在答案最后单独输出一行：%s\n"
+    "如果答案尚未完整，请继续输出正文，不要输出结束标记。\n"
+    "除这个结束标记外，不要输出任何循环控制说明。"
+) % _LOOP_DONE_MARKER
+_LOOP_CONTINUE_PROMPT = (
+    "上一轮回答还没有完成，或者响应被长度限制截断。"
+    "请只从上一轮结尾处继续补全，不要重复已经输出的内容。"
+    "当最终答案完整时，请在答案最后单独输出一行：%s"
+) % _LOOP_DONE_MARKER
+_STOP_FINISH_REASONS = {"stop", "eos_token", "end_turn", "content_filter", "tool_calls"}
+_USAGE_TOKEN_KEYS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "input_tokens",
+    "output_tokens",
+)
 
 
 class _ThinkingContentFilter:
@@ -118,14 +146,131 @@ def _build_headers() -> Dict[str, str]:
     return headers
 
 
-def _build_payload(messages: List[Dict[str, str]], stream: bool = False) -> Dict[str, Any]:
-    return {
+def _build_payload(
+    messages: List[Dict[str, Any]],
+    stream: bool = False,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: Optional[Any] = None,
+) -> Dict[str, Any]:
+    payload = {
         "model": LLM_MODEL,
         "messages": messages,
         "temperature": LLM_TEMPERATURE,
-        "max_tokens": LLM_MAX_TOKENS,
         "stream": stream,
     }
+    payload[LLM_TOKEN_LIMIT_FIELD] = LLM_MAX_TOKENS
+    if LLM_TOP_P is not None:
+        payload["top_p"] = LLM_TOP_P
+    if LLM_FREQUENCY_PENALTY is not None:
+        payload["frequency_penalty"] = LLM_FREQUENCY_PENALTY
+    if LLM_PRESENCE_PENALTY is not None:
+        payload["presence_penalty"] = LLM_PRESENCE_PENALTY
+    if tools is not None:
+        payload["tools"] = tools
+    if tool_choice is not None:
+        payload["tool_choice"] = tool_choice
+    return payload
+
+
+def _with_loop_control_instruction(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    loop_messages = [dict(message) for message in messages]
+    for message in loop_messages:
+        if message.get("role") == "system":
+            content = _normalize_content_parts(message.get("content"))
+            message["content"] = (content.rstrip() + "\n\n" + _LOOP_CONTROL_INSTRUCTION).strip()
+            return loop_messages
+
+    return [{"role": "system", "content": _LOOP_CONTROL_INSTRUCTION}] + loop_messages
+
+
+def _strip_loop_done_marker(text: str) -> Tuple[str, bool]:
+    if not text:
+        return "", False
+
+    marker_found = _LOOP_DONE_MARKER_RE.search(text) is not None
+    if not marker_found:
+        return text, False
+
+    return _LOOP_DONE_MARKER_RE.sub("", text).strip(), True
+
+
+def _is_stop_finish_reason(finish_reason: Any) -> bool:
+    if finish_reason is None:
+        return False
+    return str(finish_reason).strip().lower() in _STOP_FINISH_REASONS
+
+
+def _coerce_usage_number(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _merge_usage(total_usage: Optional[Dict[str, Any]], usage: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not usage:
+        return total_usage
+
+    merged = dict(total_usage or {})
+    for key in _USAGE_TOKEN_KEYS:
+        value = _coerce_usage_number(usage.get(key))
+        if value is None:
+            continue
+        current = _coerce_usage_number(merged.get(key)) or 0
+        merged[key] = current + value
+
+    return merged or None
+
+
+class _LoopDoneMarkerFilter:
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._done = False
+
+    @property
+    def done(self) -> bool:
+        return self._done
+
+    def feed(self, text: str) -> str:
+        if self._done or not text:
+            return ""
+
+        self._buffer += text
+        marker_index = self._buffer.lower().find(_LOOP_DONE_MARKER.lower())
+        if marker_index >= 0:
+            output = self._buffer[:marker_index].rstrip()
+            self._buffer = ""
+            self._done = True
+            return output
+
+        safe_prefix_len = self._safe_visible_prefix_len(self._buffer)
+        if safe_prefix_len <= 0:
+            return ""
+
+        output = self._buffer[:safe_prefix_len]
+        self._buffer = self._buffer[safe_prefix_len:]
+        return output
+
+    def flush(self) -> str:
+        if self._done:
+            self._buffer = ""
+            return ""
+
+        output = self._buffer
+        self._buffer = ""
+        return output
+
+    @staticmethod
+    def _safe_visible_prefix_len(text: str) -> int:
+        marker = _LOOP_DONE_MARKER.lower()
+        lower_text = text.lower()
+        max_suffix_len = min(len(marker) - 1, len(lower_text))
+        for suffix_len in range(max_suffix_len, 0, -1):
+            if marker.startswith(lower_text[-suffix_len:]):
+                return len(text) - suffix_len
+        return len(text)
 
 
 def _normalize_content_parts(value: Any) -> str:
@@ -147,6 +292,16 @@ def _normalize_content_parts(value: Any) -> str:
     return str(value)
 
 
+def _normalize_tool_calls(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item
+        for item in value
+        if isinstance(item, dict)
+    ]
+
+
 def _extract_answer(resp_json: Dict[str, Any]) -> Dict[str, Any]:
     choices = resp_json.get("choices") or []
     if not choices:
@@ -155,20 +310,27 @@ def _extract_answer(resp_json: Dict[str, Any]) -> Dict[str, Any]:
     first = choices[0] or {}
     message = first.get("message") or {}
     answer = message.get("content")
+    tool_calls = _normalize_tool_calls(message.get("tool_calls") or first.get("tool_calls"))
 
     # 兼容部分 OpenAI-compatible 服务
     if answer is None:
         answer = first.get("text")
 
-    if answer is None:
+    if answer is None and not tool_calls:
         raise LLMServiceError("llm response missing answer content")
 
     answer = _strip_thinking_content(_normalize_content_parts(answer))
-    if not answer:
+    if not answer and not tool_calls:
         raise LLMServiceError("llm response answer is empty")
 
     return {
         "answer": answer,
+        "message_content": answer,
+        "message": {
+            "content": answer,
+            "tool_calls": tool_calls,
+        },
+        "tool_calls": tool_calls,
         "model": resp_json.get("model") or LLM_MODEL,
         "usage": resp_json.get("usage"),
         "finish_reason": first.get("finish_reason"),
@@ -235,7 +397,63 @@ def _extract_stream_delta(chunk_json: Dict[str, Any]) -> str:
     return ""
 
 
-def generate_from_messages(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+def _extract_stream_tool_call_deltas(chunk_json: Dict[str, Any]) -> List[Dict[str, Any]]:
+    choices = chunk_json.get("choices") or []
+    if not choices:
+        return []
+
+    first = choices[0] or {}
+    delta = first.get("delta")
+    if isinstance(delta, dict):
+        tool_calls = _normalize_tool_calls(delta.get("tool_calls"))
+        if tool_calls:
+            return tool_calls
+
+    message = first.get("message")
+    if isinstance(message, dict):
+        return _normalize_tool_calls(message.get("tool_calls"))
+
+    return []
+
+
+def _merge_stream_tool_call_deltas(
+    tool_calls: List[Dict[str, Any]],
+    deltas: List[Dict[str, Any]],
+) -> None:
+    for delta in deltas:
+        index = delta.get("index")
+        if isinstance(index, bool) or index is None:
+            index = len(tool_calls)
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            index = len(tool_calls)
+
+        while len(tool_calls) <= index:
+            tool_calls.append({})
+
+        target = tool_calls[index]
+        for key in ("id", "type"):
+            if delta.get(key) is not None:
+                target[key] = delta[key]
+
+        function_delta = delta.get("function")
+        if isinstance(function_delta, dict):
+            function_target = target.setdefault("function", {})
+            if function_delta.get("name") is not None:
+                function_target["name"] = function_delta["name"]
+            if function_delta.get("arguments") is not None:
+                function_target["arguments"] = (
+                    str(function_target.get("arguments") or "")
+                    + str(function_delta["arguments"])
+                )
+
+
+def generate_from_messages(
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: Optional[Any] = None,
+) -> Dict[str, Any]:
     if not LLM_ENABLE:
         raise LLMServiceError("LLM service is disabled by config")
 
@@ -250,39 +468,116 @@ def generate_from_messages(messages: List[Dict[str, str]]) -> Dict[str, Any]:
 
     url = LLM_BASE_URL + "/chat/completions"
     headers = _build_headers()
-    payload = _build_payload(messages, stream=False)
+    tool_calling_request = tools is not None or tool_choice is not None
+    loop_messages = (
+        [copy.deepcopy(message) for message in messages]
+        if tool_calling_request
+        else _with_loop_control_instruction(messages)
+    )
+    max_rounds = 1 if tool_calling_request else max(1, int(LLM_MAX_GENERATION_ROUNDS or 1))
 
     start_ts = time.time()
+    answer_parts: List[str] = []
+    message_content = ""
+    tool_calls: List[Dict[str, Any]] = []
+    total_usage: Optional[Dict[str, Any]] = None
+    model = LLM_MODEL
+    finish_reason = None
+    stop_reason = "max_rounds"
+    stopped_by_model = False
+    rounds_used = 0
 
-    try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=LLM_TIMEOUT_SECONDS,
+    for round_index in range(max_rounds):
+        rounds_used = round_index + 1
+        payload = _build_payload(
+            loop_messages,
+            stream=False,
+            tools=tools,
+            tool_choice=tool_choice,
         )
-    except requests.Timeout as e:
-        raise LLMServiceError("llm request timed out: %s" % str(e))
-    except requests.RequestException as e:
-        raise LLMServiceError("llm request failed: %s" % str(e))
 
-    if response.status_code >= 400:
-        text = response.text[:1000]
-        raise LLMServiceError(
-            "llm http error status=%s body=%s" % (response.status_code, text)
-        )
+        try:
+            response = http_client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+        except requests.Timeout as e:
+            raise LLMServiceError("llm request timed out: %s" % str(e))
+        except requests.RequestException as e:
+            raise LLMServiceError("llm request failed: %s" % str(e))
 
-    try:
-        resp_json = response.json()
-    except ValueError:
-        raise LLMServiceError("llm response is not valid json: %s" % response.text[:1000])
+        if response.status_code >= 400:
+            text = response.text[:1000]
+            raise LLMServiceError(
+                "llm http error status=%s body=%s" % (response.status_code, text)
+            )
 
-    result = _extract_answer(resp_json)
-    result["latency_ms"] = int((time.time() - start_ts) * 1000)
-    return result
+        try:
+            resp_json = response.json()
+        except ValueError:
+            raise LLMServiceError("llm response is not valid json: %s" % response.text[:1000])
+
+        result = _extract_answer(resp_json)
+        model = result.get("model") or model
+        finish_reason = result.get("finish_reason")
+        message_content = result.get("message_content") or ""
+        tool_calls = result.get("tool_calls") or []
+        total_usage = _merge_usage(total_usage, result.get("usage"))
+
+        if tool_calls:
+            stopped_by_model = True
+            stop_reason = "tool_calls"
+            break
+
+        answer_text, done_marker_found = _strip_loop_done_marker(result["answer"])
+        if answer_text:
+            answer_parts.append(answer_text)
+
+        if done_marker_found:
+            stopped_by_model = True
+            stop_reason = "done_marker"
+            break
+
+        if _is_stop_finish_reason(finish_reason):
+            stopped_by_model = True
+            stop_reason = "finish_reason:%s" % finish_reason
+            break
+
+        loop_messages.append({"role": "assistant", "content": result["answer"]})
+        loop_messages.append({"role": "user", "content": _LOOP_CONTINUE_PROMPT})
+
+    answer = "\n".join(part for part in answer_parts if part).strip()
+    if not answer and tool_calls:
+        answer = message_content
+    if not answer and not tool_calls:
+        raise LLMServiceError("llm response answer is empty")
+
+    return {
+        "answer": answer,
+        "message_content": message_content,
+        "message": {
+            "content": message_content,
+            "tool_calls": tool_calls,
+        },
+        "tool_calls": tool_calls,
+        "model": model,
+        "usage": total_usage,
+        "finish_reason": finish_reason,
+        "latency_ms": int((time.time() - start_ts) * 1000),
+        "rounds": rounds_used,
+        "max_rounds": max_rounds,
+        "stopped_by_model": stopped_by_model,
+        "stop_reason": stop_reason,
+    }
 
 
-def stream_from_messages(messages: List[Dict[str, str]]) -> Generator[Dict[str, Any], None, None]:
+def stream_from_messages(
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: Optional[Any] = None,
+) -> Generator[Dict[str, Any], None, None]:
     if not LLM_ENABLE:
         raise LLMServiceError("LLM service is disabled by config")
 
@@ -297,93 +592,167 @@ def stream_from_messages(messages: List[Dict[str, str]]) -> Generator[Dict[str, 
 
     url = LLM_BASE_URL + "/chat/completions"
     headers = _build_headers()
-    payload = _build_payload(messages, stream=True)
+    tool_calling_request = tools is not None or tool_choice is not None
+    loop_messages = (
+        [copy.deepcopy(message) for message in messages]
+        if tool_calling_request
+        else _with_loop_control_instruction(messages)
+    )
+    max_rounds = 1 if tool_calling_request else max(1, int(LLM_MAX_GENERATION_ROUNDS or 1))
 
     start_ts = time.time()
     first_delta_ts = None
     answer_parts: List[str] = []
-    usage = None
+    tool_calls: List[Dict[str, Any]] = []
+    total_usage: Optional[Dict[str, Any]] = None
     finish_reason = None
     model = LLM_MODEL
-    content_filter = _ThinkingContentFilter()
+    stop_reason = "max_rounds"
+    stopped_by_model = False
+    rounds_used = 0
 
-    try:
-        with requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=(10, LLM_TIMEOUT_SECONDS),
+    for round_index in range(max_rounds):
+        rounds_used = round_index + 1
+        payload = _build_payload(
+            loop_messages,
             stream=True,
-        ) as response:
-            if response.status_code >= 400:
-                text = response.text[:1000]
-                raise LLMServiceError(
-                    "llm http error status=%s body=%s" % (response.status_code, text)
-                )
+            tools=tools,
+            tool_choice=tool_choice,
+        )
+        round_answer_parts: List[str] = []
+        content_filter = _ThinkingContentFilter()
+        marker_filter = _LoopDoneMarkerFilter()
 
-            for payload_text in _iter_sse_data(response):
-                if payload_text == "[DONE]":
-                    break
-
-                try:
-                    chunk_json = json.loads(payload_text)
-                except ValueError:
+        try:
+            with http_client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=(10, LLM_TIMEOUT_SECONDS),
+                stream=True,
+            ) as response:
+                if response.status_code >= 400:
+                    text = response.text[:1000]
                     raise LLMServiceError(
-                        "llm stream chunk is not valid json: %s" % payload_text[:500]
+                        "llm http error status=%s body=%s" % (response.status_code, text)
                     )
 
-                if chunk_json.get("model"):
-                    model = chunk_json["model"]
-                if chunk_json.get("usage") is not None:
-                    usage = chunk_json.get("usage")
+                for payload_text in _iter_sse_data(response):
+                    if payload_text == "[DONE]":
+                        break
 
-                choices = chunk_json.get("choices") or []
-                if choices:
-                    finish_reason = choices[0].get("finish_reason") or finish_reason
+                    try:
+                        chunk_json = json.loads(payload_text)
+                    except ValueError:
+                        raise LLMServiceError(
+                            "llm stream chunk is not valid json: %s" % payload_text[:500]
+                        )
 
-                raw_delta_text = _extract_stream_delta(chunk_json)
-                delta_text = content_filter.feed(raw_delta_text)
-                if not delta_text:
-                    continue
+                    if chunk_json.get("model"):
+                        model = chunk_json["model"]
+                    if chunk_json.get("usage") is not None:
+                        total_usage = _merge_usage(total_usage, chunk_json.get("usage"))
 
-                if first_delta_ts is None:
-                    first_delta_ts = time.time()
+                    choices = chunk_json.get("choices") or []
+                    if choices:
+                        finish_reason = choices[0].get("finish_reason") or finish_reason
 
-                answer_parts.append(delta_text)
-                yield {
-                    "type": "delta",
-                    "delta": delta_text,
-                    "model": model,
-                }
+                    _merge_stream_tool_call_deltas(
+                        tool_calls,
+                        _extract_stream_tool_call_deltas(chunk_json),
+                    )
 
-            delta_text = content_filter.flush()
-            if delta_text:
-                if first_delta_ts is None:
-                    first_delta_ts = time.time()
+                    raw_delta_text = _extract_stream_delta(chunk_json)
+                    visible_text = marker_filter.feed(content_filter.feed(raw_delta_text))
+                    if visible_text:
+                        if first_delta_ts is None:
+                            first_delta_ts = time.time()
 
-                answer_parts.append(delta_text)
-                yield {
-                    "type": "delta",
-                    "delta": delta_text,
-                    "model": model,
-                }
-    except requests.Timeout as e:
-        raise LLMServiceError("llm request timed out: %s" % str(e))
-    except requests.RequestException as e:
-        raise LLMServiceError("llm request failed: %s" % str(e))
+                        answer_parts.append(visible_text)
+                        round_answer_parts.append(visible_text)
+                        yield {
+                            "type": "delta",
+                            "delta": visible_text,
+                            "model": model,
+                        }
+
+                    if marker_filter.done:
+                        break
+
+                if not marker_filter.done:
+                    visible_text = marker_filter.feed(content_filter.flush())
+                    if visible_text:
+                        if first_delta_ts is None:
+                            first_delta_ts = time.time()
+
+                        answer_parts.append(visible_text)
+                        round_answer_parts.append(visible_text)
+                        yield {
+                            "type": "delta",
+                            "delta": visible_text,
+                            "model": model,
+                        }
+
+                if not marker_filter.done:
+                    visible_text = marker_filter.flush()
+                    if visible_text:
+                        if first_delta_ts is None:
+                            first_delta_ts = time.time()
+
+                        answer_parts.append(visible_text)
+                        round_answer_parts.append(visible_text)
+                        yield {
+                            "type": "delta",
+                            "delta": visible_text,
+                            "model": model,
+                        }
+        except requests.Timeout as e:
+            raise LLMServiceError("llm request timed out: %s" % str(e))
+        except requests.RequestException as e:
+            raise LLMServiceError("llm request failed: %s" % str(e))
+
+        if marker_filter.done:
+            stopped_by_model = True
+            stop_reason = "done_marker"
+            break
+
+        if tool_calls:
+            stopped_by_model = True
+            stop_reason = "tool_calls"
+            break
+
+        if _is_stop_finish_reason(finish_reason):
+            stopped_by_model = True
+            stop_reason = "finish_reason:%s" % finish_reason
+            break
+
+        round_answer = "".join(round_answer_parts).strip()
+        if round_answer:
+            loop_messages.append({"role": "assistant", "content": round_answer})
+        loop_messages.append({"role": "user", "content": _LOOP_CONTINUE_PROMPT})
 
     answer = "".join(answer_parts).strip()
-    if not answer:
+    if not answer and not tool_calls:
         raise LLMServiceError("llm stream produced empty answer")
 
     yield {
         "type": "done",
         "answer": answer,
+        "message_content": answer,
+        "message": {
+            "content": answer,
+            "tool_calls": tool_calls,
+        },
+        "tool_calls": tool_calls,
         "model": model,
-        "usage": usage,
+        "usage": total_usage,
         "finish_reason": finish_reason,
         "latency_ms": int((time.time() - start_ts) * 1000),
         "ttft_ms": int((first_delta_ts - start_ts) * 1000) if first_delta_ts else None,
+        "rounds": rounds_used,
+        "max_rounds": max_rounds,
+        "stopped_by_model": stopped_by_model,
+        "stop_reason": stop_reason,
     }
 
 
@@ -391,6 +760,8 @@ def generate_answer(
     question: str,
     chunks: List[Dict[str, Any]],
     messages: List[Dict[str, str]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     question/chunks 暂时保留在签名里，后续可用于埋点、重试策略、provider routing。
@@ -398,14 +769,24 @@ def generate_answer(
     """
     _ = question
     _ = chunks
-    return generate_from_messages(messages)
+    return generate_from_messages(
+        messages,
+        tools=tools,
+        tool_choice=tool_choice,
+    )
 
 
 def stream_answer(
     question: str,
     chunks: List[Dict[str, Any]],
     messages: List[Dict[str, str]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: Optional[Any] = None,
 ) -> Generator[Dict[str, Any], None, None]:
     _ = question
     _ = chunks
-    yield from stream_from_messages(messages)
+    yield from stream_from_messages(
+        messages,
+        tools=tools,
+        tool_choice=tool_choice,
+    )

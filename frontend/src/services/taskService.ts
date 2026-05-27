@@ -1,12 +1,12 @@
-import { requestJson } from "./apiClient";
+import { requestEnvelope } from "./apiClient";
 import type { TaskListResponse, TaskRecord, TaskStatus } from "../types/task";
 
 export function getTaskStatus(baseUrl: string, taskId: string): Promise<TaskStatus> {
-  return requestJson<TaskStatus>(baseUrl, `/v1/tasks/${taskId}`);
+  return requestEnvelope<TaskStatus>(baseUrl, `/v1/tasks/${taskId}`);
 }
 
 export async function listTasks(baseUrl: string, limit = 50): Promise<TaskRecord[]> {
-  const payload = await requestJson<TaskListResponse>(
+  const payload = await requestEnvelope<TaskListResponse>(
     baseUrl,
     `/v1/tasks?limit=${encodeURIComponent(String(limit))}`,
   );

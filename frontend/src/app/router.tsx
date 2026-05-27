@@ -9,11 +9,11 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { route: "workspace", label: "Workspace", description: "问答工作台" },
-  { route: "documents", label: "Documents", description: "文档库" },
-  { route: "tasks", label: "Tasks", description: "任务队列" },
-  { route: "monitor", label: "Monitor", description: "系统监控" },
-  { route: "settings", label: "Settings", description: "检索配置" },
+  { route: "workspace", label: "问答", description: "基于已索引文档提问" },
+  { route: "documents", label: "文档", description: "上传、索引、删除" },
+  { route: "tasks", label: "任务", description: "查看处理进度" },
+  { route: "settings", label: "配置", description: "连接和检索参数" },
+  { route: "monitor", label: "状态", description: "基础服务状态" },
 ];
 
 function normalizeRoute(value: string | null | undefined): AppRoute {

@@ -231,6 +231,49 @@ def get_document_index_by_doc_id(doc_id):
 
 
 
+def delete_document_by_id(doc_id):
+    conn = get_mysql_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM citations WHERE doc_id=%s",
+                (doc_id,),
+            )
+            deleted_citations = cursor.rowcount
+
+            cursor.execute(
+                "DELETE FROM document_indexes WHERE doc_id=%s",
+                (doc_id,),
+            )
+            deleted_indexes = cursor.rowcount
+
+            cursor.execute(
+                "DELETE FROM doc_chunks WHERE doc_id=%s",
+                (doc_id,),
+            )
+            deleted_chunks = cursor.rowcount
+
+            cursor.execute(
+                "DELETE FROM documents WHERE id=%s",
+                (doc_id,),
+            )
+            deleted_documents = cursor.rowcount
+
+        conn.commit()
+        return {
+            "deleted_documents": deleted_documents,
+            "deleted_indexes": deleted_indexes,
+            "deleted_chunks": deleted_chunks,
+            "deleted_citations": deleted_citations,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _estimate_tokens(text):
     """
     简单估算：

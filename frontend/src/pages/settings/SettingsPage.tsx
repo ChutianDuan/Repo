@@ -41,15 +41,15 @@ export function SettingsPage({
   return (
     <div className="settings-page page-stack">
       <PageTitle
-        eyebrow="Configuration"
-        title="Settings"
-        description="配置连接、检索参数和流式输出。"
+        eyebrow="项目配置"
+        title="配置"
+        description="保持默认即可使用；需要时再调整连接地址、检索数量和流式输出。"
       />
 
-      <SectionCard title="Connection" description="配置 API 地址、用户和模型显示名称。">
+      <SectionCard title="连接" description="网关地址、用户和模型显示名称。">
         <div className="settings-grid">
           <label className="field">
-            <span>Gateway Base URL</span>
+            <span>网关地址</span>
             <input
               value={apiBaseUrl}
               onChange={(event) => onApiBaseUrlChange(event.target.value)}
@@ -57,20 +57,20 @@ export function SettingsPage({
             />
           </label>
           <label className="field">
-            <span>Current User ID</span>
+            <span>当前用户 ID</span>
             <input value={userId} onChange={(event) => onUserIdChange(event.target.value)} />
           </label>
           <label className="field">
-            <span>Model Name</span>
+            <span>模型名称</span>
             <input value={modelName} onChange={(event) => onModelNameChange(event.target.value)} />
           </label>
         </div>
       </SectionCard>
 
-      <SectionCard title="Retrieval" description="这些参数会随下一次提问提交。">
+      <SectionCard title="检索" description="这些参数会随下一次提问提交。">
         <div className="settings-grid">
           <label className="field">
-            <span>top_k</span>
+            <span>引用数</span>
             <input
               type="number"
               min={1}
@@ -80,11 +80,11 @@ export function SettingsPage({
             />
           </label>
           <label className="field">
-            <span>chunk_size</span>
+            <span>切片大小</span>
             <input value={chunkSize} onChange={(event) => onChunkSizeChange(event.target.value)} />
           </label>
           <label className="field">
-            <span>overlap</span>
+            <span>重叠</span>
             <input value={chunkOverlap} onChange={(event) => onChunkOverlapChange(event.target.value)} />
           </label>
         </div>
@@ -95,7 +95,7 @@ export function SettingsPage({
               checked={ragEnabled}
               onChange={(event) => onRagEnabledChange(event.target.checked)}
             />
-            <span>RAG retrieval enabled</span>
+            <span>使用知识库检索</span>
           </label>
           <label className="toggle-control">
             <input
@@ -103,7 +103,7 @@ export function SettingsPage({
               checked={streamingEnabled}
               onChange={(event) => onStreamingEnabledChange(event.target.checked)}
             />
-            <span>Streaming enabled</span>
+            <span>流式回答</span>
           </label>
         </div>
       </SectionCard>

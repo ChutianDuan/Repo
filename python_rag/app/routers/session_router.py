@@ -15,6 +15,7 @@ from python_rag.modules.sessions.service import (
     list_messages_service,
     update_session_message_status_service,
 )
+from python_rag.utils.common import api_response
 
 router = APIRouter(prefix="/internal/sessions", tags=["sessions"])
 
@@ -25,7 +26,7 @@ def create_session(req: CreateSessionRequest):
         user_id=req.user_id,
         title=req.title,
     )
-    return {"code": 0, "message": "ok", "data": data}
+    return api_response(data)
 
 
 @router.post("/{session_id}/messages", response_model=CreateMessageResponse)
@@ -36,13 +37,13 @@ def create_session_message(session_id: int, req: CreateMessageRequest):
         content=req.content,
         status=req.status,
     )
-    return {"code": 0, "message": "ok", "data": data}
+    return api_response(data)
 
 
 @router.get("/{session_id}/messages", response_model=ListMessagesResponse)
 def list_session_messages(session_id: int, limit: int = Query(100, ge=1, le=500)):
     data = list_messages_service(session_id=session_id, limit=limit)
-    return {"code": 0, "message": "ok", "data": data}
+    return api_response(data)
 
 
 @router.post("/{session_id}/messages/{message_id}/status", response_model=UpdateMessageStatusResponse)
@@ -56,4 +57,4 @@ def update_session_message_status(
         message_id=message_id,
         status=req.status,
     )
-    return {"code": 0, "message": "ok", "data": data}
+    return api_response(data)

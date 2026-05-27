@@ -7,6 +7,16 @@ export interface UploadDocumentResponse {
   status_url: string;
 }
 
+export interface DeletedDocumentResponse {
+  doc_id: number;
+  deleted: boolean;
+  deleted_files: string[];
+  deleted_documents: number;
+  deleted_indexes: number;
+  deleted_chunks: number;
+  deleted_citations: number;
+}
+
 export interface DocumentDetail {
   doc_id: number;
   user_id: number;

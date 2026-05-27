@@ -4,11 +4,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-if [ -f .env ]; then
-  set -a
-  source ./.env
-  set +a
-fi
+source "${REPO_ROOT}/scripts/env.sh"
+load_dotenv "${REPO_ROOT}/.env"
+activate_python_env "${RAG_API_ENV:-rag-api}" "${RAG_API_VENV:-${REPO_ROOT}/.venv}" "worker"
 
 WORKER_DISABLE_CUDA="${WORKER_DISABLE_CUDA:-${PYTHON_DISABLE_CUDA:-false}}"
 WORKER_CUDA_VISIBLE_DEVICES="${WORKER_CUDA_VISIBLE_DEVICES:-${PYTHON_CUDA_VISIBLE_DEVICES:-}}"

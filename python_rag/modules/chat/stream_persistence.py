@@ -1,31 +1,8 @@
 from typing import Any, Dict, List
 
+from python_rag.modules.chat.common import build_citations_from_hits
 from python_rag.modules.messages.repo import create_message
 from python_rag.modules.chat.repo import bulk_insert_citations
-
-
-def _normalize_hit_for_citation(hit: Dict[str, Any], rank: int) -> Dict[str, Any]:
-    citation_score = hit.get("rerank_score")
-    if citation_score is None:
-        citation_score = hit.get("score")
-
-    return {
-        "doc_id": hit.get("doc_id"),
-        "chunk_id": hit.get("chunk_id"),
-        "chunk_index": hit.get("chunk_index"),
-        "score": citation_score or 0,
-        "faiss_score": hit.get("faiss_score"),
-        "bm25_score": hit.get("bm25_score"),
-        "rrf_score": hit.get("rrf_score"),
-        "rerank_score": hit.get("rerank_score"),
-        "faiss_rank": hit.get("faiss_rank"),
-        "bm25_rank": hit.get("bm25_rank"),
-        "rrf_rank": hit.get("rrf_rank"),
-        "original_rank": hit.get("original_rank"),
-        "content": hit.get("content"),
-        "snippet": (hit.get("snippet") or hit.get("content") or "")[:300],
-        "rank": rank,
-    }
 
 
 def persist_stream_result(
@@ -59,11 +36,7 @@ def persist_stream_result(
         meta_json=meta,
     )
 
-    citation_rows = []
-    for idx, hit in enumerate(retrieval_hits, start=1):
-        citation_rows.append(
-            _normalize_hit_for_citation(hit, idx)
-        )
+    citation_rows = build_citations_from_hits(retrieval_hits)
 
     if citation_rows:
         bulk_insert_citations(

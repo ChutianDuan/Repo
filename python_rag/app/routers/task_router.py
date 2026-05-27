@@ -13,40 +13,41 @@ from python_rag.modules.tasks.service import (
     list_tasks,
     list_tasks_by_entity,
 )
+from python_rag.utils.common import ApiResponse, api_response
 
 router = APIRouter(prefix="/internal", tags=["tasks"])
 
 
-@router.post("/jobs/ping")
+@router.post("/jobs/ping", response_model=ApiResponse)
 def create_ping_job(req: SubmitPingTaskRequest):
     seconds = int(req.seconds)
     if seconds <= 0 or seconds > 60:
         raise AppError(ERR_INVALID_REQUEST, "seconds must be between 1 and 60")
-    return submit_ping_job(seconds)
+    return api_response(submit_ping_job(seconds))
 
 
-@router.post("/jobs/ingest")
+@router.post("/jobs/ingest", response_model=ApiResponse)
 def create_ingest_job(req: SubmitIngestTaskRequest):
     doc_id = int(req.doc_id)
     if doc_id <= 0:
         raise AppError(ERR_INVALID_REQUEST, "doc_id must be positive")
-    return submit_ingest_job(doc_id)
+    return api_response(submit_ingest_job(doc_id))
 
 
-@router.get("/tasks/{task_id}")
+@router.get("/tasks/{task_id}", response_model=ApiResponse)
 def query_task_status(task_id):
-    return get_task_status(task_id)
+    return api_response(get_task_status(task_id))
 
 
-@router.get("/tasks")
+@router.get("/tasks", response_model=ApiResponse)
 def query_task_list(
     limit: int = Query(20, ge=1, le=100),
     state: str = Query(None),
 ):
-    return list_tasks(limit=limit, state=state)
+    return api_response(list_tasks(limit=limit, state=state))
 
 
-@router.get("/entity/{entity_type}/{entity_id}")
+@router.get("/entity/{entity_type}/{entity_id}", response_model=ApiResponse)
 def query_tasks_by_entity(
     entity_type: str,
     entity_id: int,
@@ -54,4 +55,6 @@ def query_tasks_by_entity(
 ):
     if entity_id <= 0:
         raise AppError(ERR_INVALID_REQUEST, "entity_id must be positive")
-    return list_tasks_by_entity(entity_type=entity_type, entity_id=entity_id, limit=limit)
+    return api_response(
+        list_tasks_by_entity(entity_type=entity_type, entity_id=entity_id, limit=limit)
+    )

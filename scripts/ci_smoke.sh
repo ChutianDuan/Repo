@@ -12,12 +12,10 @@ fi
 python3 -m compileall python_rag
 python3 -m pytest tests
 
-bash -n scripts/init_db.sh
-bash -n scripts/start_api.sh
-bash -n scripts/start_worker.sh
-bash -n scripts/start_vllm.sh
-bash -n scripts/start_all.sh
-bash -n cpp_gateway/scripts/start_gateway.sh
+for script in scripts/*.sh cpp_gateway/scripts/*.sh; do
+  [ -f "$script" ] || continue
+  bash -n "$script"
+done
 
 if command -v npm >/dev/null 2>&1; then
   (cd frontend && npm run build)

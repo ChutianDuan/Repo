@@ -7,11 +7,9 @@ LOG_DIR="${REPO_ROOT}/logs"
 
 cd "$REPO_ROOT"
 
-if [ -f .env ]; then
-  set -a
-  source ./.env
-  set +a
-fi
+source "${REPO_ROOT}/scripts/env.sh"
+load_dotenv "${REPO_ROOT}/.env"
+configure_vcpkg_defaults
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
@@ -37,7 +35,7 @@ start_service() {
   fi
 
   echo "[START] ${name} -> ${log_file}"
-  nohup "$@" >"$log_file" 2>&1 &
+  setsid "$@" >"$log_file" 2>&1 < /dev/null &
   echo "$!" >"$pid_file"
 }
 
@@ -112,9 +110,12 @@ start_all() {
     start_service frontend bash -lc "cd frontend && npm run dev -- --host 0.0.0.0"
   fi
 
-  echo "[DONE] stack start requested"
+  echo "[DONE] app stack start requested"
   echo "       API:     http://127.0.0.1:${APP_PORT:-8000}/internal/health"
   echo "       Gateway: ${GATEWAY_BASE_URL:-http://127.0.0.1:8080}/health"
+  if [ "${START_FRONTEND}" = "true" ]; then
+    echo "       Frontend:http://127.0.0.1:${FRONTEND_PORT:-5173}"
+  fi
   echo "       E2E:     bash scripts/e2e_all.sh"
 }
 

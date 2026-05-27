@@ -1,9 +1,12 @@
 import math
+import json
 import time
 
 from python_rag.config import (
     CHAT_CANDIDATE_TOP_K,
     RERANK_ENABLE,
+    RETRIEVAL_CONTEXT_MAX_CHARS,
+    RETRIEVAL_CONTEXT_WINDOW,
     RETRIEVAL_RECALL_PROVIDER,
 )
 from python_rag.core.error_codes import ERR_INDEX_NOT_FOUND, ERR_INTERNAL_ERROR
@@ -47,6 +50,177 @@ def _build_snippet(text, max_len=180):
         return text
     return text[:max_len] + "..."
 
+
+def _load_mapping_by_chunk_index(mapping_path):
+    with open(mapping_path, "r", encoding="utf-8") as f:
+        mapping = json.load(f)
+    if not isinstance(mapping, list):
+        return {}
+
+    result = {}
+    for item in mapping:
+        if not isinstance(item, dict):
+            continue
+        chunk_index = item.get("chunk_index")
+        if chunk_index is None:
+            continue
+        try:
+            result[int(chunk_index)] = item
+        except Exception:
+            continue
+    return result
+
+
+def _truncate_context_text(text, max_chars):
+    text = (text or "").strip()
+    if not max_chars or max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "\n...[context truncated]"
+
+
+def _merge_context_ranges(hits, context_window):
+    ranges_by_doc_id = {}
+    for hit in hits:
+        doc_id = hit.get("doc_id")
+        chunk_index = hit.get("chunk_index")
+        try:
+            normalized_doc_id = int(doc_id)
+            center_index = int(chunk_index)
+        except Exception:
+            continue
+
+        ranges_by_doc_id.setdefault(normalized_doc_id, []).append(
+            {
+                "start": center_index - context_window,
+                "end": center_index + context_window,
+                "matched_indexes": {center_index},
+            }
+        )
+
+    merged_by_doc_id = {}
+    for doc_id, ranges in ranges_by_doc_id.items():
+        merged = []
+        for item in sorted(ranges, key=lambda value: (value["start"], value["end"])):
+            if not merged or item["start"] > merged[-1]["end"] + 1:
+                merged.append(
+                    {
+                        "start": item["start"],
+                        "end": item["end"],
+                        "matched_indexes": set(item["matched_indexes"]),
+                    }
+                )
+                continue
+
+            merged[-1]["end"] = max(merged[-1]["end"], item["end"])
+            merged[-1]["matched_indexes"].update(item["matched_indexes"])
+        merged_by_doc_id[doc_id] = merged
+
+    return merged_by_doc_id
+
+
+def _find_context_range(context_ranges, chunk_index):
+    for context_range in context_ranges:
+        if context_range["start"] <= chunk_index <= context_range["end"]:
+            return context_range
+    return None
+
+
+def _build_expanded_context_content(hit, mapping_by_chunk_index, context_range, max_chars):
+    if not context_range:
+        return None
+
+    parts = []
+    matched_indexes = context_range.get("matched_indexes", set())
+    for index in range(context_range["start"], context_range["end"] + 1):
+        item = mapping_by_chunk_index.get(index)
+        if not item:
+            continue
+
+        content = (item.get("content") or item.get("text") or "").strip()
+        if not content:
+            continue
+
+        label = "Matched" if index in matched_indexes else "Context"
+        parts.append("[{0} chunk_index={1}]\n{2}".format(label, index, content))
+
+    if not parts:
+        return None
+    return _truncate_context_text("\n\n".join(parts), max_chars)
+
+
+def _expand_hits_with_neighbor_context(hits, index_metas):
+    context_window = max(0, int(RETRIEVAL_CONTEXT_WINDOW or 0))
+    if context_window <= 0 or not hits:
+        return hits, {
+            "enabled": False,
+            "window": context_window,
+            "expanded_count": 0,
+            "failed_doc_ids": [],
+        }
+
+    max_chars = int(RETRIEVAL_CONTEXT_MAX_CHARS or 0)
+    mapping_paths_by_doc_id = {
+        int(item["doc_id"]): item["mapping_path"]
+        for item in index_metas
+        if item.get("doc_id") is not None and item.get("mapping_path")
+    }
+    merged_ranges_by_doc_id = _merge_context_ranges(hits, context_window)
+    mapping_cache = {}
+    failed_doc_ids = []
+    expanded_hits = []
+    expanded_count = 0
+
+    for hit in hits:
+        item = dict(hit)
+        doc_id = item.get("doc_id")
+        chunk_index = item.get("chunk_index")
+        try:
+            normalized_doc_id = int(doc_id)
+            normalized_chunk_index = int(chunk_index)
+        except Exception:
+            expanded_hits.append(item)
+            continue
+
+        if normalized_doc_id not in mapping_cache:
+            mapping_path = mapping_paths_by_doc_id.get(normalized_doc_id)
+            try:
+                mapping_cache[normalized_doc_id] = (
+                    _load_mapping_by_chunk_index(mapping_path) if mapping_path else {}
+                )
+            except Exception:
+                logger.exception(
+                    "failed to load retrieval context mapping doc_id=%s",
+                    normalized_doc_id,
+                )
+                mapping_cache[normalized_doc_id] = {}
+                failed_doc_ids.append(normalized_doc_id)
+
+        context_range = _find_context_range(
+            merged_ranges_by_doc_id.get(normalized_doc_id, []),
+            normalized_chunk_index,
+        )
+        expanded_content = _build_expanded_context_content(
+            item,
+            mapping_cache[normalized_doc_id],
+            context_range=context_range,
+            max_chars=max_chars,
+        )
+        if expanded_content and expanded_content != (item.get("content") or "").strip():
+            item["original_content"] = item.get("content", "")
+            item["content"] = expanded_content
+            item["snippet"] = _build_snippet(expanded_content)
+            item["context_window"] = context_window
+            expanded_count += 1
+
+        expanded_hits.append(item)
+
+    return expanded_hits, {
+        "enabled": True,
+        "window": context_window,
+        "max_chars": max_chars,
+        "expanded_count": expanded_count,
+        "failed_doc_ids": sorted(set(failed_doc_ids)),
+    }
 
 def _format_faiss_hit(item):
     content = item.get("content", "")
@@ -197,6 +371,7 @@ def search_in_documents(
     doc_bm25_ms = {}
     rerank_ms = None
     rerank_meta = {}
+    context_expansion_meta = {}
     resolved_doc_ids = []
     recall_provider = _normalize_recall_provider()
     use_faiss = recall_provider in ("faiss", "hybrid_rrf")
@@ -288,12 +463,17 @@ def search_in_documents(
         )
         rerank_ms = int((time.perf_counter() - rerank_started_at) * 1000)
 
-        retrieval_ms = int((time.perf_counter() - started_at) * 1000)
         eval_metrics = _evaluate_retrieval_hits(
             result_hits,
             relevant_chunk_ids=relevant_chunk_ids,
             relevant_chunk_indexes=relevant_chunk_indexes,
         )
+        result_hits, context_expansion_meta = _expand_hits_with_neighbor_context(
+            result_hits,
+            index_metas,
+        )
+
+        retrieval_ms = int((time.perf_counter() - started_at) * 1000)
         result = {
             "doc_id": resolved_doc_ids[0] if len(resolved_doc_ids) == 1 else None,
             "doc_ids": resolved_doc_ids,
@@ -318,6 +498,7 @@ def search_in_documents(
                 "bm25_candidate_count": len(bm25_hits),
                 "faiss_candidate_count": len(faiss_hits),
                 "rerank": rerank_meta,
+                "context_expansion": context_expansion_meta,
                 **eval_metrics,
             },
         }
@@ -350,6 +531,7 @@ def search_in_documents(
                     "doc_ids": resolved_doc_ids,
                     "doc_count": len(resolved_doc_ids),
                     "rerank": rerank_meta,
+                    "context_expansion": context_expansion_meta,
                     **eval_metrics,
                 },
             )
@@ -387,6 +569,7 @@ def search_in_documents(
                     "doc_ids": resolved_doc_ids,
                     "doc_count": len(resolved_doc_ids),
                     "rerank": rerank_meta,
+                    "context_expansion": context_expansion_meta,
                 },
             )
         raise

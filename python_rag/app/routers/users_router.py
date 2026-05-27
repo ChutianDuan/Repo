@@ -1,8 +1,13 @@
 from fastapi import APIRouter, Query
 
-from python_rag.core.error_codes import OK
 from python_rag.modules.user.service import create_user, get_latest_users
-from python_rag.utils.common import ApiResponse, CreateUserRequest, UserItem, UserListData
+from python_rag.utils.common import (
+    ApiResponse,
+    CreateUserRequest,
+    UserItem,
+    UserListData,
+    api_response,
+)
 
 router = APIRouter(prefix="/internal/users", tags=["users"])
 
@@ -10,11 +15,7 @@ router = APIRouter(prefix="/internal/users", tags=["users"])
 @router.post("", response_model=ApiResponse)
 def create_user_api(req: CreateUserRequest):
     row = create_user(req.name)
-    return ApiResponse(
-        code=OK,
-        message="ok",
-        data=UserItem(**row),
-    )
+    return api_response(UserItem(**row))
 
 
 @router.get("/latest", response_model=ApiResponse)
@@ -24,8 +25,4 @@ def latest_users_api(limit: int = Query(5, ge=1, le=50)):
         count=len(rows),
         items=[UserItem(**row) for row in rows],
     )
-    return ApiResponse(
-        code=OK,
-        message="ok",
-        data=data,
-    )
+    return api_response(data)

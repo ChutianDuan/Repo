@@ -83,7 +83,7 @@ export function stateTone(state: string | null | undefined): "ok" | "warn" | "er
   if (["FAILURE", "FAILED", "ERROR", "UNHEALTHY"].includes(normalized)) {
     return "error";
   }
-  if (["STARTED", "PROGRESS", "PROCESSING", "PENDING", "UPLOADED", "INGESTING"].includes(normalized)) {
+  if (["STARTED", "PROGRESS", "PROCESSING", "PENDING", "RUNNING", "UPLOADED", "INGESTING"].includes(normalized)) {
     return "warn";
   }
   return "muted";

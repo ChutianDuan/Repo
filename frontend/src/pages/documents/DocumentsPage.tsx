@@ -18,6 +18,7 @@ interface DocumentsPageProps {
   onSelectDocument: (docId: number) => void;
   onFileChange: (file: File | null) => void;
   onUpload: () => void;
+  onDeleteDocument: (docId: number) => void;
 }
 
 type DocumentFilter = "all" | "ready" | "processing" | "failed";
@@ -31,6 +32,7 @@ export function DocumentsPage({
   onSelectDocument,
   onFileChange,
   onUpload,
+  onDeleteDocument,
 }: DocumentsPageProps) {
   const [filter, setFilter] = useState<DocumentFilter>("all");
   const filteredDocuments = documents.filter((document) => {
@@ -57,9 +59,9 @@ export function DocumentsPage({
   return (
     <div className="documents-page page-stack">
       <PageTitle
-        eyebrow="Knowledge Base"
-        title="Documents"
-        description="上传文档归档到全局知识库，查看索引状态与向量化结果。"
+        eyebrow="文档索引"
+        title="笔记文档"
+        description="上传笔记文档，等待索引 READY 后即可在问答页检索；不需要的文档可以直接删除。"
         action={
           <UploadDocumentButton
             selectedFileName={selectedFileName}
@@ -71,16 +73,16 @@ export function DocumentsPage({
       />
 
       <div className="summary-grid">
-        <MetricCard label="Total Docs" value={formatNumber(documents.length)} />
-        <MetricCard label="Ready" value={formatNumber(readyCount)} tone="ok" />
-        <MetricCard label="Processing" value={formatNumber(processingCount)} tone="warn" />
-        <MetricCard label="Failed" value={formatNumber(failedCount)} tone={failedCount > 0 ? "error" : "default"} />
-        <MetricCard label="Total Chunks" value={formatNumber(totalChunks)} />
+        <MetricCard label="文档总数" value={formatNumber(documents.length)} />
+        <MetricCard label="可检索" value={formatNumber(readyCount)} tone="ok" />
+        <MetricCard label="处理中" value={formatNumber(processingCount)} tone="warn" />
+        <MetricCard label="失败" value={formatNumber(failedCount)} tone={failedCount > 0 ? "error" : "default"} />
+        <MetricCard label="切片数" value={formatNumber(totalChunks)} />
       </div>
 
       <SectionCard
-        title="Document Table"
-        description="按状态筛选全局文档。"
+        title="文档列表"
+        description="查看上传、索引和删除状态。"
         action={
           <div className="filter-tabs">
             {(["all", "ready", "processing", "failed"] as DocumentFilter[]).map((item) => (
@@ -100,7 +102,9 @@ export function DocumentsPage({
           <DocumentTable
             documents={filteredDocuments}
             selectedDocId={selectedDocId}
+            pending={pending}
             onSelectDocument={onSelectDocument}
+            onDeleteDocument={onDeleteDocument}
           />
           <DocumentDetailDrawer document={selectedDocument} tasks={selectedTasks} />
         </div>

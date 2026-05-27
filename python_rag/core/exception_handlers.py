@@ -6,10 +6,11 @@ from fastapi.responses import JSONResponse
 from python_rag.core.error_codes import ERR_INTERNAL_ERROR
 from python_rag.core.errors import AppError
 from python_rag.core.logger import logger
+from python_rag.utils.common import api_response
 
 
 def build_error_response(code: int, message: str, data=None):
-    return {"code": code, "message": message, "data": data}
+    return api_response(code=code, message=message, data=data)
 
 
 async def app_error_handler(request: Request, exc: AppError):

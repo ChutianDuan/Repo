@@ -56,6 +56,8 @@ CHAT_MAX_CHUNK_CHARS = int(os.getenv("CHAT_MAX_CHUNK_CHARS", "1000"))
 CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))
 CHAT_CANDIDATE_TOP_K = int(os.getenv("CHAT_CANDIDATE_TOP_K", "30"))
 CHAT_MIN_RETRIEVAL_SCORE = float(os.getenv("CHAT_MIN_RETRIEVAL_SCORE", "0.0"))
+RETRIEVAL_CONTEXT_WINDOW = int(os.getenv("RETRIEVAL_CONTEXT_WINDOW", "1"))
+RETRIEVAL_CONTEXT_MAX_CHARS = int(os.getenv("RETRIEVAL_CONTEXT_MAX_CHARS", "3000"))
 RETRIEVAL_RECALL_PROVIDER = os.getenv(
     "RETRIEVAL_RECALL_PROVIDER",
     "hybrid_rrf",
@@ -96,6 +98,15 @@ RERANK_MODEL = os.getenv(
 ).strip()
 RERANK_DEVICE = os.getenv("RERANK_DEVICE", EMBEDDING_DEVICE).strip()
 RERANK_BATCH_SIZE = int(os.getenv("RERANK_BATCH_SIZE", "16"))
+RERANK_LOCAL_FILES_ONLY = os.getenv(
+    "RERANK_LOCAL_FILES_ONLY",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+RERANK_CACHE_DIR = os.getenv("RERANK_CACHE_DIR", "").strip() or None
+RERANK_DOWNLOAD_IF_MISSING = os.getenv(
+    "RERANK_DOWNLOAD_IF_MISSING",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 RERANK_FALLBACK_TO_FAISS = os.getenv(
     "RERANK_FALLBACK_TO_FAISS",
     "true",
@@ -109,13 +120,32 @@ LLM_BASE_URL = os.getenv(
     "https://open.bigmodel.cn/api/paas/v4",
 ).rstrip("/")
 
-LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
+LLM_API_KEY = (
+    os.getenv("MIMO_API_KEY", "").strip()
+    or os.getenv("LLM_API_KEY", "").strip()
+)
 
 LLM_MODEL = os.getenv("LLM_MODEL", "glm-4.7-flash")
 
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "512"))
+LLM_TOKEN_LIMIT_FIELD = (
+    os.getenv("LLM_TOKEN_LIMIT_FIELD", "max_tokens").strip() or "max_tokens"
+)
+LLM_MAX_GENERATION_ROUNDS = int(os.getenv("LLM_MAX_GENERATION_ROUNDS", "3"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+
+
+def _optional_float_env(name: str):
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    return float(value)
+
+
+LLM_TOP_P = _optional_float_env("LLM_TOP_P")
+LLM_FREQUENCY_PENALTY = _optional_float_env("LLM_FREQUENCY_PENALTY")
+LLM_PRESENCE_PENALTY = _optional_float_env("LLM_PRESENCE_PENALTY")
 CHAT_ENABLE_MOCK_FALLBACK = os.getenv(
     "CHAT_ENABLE_MOCK_FALLBACK",
     "true",

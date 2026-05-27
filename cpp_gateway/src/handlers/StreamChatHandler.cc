@@ -104,6 +104,29 @@ bool StreamChatService::validateRequestBody(const Json::Value& body, std::string
     return true;
 }
 
+bool StreamChatService::validateAgentRequestBody(const Json::Value& body, std::string& error) {
+    if (!body.isObject()) {
+        error = "request body must be a json object";
+        return false;
+    }
+
+    if (!body.isMember("session_id") || !body["session_id"].isInt()) {
+        error = "missing or invalid session_id";
+        return false;
+    }
+    if (!body.isMember("message") || !body["message"].isString()
+        || body["message"].asString().empty()) {
+        error = "missing or invalid message";
+        return false;
+    }
+    if (body.isMember("trace_id") && !body["trace_id"].isString()) {
+        error = "invalid trace_id";
+        return false;
+    }
+
+    return true;
+}
+
 std::string StreamChatService::buildSseErrorEvent(const std::string& message) {
     Json::Value root;
     root["type"] = "error";
@@ -139,16 +162,18 @@ std::shared_ptr<StreamChatService::StreamSlotLease> StreamChatService::acquireSt
 
 void StreamChatService::startStreamResponse(
     const Json::Value& body,
+    std::string upstreamPath,
     std::shared_ptr<StreamSlotLease> streamSlot,
     std::function<void(const HttpResponsePtr&)>&& callback
 ) {
     auto resp = HttpResponse::newAsyncStreamResponse(
-        [client = pythonSSEClient_, body, streamSlot = std::move(streamSlot)](
+        [client = pythonSSEClient_, body, upstreamPath = std::move(upstreamPath), streamSlot = std::move(streamSlot)](
             ResponseStreamPtr stream
         ) mutable {
             std::thread([
                 client,
                 body,
+                upstreamPath,
                 stream = std::move(stream),
                 streamSlot = std::move(streamSlot)
             ]() mutable {
@@ -156,7 +181,7 @@ void StreamChatService::startStreamResponse(
                 auto sharedStream = std::shared_ptr<drogon::ResponseStream>(std::move(stream));
 
                 client->postStream(
-                    "/internal/chat/stream",
+                    upstreamPath,
                     body,
                     [sharedStream](const std::string& chunk) -> bool {
                         return sharedStream->send(chunk);
@@ -217,7 +242,12 @@ void StreamChatService::handleStream(
     }
 
     if (body.isMember("user_message_id") && body["user_message_id"].isInt()) {
-        startStreamResponse(body, std::move(streamSlot), std::move(callback));
+        startStreamResponse(
+            body,
+            "/internal/chat/stream",
+            std::move(streamSlot),
+            std::move(callback)
+        );
         return;
     }
 
@@ -254,7 +284,52 @@ void StreamChatService::handleStream(
             Json::Value nextBody = body;
             nextBody["user_message_id"] = (*msgJsonPtr)["data"]["message_id"].asInt();
             nextBody.removeMember("content");
-            startStreamResponse(nextBody, std::move(streamSlot), std::move(*sharedCallback));
+            startStreamResponse(
+                nextBody,
+                "/internal/chat/stream",
+                std::move(streamSlot),
+                std::move(*sharedCallback)
+            );
         }
+    );
+}
+
+void StreamChatService::handleAgentStream(
+    const HttpRequestPtr& req,
+    std::function<void(const HttpResponsePtr&)>&& callback
+) {
+    auto jsonPtr = req->getJsonObject();
+    if (!jsonPtr) {
+        callback(buildJsonErrorResponse(
+            4001,
+            "request body must be valid json",
+            k400BadRequest
+        ));
+        return;
+    }
+
+    Json::Value body = *jsonPtr;
+    std::string error;
+    if (!validateAgentRequestBody(body, error)) {
+        callback(buildJsonErrorResponse(4002, error, k400BadRequest));
+        return;
+    }
+
+    auto streamSlot = acquireStreamSlot();
+    if (!streamSlot) {
+        callback(buildJsonErrorResponse(
+            4290,
+            "too many active streams",
+            k429TooManyRequests
+        ));
+        return;
+    }
+
+    body["stream"] = true;
+    startStreamResponse(
+        body,
+        "/api/agent/chat/stream",
+        std::move(streamSlot),
+        std::move(callback)
     );
 }

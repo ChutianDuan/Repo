@@ -42,12 +42,12 @@ export function TasksPage({ tasks, selectedTaskId, taskListError, onSelectTask, 
   return (
     <div className="tasks-page page-stack">
       <PageTitle
-        eyebrow="Pipeline"
-        title="Tasks"
-        description="观察 ingest、embedding、indexing、chat 任务的状态、进度和错误原因。"
+        eyebrow="处理进度"
+        title="任务"
+        description="查看文档索引和问答任务是否完成。"
         action={
           <button type="button" onClick={onRefreshTasks}>
-            Refresh
+            刷新
           </button>
         }
       />
@@ -55,15 +55,15 @@ export function TasksPage({ tasks, selectedTaskId, taskListError, onSelectTask, 
       {taskListError ? <div className="notice-box">{taskListError}</div> : null}
 
       <div className="summary-grid">
-        <MetricCard label="Total Tasks" value={formatNumber(tasks.length)} />
-        <MetricCard label="Running" value={formatNumber(runningCount)} tone="warn" />
-        <MetricCard label="Success" value={formatNumber(successCount)} tone="ok" />
-        <MetricCard label="Failed" value={formatNumber(failedCount)} tone={failedCount > 0 ? "error" : "default"} />
+        <MetricCard label="任务总数" value={formatNumber(tasks.length)} />
+        <MetricCard label="运行中" value={formatNumber(runningCount)} tone="warn" />
+        <MetricCard label="成功" value={formatNumber(successCount)} tone="ok" />
+        <MetricCard label="失败" value={formatNumber(failedCount)} tone={failedCount > 0 ? "error" : "default"} />
       </div>
 
       <SectionCard
-        title="Task Table"
-        description="按类型和状态筛选任务。"
+        title="任务列表"
+        description="按类型或状态查看处理结果。"
         action={
           <div className="filter-tabs">
             {(["all", "ingest", "chat", "running", "failed"] as TaskFilter[]).map((item) => (

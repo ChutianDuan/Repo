@@ -66,5 +66,8 @@ export async function requestEnvelope<T>(
   init?: RequestInit,
 ): Promise<T> {
   const payload = await requestJson<ApiEnvelope<T>>(baseUrl, path, init);
+  if (payload.code !== 0) {
+    throw new Error(payload.message || `api error ${payload.code}`);
+  }
   return payload.data;
 }

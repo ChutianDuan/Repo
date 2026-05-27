@@ -116,13 +116,15 @@ Repo/
 cp .env.example .env
 ```
 
-常用配置项包括 MySQL、Redis、Celery、存储目录、embedding、rerank 和 LLM 地址。默认 LLM 走 OpenAI-compatible 接口，可指向本地 vLLM：
+常用配置项包括 MySQL、Redis、Celery、存储目录、embedding、rerank 和 LLM 地址。默认 LLM 走远端 OpenAI-compatible API，不启动本地 vLLM：
 
 ```bash
+LLM_RUNTIME=api
 LLM_ENABLE=true
 LLM_PROVIDER=openai_compatible
-LLM_BASE_URL=http://127.0.0.1:9000/v1
-LLM_MODEL=local-llm
+LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+MIMO_API_KEY=your-api-key
+LLM_MODEL=glm-4.7-flash
 
 EMBEDDING_PROVIDER=sentence_transformers
 EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
@@ -140,11 +142,21 @@ CHAT_ENABLE_MOCK_FALLBACK=true
 
 ### 2. 安装 Python 依赖
 
+默认只需要 `rag-api` 环境运行 FastAPI、Celery Worker、embedding、rerank 和测试。只有明确选择本地 vLLM 时，才需要额外准备 `vllm-qwen3` 环境。详细安装、启动、代理和流式排障说明见 [运行环境与排障手册](docs/environment.md)。
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+conda create -n rag-api python=3.11
+conda activate rag-api
 pip install -r python_rag/requirements.txt
+pip install -r python_rag/requirements-dev.txt
+
+# 可选：仅在 LLM_RUNTIME=local_vllm 时需要
+conda create -n vllm-qwen3 python=3.11
+conda activate vllm-qwen3
+pip install -r python_rag/requirements-vllm.txt
 ```
+
+如果不用 conda，也可以继续使用仓库内 `.venv`，启动脚本会优先复用当前激活的环境。
 
 ### 3. 初始化数据库
 
@@ -173,54 +185,60 @@ cmake -S cpp_gateway \
 cmake --build cpp_gateway/build -j
 ```
 
-如果使用 vcpkg，可额外传入：
+项目会优先使用 `CMAKE_TOOLCHAIN_FILE` / `VCPKG_ROOT`，也会从 `vcpkg` 命令、`$HOME/vcpkg`、`/opt/vcpkg`、`/usr/local/vcpkg` 自动发现 vcpkg toolchain。需要指定自定义 vcpkg 时，可额外传入：
 
 ```bash
 -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
-### 5. 一键启动后端链路
+### 5. 启动服务
 
-MySQL / Redis 启动后，可以用脚本统一拉起 FastAPI、Celery Worker 和 C++ Gateway：
+默认 LLM 通过远端 API 调用，不需要启动本地 vLLM。可以先执行一次 API 连通性检查：
 
 ```bash
+bash scripts/start_vllm.sh
+```
+
+该脚本在 `LLM_RUNTIME=api` 时只检查 `${LLM_BASE_URL}/models`，不会启动本地模型。随后启动应用栈，包含 FastAPI、Celery Worker、C++ Gateway；可选启动前端。
+
+```bash
+# 后端应用栈
 bash scripts/start_all.sh
+
+# 后端应用栈 + 前端 Vite dev server
+START_FRONTEND=true bash scripts/start_all.sh
+
+# 查看应用栈状态
 bash scripts/start_all.sh status
+
+# 停止应用栈
+bash scripts/start_all.sh stop
 ```
 
 常用开关：
 
 ```bash
-# 启动前先初始化数据库
+# 启动应用栈前先初始化数据库
 START_INIT_DB=true bash scripts/start_all.sh
-
-# 同时启动前端 Vite dev server
-START_FRONTEND=true bash scripts/start_all.sh
-
-# 停止后台服务
-bash scripts/start_all.sh stop
 ```
 
-如果 `cpp_gateway/build/cpp_gateway` 不存在，脚本会尝试用 CMake 编译 Gateway；本机仍需要 Drogon、CURL、JsonCpp 以及 MySQL / Redis 相关 Drogon 依赖。使用 vcpkg 时可以通过 `CMAKE_TOOLCHAIN_FILE` / `Drogon_DIR` 环境变量传给脚本。
+如果 `cpp_gateway/build/cpp_gateway` 不存在，脚本会尝试用 CMake 编译 Gateway；本机仍需要 Drogon、CURL、JsonCpp 以及 MySQL / Redis 相关 Drogon 依赖。使用 vcpkg 时脚本会自动发现并导出 `CMAKE_TOOLCHAIN_FILE`，也可以通过 `CMAKE_TOOLCHAIN_FILE` / `Drogon_DIR` 环境变量覆盖。
 
-### 5b. 手动启动后端链路
+### 6. 手动启动后端链路
 
-建议每个服务单独开一个终端：
+需要逐个服务排障时，可以每个服务单独开一个终端。
 
 ```bash
 # 1. MySQL / Redis 先启动，并初始化数据库
 bash scripts/init_db.sh
 
-# 2. 可选：启动 vLLM
-source .venv/bin/activate
+# 2. 启动 vLLM，默认使用 vllm-qwen3
 bash scripts/start_vllm.sh
 
-# 3. 启动 FastAPI
-source .venv/bin/activate
+# 3. 启动 FastAPI，默认使用 rag-api
 bash scripts/start_api.sh
 
-# 4. 启动 Celery Worker
-source .venv/bin/activate
+# 4. 启动 Celery Worker，默认使用 rag-api
 bash scripts/start_worker.sh
 
 # 5. 启动 C++ Gateway
@@ -236,7 +254,7 @@ curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/v1/monitor/overview
 ```
 
-### 6. 启动前端工作台
+### 7. 启动前端工作台
 
 ```bash
 cd frontend
@@ -289,6 +307,8 @@ bash scripts/e2e_chat.sh ./day7_demo.md
 
 默认检索链路为 `RETRIEVAL_RECALL_PROVIDER=hybrid_rrf`：每个 READY 文档分别取 BM25 和 FAISS 候选，按 RRF 公式 `1 / (RRF_K + rank)` 融合后，再进入 CrossEncoder rerank。可将该变量设为 `bm25` 或 `faiss` 做单路召回对照实验。
 
+CrossEncoder rerank 支持缓存优先加载：`RERANK_LOCAL_FILES_ONLY=true` 时会先从 Hugging Face cache 查找 `RERANK_MODEL`；如果缓存缺失且 `RERANK_DOWNLOAD_IF_MISSING=true`，会先下载 snapshot 到 `RERANK_CACHE_DIR` 或默认 HF cache，再从本地 snapshot 加载。
+
 如果切换 embedding 模型，历史文档需要重新 ingest，否则 FAISS 索引维度或向量空间可能不一致。BM25 召回复用现有 chunk mapping，不需要额外索引文件。
 
 ## 前端页面
@@ -325,6 +345,7 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 
 ## 延伸文档
 
+- [运行环境与排障手册](docs/environment.md)：说明 `rag-api` 与 `vllm-qwen3` 两个 Python 环境的边界、启动方式、代理影响、SSE 流式链路和常见排障。
 - [Embedding 微调实验](docs/embedding_finetune.md)：记录 KALM embedding 的 LoRA triplet 微调流程、指标和结论。
 - [RAG ingest/retrieval 容量说明](docs/rag_ingest_retrieval_capacity.md)：整理 ingest、检索和资源容量相关设计。
 - [性能测试指南](docs/performance_test_guide.md)：提供部署后的性能验证、压测流程和留档模板。
@@ -332,24 +353,15 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - [监控指标说明](docs/monitoring_metrics.md)：说明解析耗时、FAISS 耗时、TTFT、Celery 并发和检索质量指标。
 - [代码审核与完成度评估](docs/code_review_completion_assessment.md)：记录当前 Gateway / `python_rag` 审核结果、完成度和后续路线图。
 
-## 当前限制
-
-- Gateway 的 MySQL / Redis 连接还没有完全收敛到根目录 `.env`，目前仍依赖 `cpp_gateway/config.json`。
-- `Monitor` 的历史趋势目前是前端近端采样，聚合窗口依赖 `request_metrics` 最近样本。
-- GPU 监控依赖 `nvidia-smi`，非 NVIDIA 环境会返回空数组。
-- 当前仍是单文档单 FAISS 索引文件，BM25 也复用单文档 mapping 做 fan-out 召回；文档规模继续增大后需要索引缓存、知识库级稀疏/向量索引、分片索引或向量数据库。
-- SSE 流式接口形态完整，真实 LLM 路径已走 OpenAI-compatible stream；`no_context` 和 mock fallback 会在本地按字符块输出。Gateway 已用 `GATEWAY_MAX_STREAMS` 限制并发流数量，后续可继续把当前的一请求一线程代理方式改成受控线程池或异步流式客户端。
-- 异步 chat、Celery chat runtime 和流式 chat 已复用同一套 `user_message_id` 校验，要求消息属于当前 session 且角色为 `user`。
-- PDF 仅支持可提取文本的电子文档，扫描件 OCR 尚未接入。
-- Gateway 已支持 API Key 鉴权和 Redis 请求限流；租户隔离和审计日志尚未接入。
-
 ## 后续方向
 
 - 提供 Docker Compose，一键启动 MySQL、Redis、FastAPI、Celery Worker 和 C++ Gateway。
 - 扩展自动化测试覆盖更多失败路径、鉴权限流边界、API contract 和检索评估数据集。
-- Gateway 增加 request id 透传、审计日志和更完整的统一错误响应。
+- 统一 Gateway 配置入口，继续收敛 MySQL、Redis、监听端口和安全配置。
+- Gateway 增加 request id 透传、租户隔离、审计日志和更完整的统一错误响应。
 - 继续完善流式 TTFT、客户端断连、上游异常和高并发 SSE 代理处理。
 - 将全局知识库检索从多 FAISS 文件 fan-out 优化为知识库级索引、分片索引或向量数据库。
+- 为扫描件 PDF 接入 OCR 解析链路。
 - 将 embedding LoRA 接入方式标准化，支持合并模型路径或 adapter 加载。
 
 ## 推荐验证命令

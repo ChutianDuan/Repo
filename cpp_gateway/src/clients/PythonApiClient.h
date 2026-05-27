@@ -28,6 +28,11 @@ public:
         std::function<void(const drogon::HttpResponsePtr&)>&& callback
     );
 
+    void forwardDelete(
+        const std::string& path,
+        std::function<void(const drogon::HttpResponsePtr&)>&& callback
+    );
+
     void forwardJsonPost(
         const std::string& path,
         const Json::Value& body,

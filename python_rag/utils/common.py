@@ -1,10 +1,24 @@
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from python_rag.core.error_codes import OK
+
+
+def api_response(
+    data: Any = None,
+    message: str = "ok",
+    code: int = OK,
+) -> Dict[str, Any]:
+    return {
+        "code": code,
+        "message": message,
+        "data": data,
+    }
+
 
 class ApiResponse(BaseModel):
-    code: int = 0
+    code: int = OK
     message: str = "ok"
     data: Optional[Any] = None
 

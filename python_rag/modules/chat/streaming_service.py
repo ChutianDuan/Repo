@@ -1,18 +1,22 @@
 import logging
 import time
-from typing import Any, Dict, Generator, List, Optional
+from typing import Dict, Generator, List, Optional
 
 from python_rag.modules.messages.repo import (
     list_recent_messages_by_session_id,
     update_message_status,
 )
 
-from python_rag.modules.retrieval.service import search_in_documents
 from python_rag.modules.retrieval.context_assembler import assemble_context
 
 from python_rag.modules.llm.service import LLMServiceError, stream_answer
-from python_rag.modules.llm.mock_service import build_mock_answer
 
+from python_rag.modules.chat.common import (
+    NO_CONTEXT_ANSWER,
+    chunks_to_dicts as _chunks_to_dicts,
+    generate_mock_answer as _generate_mock_answer,
+    retrieve_hits as _retrieve_hits,
+)
 from python_rag.modules.chat.stream_event_builder import (
     build_delta_event,
     build_done_event,
@@ -40,36 +44,6 @@ from python_rag.modules.monitor.request_metrics import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _retrieve_hits(question: str, doc_id: Optional[int], doc_ids: Optional[List[int]], top_k: int) -> Dict[str, Any]:
-    result = search_in_documents(
-        query=question,
-        doc_id=doc_id,
-        doc_ids=doc_ids,
-        top_k=top_k,
-        track_metric=False,
-    )
-    return result or {}
-
-
-def _chunk_to_dict(chunk: Any) -> Dict[str, Any]:
-    if isinstance(chunk, dict):
-        return chunk
-    if hasattr(chunk, "__dict__"):
-        return dict(chunk.__dict__)
-    return {"content": str(chunk)}
-
-
-def _chunks_to_dicts(chunks: List[Any]) -> List[Dict[str, Any]]:
-    return [_chunk_to_dict(chunk) for chunk in chunks]
-
-
-def _generate_mock_answer(question: str, context_chunks: List[Dict[str, Any]]) -> str:
-    return build_mock_answer(
-        user_query=question,
-        hits=context_chunks,
-    )
 
 
 def _chunk_text(text: str, chunk_size: int) -> List[str]:
@@ -201,9 +175,7 @@ def stream_chat_for_message(
 
             if context_mode == "no_context":
                 answer_source = "no_context"
-                for delta_text in _stream_fallback_answer(
-                    "根据当前检索内容无法确定该问题的答案，因为没有检索到可用文档片段。"
-                ):
+                for delta_text in _stream_fallback_answer(NO_CONTEXT_ANSWER):
                     stream_index += 1
                     answer_parts.append(delta_text)
                     if ttft_ms is None:

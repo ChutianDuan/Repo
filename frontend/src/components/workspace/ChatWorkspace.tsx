@@ -67,8 +67,8 @@ export function ChatWorkspace({
     <section className="chat-workspace">
       <div className="conversation-header">
         <div>
-          <p className="eyebrow">Current Conversation</p>
-          <h1>{session?.title || "未创建会话"}</h1>
+          <p className="eyebrow">RAG 问答</p>
+          <h1>{session?.title || "先创建会话"}</h1>
           <p>{documentLabel}</p>
         </div>
         <div className="conversation-header__actions">

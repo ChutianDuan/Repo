@@ -22,6 +22,7 @@ from python_rag.modules.ingest.embedding_service import (
     get_embedding_model_name,
 )
 from python_rag.modules.ingest.chunking_service import (
+    chunk_text_by_title,
     extract_text_from_document,
     validate_supported_document_filename,
 )
@@ -31,7 +32,6 @@ from python_rag.modules.monitor.request_metrics import (
     record_request_metric,
 )
 from python_rag.modules.retrieval.faiss_service import build_doc_faiss_index
-from python_rag.utils.text_chunker import simple_chunk_text
 
 
 def _emit_progress(celery_task_id, state, progress, meta, progress_callback=None, error=None):
@@ -117,8 +117,9 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         )
 
         chunking_started_at = time.perf_counter()
-        chunks = simple_chunk_text(
+        chunks = chunk_text_by_title(
             text=text,
+            filename=doc.get("filename") or "",
             chunk_size=INGEST_CHUNK_SIZE,
             overlap=INGEST_CHUNK_OVERLAP,
         )

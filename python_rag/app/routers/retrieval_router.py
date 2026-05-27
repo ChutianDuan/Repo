@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from python_rag.modules.retrieval.service import search_in_documents
 from python_rag.modules.retrieval.schemas import SearchRequest, SearchResponse
+from python_rag.utils.common import api_response
 
 router = APIRouter(prefix="/internal", tags=["retrieval"])
 
@@ -17,8 +18,4 @@ def internal_search(req: SearchRequest):
         relevant_chunk_ids=req.relevant_chunk_ids,
         relevant_chunk_indexes=req.relevant_chunk_indexes,
     )
-    return {
-        "code": 0,
-        "message": "ok",
-        "data": result,
-    }
+    return api_response(result)

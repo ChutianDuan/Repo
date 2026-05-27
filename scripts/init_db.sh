@@ -4,11 +4,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-if [ -f .env ]; then
-  set -a
-  source ./.env
-  set +a
-fi
+source "${REPO_ROOT}/scripts/env.sh"
+load_dotenv "${REPO_ROOT}/.env"
 
 MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
@@ -67,6 +64,11 @@ fi
 mysql_cmd "${MYSQL_USER}" "${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < db/init.sql
 
 for migration in db/*_schema_upgrade.sql; do
+  [ -f "${migration}" ] || continue
+  mysql_cmd "${MYSQL_USER}" "${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${migration}"
+done
+
+for migration in db/migrations/*.sql; do
   [ -f "${migration}" ] || continue
   mysql_cmd "${MYSQL_USER}" "${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${migration}"
 done

@@ -1,6 +1,7 @@
 import type { ChatMessage } from "../../types/message";
 import type { Session } from "../../types/session";
 import type { TaskStatus } from "../../types/task";
+import { AgentTracePanel, type AgentTraceRow } from "../../components/AgentTracePanel";
 import { ChatWorkspace } from "../../components/workspace/ChatWorkspace";
 import { ReferencePanel } from "../../components/workspace/ReferencePanel";
 
@@ -17,6 +18,7 @@ interface WorkspacePageProps {
   error: string | null;
   ingestTask: TaskStatus | null;
   chatTask: TaskStatus | null;
+  agentTraceRows: AgentTraceRow[];
   onCreateSession: () => void;
   onRefreshMessages: () => void;
   onQuestionChange: (value: string) => void;
@@ -49,6 +51,7 @@ export function WorkspacePage({
   error,
   ingestTask,
   chatTask,
+  agentTraceRows,
   onCreateSession,
   onRefreshMessages,
   onQuestionChange,
@@ -59,7 +62,7 @@ export function WorkspacePage({
   onAsk,
 }: WorkspacePageProps) {
   const assistantMessage = latestAssistantMessage(messages);
-  const documentLabel = `Global KB · ${readyDocumentCount} ready docs`;
+  const documentLabel = `${readyDocumentCount} 份文档可检索`;
   const documentStatus = readyDocumentCount > 0 ? "READY" : "EMPTY";
   const canAsk = Boolean(session);
 
@@ -81,10 +84,10 @@ export function WorkspacePage({
         toolbar={
           <>
             <button type="button" className="button-secondary" onClick={onCreateSession} disabled={pending !== null}>
-              {pending === "session" ? "Creating" : session ? "New Session" : "Create Session"}
+              {pending === "session" ? "创建中" : session ? "新会话" : "创建会话"}
             </button>
             <button type="button" className="button-ghost" onClick={onRefreshMessages} disabled={pending !== null || !session}>
-              Refresh
+              刷新
             </button>
           </>
         }
@@ -95,11 +98,14 @@ export function WorkspacePage({
         onUpload={onUpload}
         onAsk={onAsk}
       />
-      <ReferencePanel
-        citations={assistantMessage?.citations || []}
-        chatTask={chatTask}
-        ingestTask={ingestTask}
-      />
+      <div className="workspace-side-panel">
+        <AgentTracePanel rows={agentTraceRows} />
+        <ReferencePanel
+          citations={assistantMessage?.citations || []}
+          chatTask={chatTask}
+          ingestTask={ingestTask}
+        />
+      </div>
     </div>
   );
 }

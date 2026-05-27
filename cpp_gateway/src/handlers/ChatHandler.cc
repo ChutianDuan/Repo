@@ -9,10 +9,18 @@ HttpResponsePtr makeGatewayErrorResponse(HttpStatusCode status, const std::strin
     Json::Value result(Json::objectValue);
     result["code"] = static_cast<int>(status);
     result["message"] = message;
+    result["data"] = Json::nullValue;
 
     auto resp = HttpResponse::newHttpJsonResponse(result);
     resp->setStatusCode(status);
     return resp;
+}
+
+const Json::Value& responseDataOrSelf(const Json::Value& json) {
+    if (json.isObject() && json.isMember("data") && !json["data"].isNull()) {
+        return json["data"];
+    }
+    return json;
 }
 }  // namespace
 
@@ -112,15 +120,16 @@ void ChatService::createUserMessageAndSubmitChat(
                     }
 
                     auto chatJson = *chatJsonPtr;
+                    const Json::Value& chatData = responseDataOrSelf(chatJson);
 
                     Json::Value result;
                     result["code"] = 0;
                     result["message"] = "ok";
                     result["data"]["message_id"] = userMessageId;
-                    result["data"]["task_id"] = chatJson["task_id"];
-                    result["data"]["db_task_id"] = chatJson["db_task_id"];
-                    result["data"]["state"] = chatJson["state"];
-                    result["data"]["status_url"] = chatJson["status_url"];
+                    result["data"]["task_id"] = chatData["task_id"];
+                    result["data"]["db_task_id"] = chatData["db_task_id"];
+                    result["data"]["state"] = chatData["state"];
+                    result["data"]["status_url"] = chatData["status_url"];
 
                     auto resp = HttpResponse::newHttpJsonResponse(result);
                     (*sharedCallback)(resp);

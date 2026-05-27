@@ -2,10 +2,13 @@ import csv
 import io
 import json
 import os
-from typing import Any, Iterable, List, Sequence
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Sequence
 
 from python_rag.core.error_codes import ERR_CELERY_ERROR
 from python_rag.core.errors import AppError
+from python_rag.utils.text_chunker import normalize_text, simple_chunk_text
 
 
 SUPPORTED_DOCUMENT_EXTENSIONS = (
@@ -19,6 +22,25 @@ SUPPORTED_DOCUMENT_EXTENSIONS = (
 )
 
 PLAIN_TEXT_DOCUMENT_EXTENSIONS = {"md", "txt"}
+TITLE_CHUNK_DOCUMENT_EXTENSIONS = {"md", "docx", "pdf"}
+
+_MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_SETEXT_HEADING_RE = re.compile(r"^\s*(=+|-+)\s*$")
+_NUMBERED_HEADING_RE = re.compile(
+    r"^((?:\d+(?:\.\d+)*[.)]?|[A-Z][.)]))\s+(.+)$"
+)
+_CJK_HEADING_RE = re.compile(r"^(第[一二三四五六七八九十百千万\d]+[章节篇部分]|[一二三四五六七八九十]+[、.])\s*(.+)$")
+_FENCED_CODE_RE = re.compile(r"^\s*(```|~~~)")
+_FENCED_CODE_BLOCK_RE = re.compile(
+    r"(^|\n)\s*(```|~~~).*?\n.*?\n\s*\2\s*(?=\n|$)",
+    re.DOTALL,
+)
+
+
+@dataclass
+class Chunk:
+    content: str = ""
+    metadata: Dict[str, str] = field(default_factory=dict)
 
 
 def get_document_extension(filename: str) -> str:
@@ -202,7 +224,7 @@ def _extract_text_from_pdf(path: str) -> str:
         except Exception:
             text = ""
         if text:
-            page_texts.append(f"[Page {page_index}]\n{text}")
+            page_texts.append(f"<!-- Page {page_index} -->\n{text}")
 
     if not page_texts:
         raise AppError(
@@ -232,6 +254,19 @@ def _iter_docx_table_texts(document) -> Iterable[str]:
             yield table_text
 
 
+def _docx_heading_level(paragraph) -> int | None:
+    style = getattr(paragraph, "style", None)
+    style_name = (getattr(style, "name", "") or "").strip().lower()
+    style_id = (getattr(style, "style_id", "") or "").strip().lower()
+
+    for value in (style_name, style_id):
+        match = re.search(r"(?:heading|标题)\s*(\d+)", value)
+        if match:
+            return max(1, min(6, int(match.group(1))))
+
+    return None
+
+
 def _extract_text_from_docx(path: str) -> str:
     try:
         from docx import Document
@@ -249,7 +284,13 @@ def _extract_text_from_docx(path: str) -> str:
     parts: List[str] = []
     for paragraph in document.paragraphs:
         text = (paragraph.text or "").strip()
-        if text:
+        if not text:
+            continue
+
+        heading_level = _docx_heading_level(paragraph)
+        if heading_level:
+            parts.append("{0} {1}".format("#" * heading_level, text))
+        else:
             parts.append(text)
 
     parts.extend(_iter_docx_table_texts(document))
@@ -308,3 +349,298 @@ def extract_text_from_document(path: str, filename: str) -> str:
         "unsupported document format; currently supported: %s"
         % supported_document_extensions_text(),
     )
+
+
+def _is_page_marker(line: str) -> bool:
+    stripped = line.strip()
+    return bool(re.fullmatch(r"(?:<!-- Page \d+ -->|\[Page \d+\]|Page\s+\d+)", stripped))
+
+
+def _has_section_content(lines: Sequence[str]) -> bool:
+    return any(line.strip() and not _is_page_marker(line) for line in lines)
+
+
+def _is_probable_heading(line: str, ext: str) -> tuple[int, str] | None:
+    stripped = line.strip()
+    if not stripped or _is_page_marker(stripped):
+        return None
+
+    markdown_match = _MARKDOWN_HEADING_RE.match(stripped)
+    if markdown_match:
+        title = markdown_match.group(2).strip()
+        return len(markdown_match.group(1)), title
+
+    if ext == "md":
+        return None
+
+    numbered_match = _NUMBERED_HEADING_RE.match(stripped)
+    if numbered_match:
+        marker = numbered_match.group(1)
+        level = marker.count(".") + 1 if "." in marker else 1
+        return max(1, min(6, level)), stripped
+
+    cjk_match = _CJK_HEADING_RE.match(stripped)
+    if cjk_match:
+        marker = cjk_match.group(1)
+        level = 1 if marker.startswith("第") else 2
+        return level, stripped
+
+    if len(stripped) <= 60 and stripped.endswith((":", "：")):
+        return 3, stripped.rstrip(":：").strip()
+
+    return None
+
+
+def _render_heading(level: int, title: str) -> str:
+    return "{0} {1}".format("#" * max(1, min(6, level)), title.strip())
+
+
+def _is_fenced_code_marker(line: str) -> str | None:
+    match = _FENCED_CODE_RE.match(line)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _length_excluding_code(text: str) -> int:
+    total_length = 0
+    last_end = 0
+    for match in _FENCED_CODE_BLOCK_RE.finditer(text):
+        start, end = match.span()
+        total_length += len(text[last_end:start])
+        last_end = end
+    total_length += len(text[last_end:])
+    return total_length
+
+
+def _find_best_split_point(lines: Sequence[str]) -> int:
+    if len(lines) <= 1:
+        return -1
+
+    for index in range(len(lines) - 2, 0, -1):
+        if not lines[index].strip() and lines[index + 1].strip():
+            if index > 0 and lines[index - 1].strip():
+                return index + 1
+
+    return len(lines) - 1
+
+
+def _split_chunk_by_size(chunk: Chunk, chunk_size: int) -> List[Chunk]:
+    if _length_excluding_code(chunk.content) <= chunk_size:
+        return [chunk]
+
+    sub_chunks: List[Chunk] = []
+    current_lines: List[str] = []
+    current_non_code_len = 0
+    in_code = False
+    code_fence: str | None = None
+
+    for line in chunk.content.split("\n"):
+        stripped = line.strip()
+        fence = _is_fenced_code_marker(stripped)
+        entering_code = bool(fence and not in_code)
+        exiting_code = bool(fence and in_code and code_fence == fence)
+
+        line_len = 0
+        if not in_code and not entering_code:
+            line_len = len(line) + 1
+        elif exiting_code:
+            line_len = len(line) + 1
+
+        split_needed = (
+            line_len > 0
+            and current_non_code_len + line_len > chunk_size
+            and bool(current_lines)
+        )
+        if split_needed:
+            split_index = _find_best_split_point(current_lines)
+            if split_index > 0:
+                content = "\n".join(current_lines[:split_index]).strip()
+                if content:
+                    sub_chunks.append(Chunk(content=content, metadata=chunk.metadata.copy()))
+                current_lines = current_lines[split_index:] + [line]
+                current_non_code_len = _length_excluding_code("\n".join(current_lines))
+            else:
+                content = "\n".join(current_lines).strip()
+                if content:
+                    sub_chunks.append(Chunk(content=content, metadata=chunk.metadata.copy()))
+                current_lines = [line]
+                current_non_code_len = 0 if entering_code else line_len
+        else:
+            current_lines.append(line)
+            current_non_code_len += line_len
+
+        if entering_code:
+            in_code = True
+            code_fence = fence
+        elif exiting_code:
+            in_code = False
+            code_fence = None
+
+    if current_lines:
+        content = "\n".join(current_lines).strip()
+        if content:
+            sub_chunks.append(Chunk(content=content, metadata=chunk.metadata.copy()))
+
+    return sub_chunks or [chunk]
+
+
+def _aggregate_chunks(chunks: Sequence[Chunk]) -> List[Chunk]:
+    aggregated: List[Chunk] = []
+    for chunk in chunks:
+        content = chunk.content.strip()
+        if not content:
+            continue
+        if aggregated and aggregated[-1].metadata == chunk.metadata:
+            aggregated[-1].content = normalize_text(aggregated[-1].content + "\n" + content)
+        else:
+            aggregated.append(Chunk(content=content, metadata=chunk.metadata.copy()))
+    return aggregated
+
+
+def _is_heading_only_chunk(chunk: Chunk) -> bool:
+    lines = [line.strip() for line in chunk.content.split("\n") if line.strip()]
+    if not lines:
+        return False
+    return all(_MARKDOWN_HEADING_RE.match(line) for line in lines)
+
+
+def _merge_heading_only_chunks(chunks: Sequence[Chunk]) -> List[Chunk]:
+    merged: List[Chunk] = []
+    pending_headings: List[str] = []
+    pending_metadata: Dict[str, str] = {}
+
+    for chunk in chunks:
+        if _is_heading_only_chunk(chunk):
+            pending_headings.extend(
+                line.strip()
+                for line in chunk.content.split("\n")
+                if line.strip()
+            )
+            pending_metadata.update(chunk.metadata)
+            continue
+
+        if pending_headings:
+            content = normalize_text(
+                "\n".join(pending_headings) + "\n" + chunk.content
+            )
+            metadata = pending_metadata.copy()
+            metadata.update(chunk.metadata)
+            merged.append(Chunk(content=content, metadata=metadata))
+            pending_headings = []
+            pending_metadata = {}
+        else:
+            merged.append(chunk)
+
+    return merged
+
+
+def _split_into_heading_chunks(text: str, ext: str) -> List[Chunk]:
+    text = normalize_text(text)
+    if not text:
+        return []
+
+    lines = text.split("\n")
+    chunks: List[Chunk] = []
+    current_content: List[str] = []
+    current_metadata: Dict[str, str] = {}
+    header_stack: List[tuple[int, str, str]] = []
+    seen_heading = False
+    in_fenced_code = False
+    code_fence: str | None = None
+    index = 0
+
+    def flush_current() -> None:
+        nonlocal current_content
+        if not current_content or not _has_section_content(current_content):
+            current_content = []
+            return
+        chunks.append(
+            Chunk(
+                content=normalize_text("\n".join(current_content)),
+                metadata=current_metadata.copy(),
+            )
+        )
+        current_content = []
+
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        fence = _is_fenced_code_marker(stripped)
+        if fence and not in_fenced_code:
+            in_fenced_code = True
+            code_fence = fence
+            heading = None
+        elif fence and in_fenced_code and code_fence == fence:
+            in_fenced_code = False
+            code_fence = None
+            heading = None
+        elif in_fenced_code:
+            heading = None
+        else:
+            heading = _is_probable_heading(line, ext)
+
+        if ext == "md" and not in_fenced_code and index + 1 < len(lines):
+            next_line = lines[index + 1].strip()
+            if line.strip() and _SETEXT_HEADING_RE.match(next_line):
+                heading = (1 if next_line.startswith("=") else 2, line.strip())
+                index += 1
+
+        if heading:
+            level, title = heading
+            flush_current()
+
+            while header_stack and header_stack[-1][0] >= level:
+                header_stack.pop()
+            header_name = "h{0}".format(level)
+            header_stack.append((level, header_name, title))
+            current_metadata = {name: data for _, name, data in header_stack}
+            current_content = [_render_heading(level, title)]
+            seen_heading = True
+        else:
+            if not _is_page_marker(line) and (line.strip() or current_content):
+                current_content.append(line)
+
+        index += 1
+
+    flush_current()
+
+    if not seen_heading:
+        return []
+
+    return _merge_heading_only_chunks(_aggregate_chunks(chunks))
+
+
+def chunk_text_by_title(
+    text: str,
+    filename: str,
+    chunk_size: int = 800,
+    overlap: int = 100,
+) -> List[str]:
+    ext = get_document_extension(filename)
+    text = normalize_text(text)
+    if not text:
+        return []
+
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    if overlap < 0:
+        raise ValueError("overlap must be >= 0")
+    if overlap >= chunk_size:
+        raise ValueError("overlap must be smaller than chunk_size")
+
+    if ext not in TITLE_CHUNK_DOCUMENT_EXTENSIONS:
+        return simple_chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+
+    title_chunks = _split_into_heading_chunks(text, ext)
+    if not title_chunks:
+        return simple_chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+
+    chunks: List[str] = []
+    for chunk in title_chunks:
+        chunks.extend(
+            sub_chunk.content
+            for sub_chunk in _split_chunk_by_size(chunk, chunk_size=chunk_size)
+        )
+
+    return [chunk for chunk in chunks if chunk.strip()]

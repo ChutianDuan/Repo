@@ -9,10 +9,12 @@ from python_rag.core.error_codes import (
 )
 from python_rag.core.errors import AppError
 from python_rag.core.logger import logger
-from python_rag.infra.storage import build_upload_path, save_bytes_to_path
+from python_rag.infra.storage import build_upload_path, resolve_storage_path, save_bytes_to_path
 from python_rag.modules.documents.repo import (
     create_document_record,
+    delete_document_by_id,
     get_document_by_id,
+    get_document_index_by_doc_id,
     list_documents,
 )
 from python_rag.modules.ingest.chunking_service import validate_supported_document_filename
@@ -66,6 +68,55 @@ def save_uploaded_document(user_id, upload_file):
     except Exception as e:
         logger.exception("save_uploaded_document failed")
         raise AppError(ERR_DB_ERROR, "save_uploaded_document failed: {0}".format(e))
+
+
+def _remove_file_if_exists(path):
+    if not path:
+        return False
+
+    resolved_path = resolve_storage_path(path)
+    if not resolved_path or not os.path.exists(resolved_path):
+        return False
+
+    os.remove(resolved_path)
+    return True
+
+
+def delete_document(doc_id):
+    try:
+        row = get_document_by_id(doc_id)
+        if not row:
+            raise AppError(ERR_DOCUMENT_NOT_FOUND, "document not found", http_status=404)
+
+        index_row = get_document_index_by_doc_id(doc_id)
+        index_paths = []
+        if index_row:
+            index_paths.extend([index_row.get("index_path"), index_row.get("mapping_path")])
+
+        stats = delete_document_by_id(doc_id)
+        if stats.get("deleted_documents", 0) <= 0:
+            raise AppError(ERR_DOCUMENT_NOT_FOUND, "document not found", http_status=404)
+
+        deleted_files = []
+        for path in [row.get("storage_path"), *index_paths]:
+            try:
+                if _remove_file_if_exists(path):
+                    deleted_files.append(path)
+            except Exception:
+                logger.exception("failed to delete document file: %s", path)
+                raise
+
+        return {
+            "doc_id": doc_id,
+            "deleted": True,
+            "deleted_files": deleted_files,
+            **stats,
+        }
+    except AppError:
+        raise
+    except Exception as e:
+        logger.exception("delete_document failed")
+        raise AppError(ERR_DB_ERROR, "delete_document failed: {0}".format(e))
 
 
 def get_document_detail(doc_id):

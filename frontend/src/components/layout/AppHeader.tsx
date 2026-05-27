@@ -1,8 +1,7 @@
 import type { AppRoute } from "../../app/router";
-import { HealthDot } from "../common/HealthDot";
 import type { MonitorOverview } from "../../types/monitor";
-import { formatBytesGb, formatPercent } from "../../utils/format";
-import { summarizeGpuMetrics } from "../../utils/gpu";
+import { formatNumber } from "../../utils/format";
+import { HealthDot } from "../common/HealthDot";
 
 interface AppHeaderProps {
   route: AppRoute;
@@ -13,45 +12,44 @@ interface AppHeaderProps {
   refreshing: boolean;
 }
 
-export function AppHeader({ route, overview, searchScope, onNavigate, onRefresh, refreshing }: AppHeaderProps) {
-  const gpuUsage = summarizeGpuMetrics(overview.gpu).util_percent;
-  const serviceDots = [
-    ["MySQL", overview.services.mysql] as const,
-    ["Redis", overview.services.redis] as const,
-    ["Worker", overview.services.worker] as const,
-  ];
+const routeLabel: Record<AppRoute, string> = {
+  workspace: "问答",
+  documents: "文档索引",
+  tasks: "任务",
+  monitor: "状态",
+  settings: "配置",
+};
 
+export function AppHeader({ route, overview, searchScope, onNavigate, onRefresh, refreshing }: AppHeaderProps) {
   return (
-    <header className="app-header">
+    <header className="app-header app-header--simple">
       <div className="app-header__brand" onClick={() => onNavigate("workspace")} role="button" tabIndex={0}>
         <span className="brand-mark">R</span>
         <div>
-          <strong>RAG Workbench</strong>
-          <small>{route === "workspace" ? "Document QA Workspace" : "Supporting Console"}</small>
+          <strong>RAG 笔记助手</strong>
+          <small>{routeLabel[route]} · 上传文档后直接提问</small>
         </div>
       </div>
 
       <div className="app-header__scope">
-        <span>Search Scope</span>
+        <span>知识库</span>
         <strong>{searchScope}</strong>
       </div>
 
-      <div className="app-header__metrics" aria-label="system summary">
-        <span>CPU {formatPercent(overview.system.cpu_percent)}</span>
-        <span>GPU {formatPercent(gpuUsage)}</span>
-        <span>RAM {formatBytesGb(overview.system.memory_used_gb, overview.system.memory_total_gb)}</span>
+      <div className="app-header__metrics" aria-label="rag summary">
+        <span>Ready {formatNumber(overview.rag.documents_ready)}</span>
+        <span>Chunks {overview.rag.total_chunks === null ? "--" : formatNumber(overview.rag.total_chunks)}</span>
         <span>Queue {overview.queue.pending + overview.queue.running}</span>
-        {serviceDots.map(([label, state]) => (
-          <HealthDot key={label} label={label} state={state} compact />
-        ))}
+        <HealthDot label="API" state={overview.services.api} compact />
+        <HealthDot label="Worker" state={overview.services.worker} compact />
       </div>
 
       <div className="app-header__actions">
         <button type="button" className="button-ghost" onClick={() => onNavigate("documents")}>
-          Upload
+          管理文档
         </button>
         <button type="button" className="button-secondary" onClick={onRefresh} disabled={refreshing}>
-          {refreshing ? "Checking" : "Refresh"}
+          {refreshing ? "刷新中" : "刷新"}
         </button>
       </div>
     </header>

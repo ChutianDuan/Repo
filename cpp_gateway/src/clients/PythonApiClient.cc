@@ -12,6 +12,17 @@ HttpResponsePtr buildForwardedJsonResponse(const HttpResponsePtr& resp) {
     out->setBody(std::string(resp->body()));
     return out;
 }
+
+HttpResponsePtr buildGatewayErrorJsonResponse(HttpStatusCode status, const std::string& message) {
+    Json::Value obj(Json::objectValue);
+    obj["code"] = static_cast<int>(status);
+    obj["message"] = message;
+    obj["data"] = Json::nullValue;
+
+    auto resp = HttpResponse::newHttpJsonResponse(obj);
+    resp->setStatusCode(status);
+    return resp;
+}
 }  // namespace
 
 PythonApiClient::PythonApiClient(const std::string& baseUrl)
@@ -54,12 +65,10 @@ void PythonApiClient::proxyTaskStatus(
     client->sendRequest(req,
         [client, callback = std::move(callback)](ReqResult result, const HttpResponsePtr& resp) mutable {
             if (result != ReqResult::Ok || !resp) {
-                Json::Value json;
-                json["code"] = 502;
-                json["message"] = "gateway failed to request python task status";
-                auto out = HttpResponse::newHttpJsonResponse(json);
-                out->setStatusCode(k502BadGateway);
-                callback(out);
+                callback(buildGatewayErrorJsonResponse(
+                    k502BadGateway,
+                    "gateway failed to request python task status"
+                ));
                 return;
             }
 
@@ -97,6 +106,30 @@ void PythonApiClient::submitIngestJob(
         });
 }
 
+void PythonApiClient::forwardDelete(
+    const std::string& path,
+    std::function<void(const HttpResponsePtr&)>&& callback
+) {
+    auto client = makeClient();
+    auto req = HttpRequest::newHttpRequest();
+    req->setMethod(Delete);
+    req->setPath(path);
+
+    client->sendRequest(req, [client, callback = std::move(callback)](
+        ReqResult result,
+        const HttpResponsePtr& resp
+    ) mutable {
+        if (result != ReqResult::Ok || !resp) {
+            callback(buildGatewayErrorJsonResponse(
+                k502BadGateway,
+                "python service unavailable"
+            ));
+            return;
+        }
+        callback(buildForwardedJsonResponse(resp));
+    });
+}
+
 void PythonApiClient::forwardJsonPost(
     const std::string& path,
     const Json::Value& body,
@@ -112,13 +145,10 @@ void PythonApiClient::forwardJsonPost(
         const HttpResponsePtr& resp
     ) {
         if (result != ReqResult::Ok || !resp) {
-            Json::Value obj(Json::objectValue);
-            obj["ok"] = false;
-            obj["error"] = "python service unavailable";
-
-            auto errorResp = HttpResponse::newHttpJsonResponse(obj);
-            errorResp->setStatusCode(k502BadGateway);
-            callback(errorResp);
+            callback(buildGatewayErrorJsonResponse(
+                k502BadGateway,
+                "python service unavailable"
+            ));
             return;
         }
         callback(buildForwardedJsonResponse(resp));
@@ -141,13 +171,10 @@ void PythonApiClient::forwardGet(
             const HttpResponsePtr& resp
         ) mutable {
             if (result != ReqResult::Ok || !resp) {
-                Json::Value obj(Json::objectValue);
-                obj["ok"] = false;
-                obj["error"] = "python service unavailable";
-
-                auto errorResp = HttpResponse::newHttpJsonResponse(obj);
-                errorResp->setStatusCode(k502BadGateway);
-                callback(errorResp);
+                callback(buildGatewayErrorJsonResponse(
+                    k502BadGateway,
+                    "python service unavailable"
+                ));
                 return;
             }
 

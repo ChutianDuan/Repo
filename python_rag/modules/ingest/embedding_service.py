@@ -20,6 +20,7 @@ from python_rag.config import (
 )
 from python_rag.core.error_codes import ERR_INTERNAL_ERROR
 from python_rag.core.errors import AppError
+from python_rag.utils import http_client
 
 
 logger = logging.getLogger(__name__)
@@ -149,7 +150,7 @@ def _embed_via_openai_compatible(texts: List[str]) -> np.ndarray:
     }
 
     try:
-        response = requests.post(
+        response = http_client.post(
             url,
             headers=_build_headers(),
             json=payload,
