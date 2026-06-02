@@ -30,6 +30,15 @@ class FakeAgentOrchestrator:
         return {
             "run_id": 1001,
             "answer": "项目架构包含网关、FastAPI、Celery 和知识库检索。",
+            "citations": [
+                {
+                    "doc_id": 7,
+                    "chunk_id": 11,
+                    "chunk_index": 0,
+                    "score": 0.91,
+                    "snippet": "架构说明",
+                }
+            ],
             "steps_used": 2,
         }
 
@@ -37,6 +46,7 @@ class FakeAgentOrchestrator:
 def test_agent_chat_endpoint_calls_agent_and_returns_answer(monkeypatch):
     FakeAgentOrchestrator.calls = []
     created_messages = []
+    saved_citations = []
 
     monkeypatch.setattr(
         agent_api,
@@ -59,6 +69,13 @@ def test_agent_chat_endpoint_calls_agent_and_returns_answer(monkeypatch):
 
     monkeypatch.setattr(agent_api, "create_message", fake_create_message)
     monkeypatch.setattr(agent_api, "AgentOrchestrator", FakeAgentOrchestrator)
+    monkeypatch.setattr(
+        agent_api,
+        "bulk_insert_citations",
+        lambda message_id, hits: saved_citations.append(
+            {"message_id": message_id, "hits": hits}
+        ),
+    )
 
     response = client.post(
         "/internal/agent/chat",
@@ -77,13 +94,36 @@ def test_agent_chat_endpoint_calls_agent_and_returns_answer(monkeypatch):
             "run_id": 1001,
             "message_id": 3002,
             "answer": "项目架构包含网关、FastAPI、Celery 和知识库检索。",
-            "citations": [],
+            "citations": [
+                {
+                    "doc_id": 7,
+                    "chunk_id": 11,
+                    "chunk_index": 0,
+                    "score": 0.91,
+                    "snippet": "架构说明",
+                }
+            ],
         },
     }
     assert created_messages[0]["role"] == "user"
     assert created_messages[0]["content"] == "根据知识库总结项目架构"
     assert created_messages[1]["role"] == "assistant"
     assert created_messages[1]["meta"]["agent_run_id"] == 1001
+    assert created_messages[1]["meta"]["citation_count"] == 1
+    assert saved_citations == [
+        {
+            "message_id": 3002,
+            "hits": [
+                {
+                    "doc_id": 7,
+                    "chunk_id": 11,
+                    "chunk_index": 0,
+                    "score": 0.91,
+                    "snippet": "架构说明",
+                }
+            ],
+        }
+    ]
     assert FakeAgentOrchestrator.calls == [
         {
             "question": "根据知识库总结项目架构",

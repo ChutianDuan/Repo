@@ -4,13 +4,13 @@
     "python.analysis.autoImportCompletions": true,
     "python.REPL.enableREPLSmartSend": false,
 
-    "cmake.sourceDirectory": "/Volumes/拯救者PSSD/Repo/cpp_gateway",
-    "cmake.buildDirectory": "/home/ubuntu/Repo/cpp_gateway/build",
+    "cmake.sourceDirectory": "${workspaceFolder}/cpp_gateway",
+    "cmake.buildDirectory": "${workspaceFolder}/cpp_gateway/build",
     "cmake.configureOnOpen": true,
     "cmake.exportCompileCommandsFile": true,
 
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
-    "C_Cpp.default.compileCommands": "/home/ubuntu/Repo/cpp_gateway/build/compile_commands.json",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/cpp_gateway/build/compile_commands.json",
     "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
     "C_Cpp.default.compilerPath": "/usr/bin/g++",
     "cmake.ignoreCMakeListsMissing": true

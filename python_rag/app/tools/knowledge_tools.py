@@ -104,12 +104,15 @@ class KnowledgeSearchTool(BaseTool):
 
         return {
             "chunk_id": hit.get("chunk_id"),
+            "chunk_index": hit.get("chunk_index"),
+            "doc_id": document_id,
             "document_id": document_id,
             "title": self._get_title(document_id, title_cache),
             "content": _truncate_content(
                 hit.get("content") or hit.get("snippet") or "",
                 self.max_content_chars,
             ),
+            "snippet": hit.get("snippet") or "",
             "score": _safe_score(hit.get("score")),
         }
 

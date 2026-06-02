@@ -17,6 +17,7 @@ from python_rag.core.error_codes import (
     ERR_SESSION_NOT_FOUND,
 )
 from python_rag.core.errors import AppError, SessionNotFoundError
+from python_rag.modules.chat.repo import bulk_insert_citations
 from python_rag.modules.messages.repo import create_message
 from python_rag.modules.sessions.repo import get_session_by_id
 from python_rag.utils.common import ApiResponse, api_response
@@ -58,6 +59,11 @@ def _steps_with_tool_calls(run_id: int) -> List[Dict[str, Any]]:
         item["tool_calls"] = tool_calls_by_step_id.get(item["id"], [])
         items.append(item)
     return items
+
+
+def _save_agent_citations(message_id: int, citations: List[Dict[str, Any]]) -> None:
+    if citations:
+        bulk_insert_citations(message_id=message_id, hits=citations)
 
 
 def _agent_streaming_response(req: AgentChatRequest) -> StreamingResponse:
@@ -113,17 +119,21 @@ async def agent_chat(req: AgentChatRequest):
         status="SUCCESS",
         meta={
             "source": "agent",
+            "answer_source": "agent",
             "agent_run_id": result["run_id"],
             "steps_used": result.get("steps_used"),
+            "citation_count": len(result.get("citations") or []),
         },
     )
+    citations = result.get("citations") or []
+    _save_agent_citations(assistant_message["message_id"], citations)
 
     return api_response(
         {
             "run_id": result["run_id"],
             "message_id": assistant_message["message_id"],
             "answer": result["answer"],
-            "citations": [],
+            "citations": citations,
         }
     )
 

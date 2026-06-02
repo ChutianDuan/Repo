@@ -1,0 +1,217 @@
+import asyncio
+import logging
+
+from python_rag.app.agent import orchestrator
+from python_rag.app.agent.memory import session as session_memory
+from python_rag.app.tools.registry import ToolRegistry
+
+
+class FakeTraceRecorder:
+    def __init__(self):
+        self.runs = []
+        self.steps = []
+        self.finished_steps = []
+        self.finished_runs = []
+        self.failed_runs = []
+
+    def create_run(self, **kwargs):
+        self.runs.append(kwargs)
+        return 1001
+
+    def create_step(self, **kwargs):
+        self.steps.append(kwargs)
+        return 2001
+
+    def finish_step(self, **kwargs):
+        self.finished_steps.append(kwargs)
+
+    def finish_run(self, **kwargs):
+        self.finished_runs.append(kwargs)
+
+    def fail_run(self, **kwargs):
+        self.failed_runs.append(kwargs)
+
+
+def _patch_trace(monkeypatch, recorder):
+    monkeypatch.setattr(orchestrator.trace_service, "create_run", recorder.create_run)
+    monkeypatch.setattr(orchestrator.trace_service, "create_step", recorder.create_step)
+    monkeypatch.setattr(orchestrator.trace_service, "finish_step", recorder.finish_step)
+    monkeypatch.setattr(orchestrator.trace_service, "finish_run", recorder.finish_run)
+    monkeypatch.setattr(orchestrator.trace_service, "fail_run", recorder.fail_run)
+
+
+def _message(message_id, role, content=None, status="SUCCESS"):
+    return {
+        "message_id": message_id,
+        "session_id": 1,
+        "role": role,
+        "content": content or "消息{0}".format(message_id),
+        "status": status,
+    }
+
+
+def test_short_term_memory_uses_recent_8_messages(monkeypatch):
+    rows = [_message(i, "user" if i % 2 else "assistant") for i in range(1, 10)]
+    rows.append(_message(10, "user", "当前问题"))
+
+    monkeypatch.setattr(
+        session_memory,
+        "get_session_by_id",
+        lambda session_id: {"id": session_id, "summary": None},
+    )
+    monkeypatch.setattr(
+        session_memory,
+        "list_messages_by_session_id",
+        lambda session_id, limit: rows,
+    )
+
+    memory = session_memory.load_session_memory(
+        session_id=1,
+        current_user_message_id=10,
+    )
+
+    assert memory.message_count == 10
+    assert memory.summary == ""
+    assert [item["content"] for item in memory.recent_messages] == [
+        "消息2",
+        "消息3",
+        "消息4",
+        "消息5",
+        "消息6",
+        "消息7",
+        "消息8",
+        "消息9",
+    ]
+
+
+def test_session_summary_is_generated_and_written(monkeypatch):
+    rows = [_message(i, "user" if i % 2 else "assistant") for i in range(1, 14)]
+    captured_summary_prompts = []
+    summary_updates = []
+
+    monkeypatch.setattr(
+        session_memory,
+        "get_session_by_id",
+        lambda session_id: {"id": session_id, "summary": "旧摘要"},
+    )
+    monkeypatch.setattr(
+        session_memory,
+        "list_messages_by_session_id",
+        lambda session_id, limit: rows,
+    )
+    monkeypatch.setattr(
+        session_memory,
+        "update_session_summary",
+        lambda session_id, summary: summary_updates.append(
+            {"session_id": session_id, "summary": summary}
+        ),
+    )
+
+    def fake_generate_from_messages(messages, tools=None, tool_choice=None):
+        captured_summary_prompts.append(messages)
+        return {"answer": "更新摘要：用户要实现 Agent 记忆，并保留最近追问上下文。"}
+
+    monkeypatch.setattr(
+        session_memory.llm_service,
+        "generate_from_messages",
+        fake_generate_from_messages,
+    )
+
+    memory = session_memory.load_session_memory(
+        session_id=1,
+        current_user_message_id=13,
+    )
+
+    assert memory.summary == "更新摘要：用户要实现 Agent 记忆，并保留最近追问上下文。"
+    assert memory.summary_updated is True
+    assert summary_updates == [
+        {
+            "session_id": 1,
+            "summary": "更新摘要：用户要实现 Agent 记忆，并保留最近追问上下文。",
+        }
+    ]
+    assert [item["content"] for item in memory.recent_messages] == [
+        "消息5",
+        "消息6",
+        "消息7",
+        "消息8",
+        "消息9",
+        "消息10",
+        "消息11",
+        "消息12",
+    ]
+
+    summary_prompt = captured_summary_prompts[0][1]["content"]
+    assert "已有 session summary" in summary_prompt
+    assert "旧摘要" in summary_prompt
+    assert "消息1" in summary_prompt
+    assert "消息4" in summary_prompt
+    assert "消息5" not in summary_prompt
+
+
+def test_agent_prompt_injects_session_summary_and_recent_messages(monkeypatch, caplog):
+    recorder = FakeTraceRecorder()
+    _patch_trace(monkeypatch, recorder)
+    captured_llm_calls = []
+
+    monkeypatch.setattr(
+        orchestrator.session_memory,
+        "load_session_memory",
+        lambda session_id, current_user_message_id=None: session_memory.SessionMemory(
+            summary="用户已经要求按步骤实现 Agent 记忆。",
+            recent_messages=[
+                {"role": "user", "content": "先做短期记忆"},
+                {"role": "assistant", "content": "已确认最近 8 条进入 prompt"},
+            ],
+            message_count=15,
+            summary_updated=False,
+        ),
+    )
+
+    def fake_generate_from_messages(messages, tools=None, tool_choice=None):
+        captured_llm_calls.append(
+            {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+        )
+        return {
+            "answer": "继续实现 session summary。",
+            "message": {"content": "继续实现 session summary。", "tool_calls": []},
+            "tool_calls": [],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(
+        orchestrator.llm_service,
+        "generate_from_messages",
+        fake_generate_from_messages,
+    )
+    caplog.set_level(logging.INFO, logger=orchestrator.__name__)
+
+    result = asyncio.run(
+        orchestrator.AgentOrchestrator(registry=ToolRegistry([])).run(
+            "然后做摘要",
+            session_id=1,
+            user_message_id=99,
+        )
+    )
+
+    messages = captured_llm_calls[0]["messages"]
+    assert result["answer"] == "继续实现 session summary。"
+    assert any(
+        item["role"] == "system"
+        and "[会话摘要 / 中期记忆]" in item["content"]
+        and "用户已经要求按步骤实现 Agent 记忆" in item["content"]
+        for item in messages
+    )
+    assert messages[-3:] == [
+        {"role": "user", "content": "先做短期记忆"},
+        {"role": "assistant", "content": "已确认最近 8 条进入 prompt"},
+        {"role": "user", "content": "然后做摘要"},
+    ]
+    assert "[会话摘要 / 中期记忆]" in caplog.text
+    assert recorder.steps[0]["input_data"]["messages"] == messages
+    assert recorder.runs[0]["meta"]["memory"] == {
+        "message_count": 15,
+        "recent_message_count": 2,
+        "has_summary": True,
+        "summary_updated": False,
+    }

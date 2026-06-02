@@ -31,7 +31,7 @@ UPLOAD_RESP="$(curl -fsS -X POST "${PYTHON_BASE_URL}/internal/documents/upload" 
   -F "user_id=${USER_ID}" \
   -F "file=@${TEST_FILE}")"
 echo "$UPLOAD_RESP"
-DOC_ID="$(printf "%s" "$UPLOAD_RESP" | json_read "data['doc_id']")"
+DOC_ID="$(printf "%s" "$UPLOAD_RESP" | json_read "data.get('data', data)['doc_id']")"
 echo "[INFO] doc_id=${DOC_ID}"
 
 section "[2/7] submit ingest job"
@@ -39,7 +39,7 @@ INGEST_RESP="$(curl -fsS -X POST "${PYTHON_BASE_URL}/internal/jobs/ingest" \
   -H "Content-Type: application/json" \
   -d "{\"doc_id\": ${DOC_ID}}")"
 echo "$INGEST_RESP"
-INGEST_TASK_ID="$(printf "%s" "$INGEST_RESP" | json_read "data['task_id']")"
+INGEST_TASK_ID="$(printf "%s" "$INGEST_RESP" | json_read "data.get('data', data)['task_id']")"
 echo "[INFO] ingest_task_id=${INGEST_TASK_ID}"
 
 section "[3/7] wait ingest success"

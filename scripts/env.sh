@@ -152,7 +152,7 @@ poll_gateway_task() {
     echo "$task_resp"
 
     local state
-    state="$(printf "%s" "$task_resp" | json_read "data.get('state')")"
+    state="$(printf "%s" "$task_resp" | json_read "data.get('data', data).get('state')")"
     if [ "$state" = "SUCCESS" ]; then
       echo "[OK] ${label} success"
       return 0
@@ -182,7 +182,7 @@ poll_internal_task() {
     echo "$task_resp"
 
     local state
-    state="$(printf "%s" "$task_resp" | json_read "data.get('state')")"
+    state="$(printf "%s" "$task_resp" | json_read "data.get('data', data).get('state')")"
     if [ "$state" = "SUCCESS" ]; then
       echo "[OK] ${label} success"
       return 0

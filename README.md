@@ -25,6 +25,7 @@
 | 全局知识库 | 文档上传仍记录归属用户，但索引完成后进入全局 READY 文档库；任意用户的会话默认都能检索这些文档。 |
 | 异步任务 | 文档解析、embedding、FAISS 构建和问答任务交给 Celery Worker 执行，任务进度可查询。 |
 | 可追溯回答 | 每条 assistant 消息都会保存 citations，前端可展示引用片段、chunk、score 和来源文档。 |
+| Agent MVP | 新增只读 `knowledge_search` Agent 路径，支持工具调用 Trace、Agent SSE 事件和 citations 落库展示。 |
 | 模型切换保护 | `document_indexes.embedding_model` 记录索引所用 embedding 模型，避免模型切换后误用旧向量空间。 |
 | 监控视图 | 提供 CPU、内存、磁盘、GPU、MySQL、Redis、Worker、队列和 RAG 数据概览。 |
 | 实验留档 | 包含 embedding LoRA 微调、RAG ingest/retrieval 容量和性能验证文档，方便继续迭代。 |
@@ -311,6 +312,37 @@ CrossEncoder rerank 支持缓存优先加载：`RERANK_LOCAL_FILES_ONLY=true` �
 
 如果切换 embedding 模型，历史文档需要重新 ingest，否则 FAISS 索引维度或向量空间可能不一致。BM25 召回复用现有 chunk mapping，不需要额外索引文件。
 
+## Agent MVP 演示
+
+第一版 RAG Agent 已固化为 MVP 演示路径：
+
+```text
+上传文档 -> ingest 建库 -> Agent 问答 -> knowledge_search 工具调用
+-> Trace 展示 -> citations 展示
+```
+
+前端演示：
+
+```bash
+START_INIT_DB=true START_FRONTEND=true bash scripts/start_all.sh
+```
+
+打开 `http://127.0.0.1:5173`，上传文档并等待 `READY`，在 Workspace 使用流式 Agent 问答。右侧 `Agent Trace` 会展示决策、工具调用和工具结果；回答完成后消息 citations 会在引用面板展示。
+
+CLI 对照：
+
+```bash
+# 旧 RAG 基线路径
+bash scripts/e2e_all.sh ./day7_demo.md
+
+# 新 Agent 流式路径，需要已有 session_id 和 READY 文档
+curl -N -X POST http://127.0.0.1:8080/v1/agent/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":1,"message":"根据知识库总结这个系统的架构和核心链路","trace_id":"demo-agent-001"}'
+```
+
+更多验收步骤见 [Agent MVP 说明](docs/agent_mvp.md)、[Agent API 文档](docs/api_agent.md) 和 [MVP 演示案例](docs/demo_cases.md)。
+
 ## 前端页面
 
 | 页面 | 说明 |
@@ -339,12 +371,16 @@ CrossEncoder rerank 支持缓存优先加载：`RERANK_LOCAL_FILES_ONLY=true` �
 | `GET` | `/v1/tasks` | 查询任务列表。 |
 | `GET` | `/v1/tasks/{task_id}` | 查询单个任务状态。 |
 | `POST` | `/v1/chat/stream` | SSE 流式回答代理。 |
+| `POST` | `/v1/agent/chat/stream` | Agent SSE 流式回答代理，包含 `agent_step`、`tool_call`、`tool_result`、`final` 和 `done` 事件。 |
 | `GET` | `/v1/monitor/overview` | 系统与 RAG 监控概览。 |
 
-FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问。
+FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问。Agent Trace 调试入口包括 `GET /internal/agent/runs/{run_id}` 和 `GET /internal/agent/runs/{run_id}/steps`。
 
 ## 延伸文档
 
+- [Agent MVP 说明](docs/agent_mvp.md)：固化第一版 RAG Agent 的演示范围、启动方式、验收流程和旧 RAG / 新 Agent 路径。
+- [Agent API 文档](docs/api_agent.md)：整理文档上传、会话、旧 RAG、Agent 流式问答、Trace 和 citations 接口。
+- [MVP 演示案例](docs/demo_cases.md)：提供前端和 CLI 演示脚本、预期结果和故障检查点。
 - [运行环境与排障手册](docs/environment.md)：说明 `rag-api` 与 `vllm-qwen3` 两个 Python 环境的边界、启动方式、代理影响、SSE 流式链路和常见排障。
 - [Embedding 微调实验](docs/embedding_finetune.md)：记录 KALM embedding 的 LoRA triplet 微调流程、指标和结论。
 - [RAG ingest/retrieval 容量说明](docs/rag_ingest_retrieval_capacity.md)：整理 ingest、检索和资源容量相关设计。

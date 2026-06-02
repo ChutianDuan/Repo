@@ -19,14 +19,18 @@ def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
             "hits": [
                 {
                     "chunk_id": 1,
+                    "chunk_index": 0,
                     "doc_id": 7,
                     "content": "important context",
+                    "snippet": "important context",
                     "score": 0.8912349,
                 },
                 {
                     "chunk_id": 2,
+                    "chunk_index": 1,
                     "doc_id": 7,
                     "content": "more context",
+                    "snippet": "more context",
                     "score": 0.5,
                 },
             ]
@@ -61,16 +65,22 @@ def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
         "results": [
             {
                 "chunk_id": 1,
+                "chunk_index": 0,
+                "doc_id": 7,
                 "document_id": 7,
                 "title": "guide.md",
                 "content": "important context",
+                "snippet": "important context",
                 "score": 0.891235,
             },
             {
                 "chunk_id": 2,
+                "chunk_index": 1,
+                "doc_id": 7,
                 "document_id": 7,
                 "title": "guide.md",
                 "content": "more context",
+                "snippet": "more context",
                 "score": 0.5,
             },
         ],
@@ -85,6 +95,7 @@ def test_knowledge_search_tool_truncates_content(monkeypatch):
             "hits": [
                 {
                     "chunk_id": 1,
+                    "chunk_index": 0,
                     "doc_id": 7,
                     "content": "abcdefghijklmnopqrstuvwxyz",
                     "score": 1,

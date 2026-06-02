@@ -11,6 +11,7 @@ from python_rag.modules.chat.stream_event_builder import (
     build_error_event,
     build_sse_event,
 )
+from python_rag.modules.chat.repo import bulk_insert_citations
 from python_rag.modules.messages.repo import create_message
 
 
@@ -82,10 +83,18 @@ async def stream_agent_chat(
                 status="SUCCESS",
                 meta={
                     "source": "agent",
+                    "answer_source": "agent",
                     "agent_run_id": result["run_id"],
                     "steps_used": result.get("steps_used"),
+                    "citation_count": len(result.get("citations") or []),
                 },
             )
+            citations = result.get("citations") or []
+            if citations:
+                bulk_insert_citations(
+                    message_id=assistant_message["message_id"],
+                    hits=citations,
+                )
 
             e2e_latency_ms = int((time.perf_counter() - started_at) * 1000)
             meta = {
@@ -95,6 +104,8 @@ async def stream_agent_chat(
                 "message_id": assistant_message["message_id"],
                 "steps_used": result.get("steps_used"),
                 "e2e_latency_ms": e2e_latency_ms,
+                "answer_source": "agent",
+                "citation_count": len(citations),
             }
 
             if result["answer"]:
@@ -106,7 +117,7 @@ async def stream_agent_chat(
                     "run_id": result["run_id"],
                     "message_id": assistant_message["message_id"],
                     "answer": result["answer"],
-                    "citations": [],
+                    "citations": citations,
                     "steps_used": result.get("steps_used"),
                     "e2e_latency_ms": e2e_latency_ms,
                 }

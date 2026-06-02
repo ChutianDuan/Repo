@@ -31,6 +31,8 @@ class FakeKnowledgeSearchTool(BaseTool):
             "results": [
                 {
                     "chunk_id": 1,
+                    "chunk_index": 0,
+                    "doc_id": 7,
                     "document_id": 7,
                     "title": "architecture.md",
                     "content": "项目架构包含 C++ Gateway、FastAPI Internal Service、Celery Worker 和知识库检索。",
@@ -190,6 +192,18 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
 
     assert result["run_id"] == 101
     assert result["answer"] == "项目架构包含 C++ Gateway、FastAPI、Celery 和知识库检索。"
+    assert result["citations"] == [
+        {
+            "rank": 1,
+            "doc_id": 7,
+            "chunk_id": 1,
+            "chunk_index": 0,
+            "score": 0.91,
+            "snippet": "项目架构包含 C++ Gateway、FastAPI Internal Service、Celery Worker 和知识库检索。",
+            "content": "项目架构包含 C++ Gateway、FastAPI Internal Service、Celery Worker 和知识库检索。",
+            "title": "architecture.md",
+        }
+    ]
     assert result["steps_used"] == 2
     assert knowledge_tool.calls == [{"query": "系统架构", "top_k": 5}]
     assert len(llm_calls) == 2
@@ -212,6 +226,7 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
     assert len(recorder.finished_tool_calls) == 1
     assert recorder.finished_runs[0]["run_id"] == 101
     assert recorder.finished_runs[0]["output_data"]["answer"] == result["answer"]
+    assert recorder.finished_runs[0]["output_data"]["citations"] == result["citations"]
     assert recorder.failed_runs == []
 
     event_types = [event["type"] for event in events]

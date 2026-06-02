@@ -1,10 +1,16 @@
 import inspect
 import json
+import logging
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from python_rag.app.agent import trace_service
+from python_rag.app.agent.memory import session as session_memory
 from python_rag.app.agent.schemas import AgentStepStatus, AgentToolCallStatus
+from python_rag.app.tools.document_tools import (
+    DOCUMENT_DETAIL_TOOL_NAME,
+    LIST_READY_DOCUMENTS_TOOL_NAME,
+)
 from python_rag.app.tools.knowledge_tools import KNOWLEDGE_SEARCH_TOOL_NAME
 from python_rag.app.tools.registry import ToolRegistry, default_registry
 from python_rag.modules.llm import service as llm_service
@@ -13,6 +19,11 @@ from python_rag.modules.llm import service as llm_service
 DEFAULT_AGENT_NAME = "rag-agent"
 DEFAULT_MAX_STEPS = 3
 READONLY_PERMISSION_LEVEL = "readonly"
+READONLY_TOOL_NAMES = [
+    KNOWLEDGE_SEARCH_TOOL_NAME,
+    DOCUMENT_DETAIL_TOOL_NAME,
+    LIST_READY_DOCUMENTS_TOOL_NAME,
+]
 SYSTEM_PROMPT = (
     "你是一个本地知识库检索智能体。"
     "你的任务是判断用户问题是否需要项目知识库证据，并基于检索结果给出回答。"
@@ -20,12 +31,15 @@ SYSTEM_PROMPT = (
     "只能调用已注册、可用的工具，禁止编造工具名称或假设不存在的能力。"
     "如果用户只是问候、闲聊或提出不依赖项目文档的简单问题，直接回答，不要调用工具。"
     "如果用户询问项目文档、系统架构、模块、实现细节或文档中是否存在某能力，必须先调用 knowledge_search。"
+    "如果用户要求根据 document_id 查询文档详情，必须调用 get_document_detail。"
+    "如果用户询问当前知识库有哪些文档、能问哪些资料或哪些文档已经建好索引，必须调用 list_ready_documents。"
     "如果 knowledge_search 没有返回结果，应明确说明当前知识库证据不足，不要编造。"
     "如果 knowledge_search 返回 error，应说明检索工具失败并给出降级说明，不要编造文档结论。"
     "获取工具结果后，应直接回答用户问题。"
     "如果工具结果中包含有用的文档标题，应在回答中引用这些标题。"
 )
 AgentEventSink = Callable[[Dict[str, Any]], Any]
+logger = logging.getLogger(__name__)
 
 
 class AgentOrchestratorError(Exception):
@@ -104,17 +118,104 @@ def _tool_result_error(result: Any) -> Optional[str]:
     return error_message or None
 
 
-def _build_initial_messages(question: str, system_prompt: str = SYSTEM_PROMPT) -> List[Dict[str, Any]]:
-    return [
+def _coerce_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_score(value: Any) -> float:
+    try:
+        return round(float(value), 6)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _extract_observation_citations(
+    observations: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    citations: List[Dict[str, Any]] = []
+    seen: Set[Tuple[int, int]] = set()
+
+    for observation in observations:
+        if observation.get("tool_name") != KNOWLEDGE_SEARCH_TOOL_NAME:
+            continue
+
+        result = observation.get("result")
+        if not isinstance(result, dict):
+            continue
+
+        results = result.get("results") or []
+        if not isinstance(results, list):
+            continue
+
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+
+            doc_id_value = item.get("doc_id")
+            if doc_id_value is None:
+                doc_id_value = item.get("document_id")
+            chunk_index_value = item.get("chunk_index")
+            if chunk_index_value is None:
+                chunk_index_value = item.get("index", item.get("seq"))
+
+            doc_id = _coerce_int(doc_id_value)
+            chunk_id = _coerce_int(item.get("chunk_id") or item.get("id"))
+            chunk_index = _coerce_int(chunk_index_value)
+            if doc_id is None or chunk_id is None or chunk_index is None:
+                continue
+
+            key = (doc_id, chunk_id)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            content = str(item.get("content") or item.get("snippet") or "")
+            citations.append(
+                {
+                    "rank": len(citations) + 1,
+                    "doc_id": doc_id,
+                    "chunk_id": chunk_id,
+                    "chunk_index": chunk_index,
+                    "score": _coerce_score(item.get("score")),
+                    "snippet": str(item.get("snippet") or content)[:300],
+                    "content": content,
+                    "title": item.get("title") or "",
+                }
+            )
+
+    return citations
+
+
+def _build_initial_messages(
+    question: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    session_summary: str = "",
+    history_messages: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    messages: List[Dict[str, Any]] = [
         {
             "role": "system",
             "content": system_prompt,
-        },
-        {
-            "role": "user",
-            "content": question,
-        },
+        }
     ]
+
+    summary_context = session_memory.build_session_summary_context(session_summary)
+    if summary_context:
+        messages.append({"role": "system", "content": summary_context})
+
+    for history_message in history_messages or []:
+        role = str(history_message.get("role") or "").strip()
+        content = str(history_message.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+
+    messages.append({"role": "user", "content": question})
+    return messages
 
 
 class AgentOrchestrator:
@@ -128,17 +229,26 @@ class AgentOrchestrator:
         self.max_steps = max(1, int(max_steps or DEFAULT_MAX_STEPS))
         self.agent_name = agent_name
 
-    def _tool_schemas(self) -> List[dict]:#获取工具的schema，供LLM调用时使用
-        return self.registry.export_openai_tools_schema( 
-            names=[KNOWLEDGE_SEARCH_TOOL_NAME],
+    def _readonly_tool_names(self) -> List[str]:
+        "获取只读工具名单，且必须在注册表中存在"
+        return [
+            name
+            for name in READONLY_TOOL_NAMES
+            if self.registry.has(name)
+        ]
+
+    def _tool_schemas(self) -> List[dict]:
+        "获取工具输入格式，且必须在注册表中存在且权限符合要求"
+        return self.registry.export_openai_tools_schema(
+            names=self._readonly_tool_names(),
             permission_level=READONLY_PERMISSION_LEVEL,
         )
 
-    def _get_readonly_tool(self, name: str):#校对工具是否存在且权限正确
-        if name != KNOWLEDGE_SEARCH_TOOL_NAME:
+    def _get_readonly_tool(self, name: str):
+        if name not in READONLY_TOOL_NAMES:
             raise AgentOrchestratorError("tool is not allowed: {0}".format(name))
 
-        tool = self.registry.get(name) 
+        tool = self.registry.get(name)
         if tool.permission_level != READONLY_PERMISSION_LEVEL:
             raise AgentOrchestratorError(
                 "tool permission denied: {0}".format(name)
@@ -344,7 +454,22 @@ class AgentOrchestrator:
         if not question:
             raise AgentOrchestratorError("question is required")
 
-        run_id = trace_service.create_run( # 创建agent运行数据库，方便后面的步骤和工具调用记录
+        memory = session_memory.load_session_memory(
+            session_id=session_id,
+            current_user_message_id=user_message_id,
+        )
+        memory_debug_context = session_memory.format_memory_debug_context(memory)
+        if memory_debug_context:
+            logger.info(
+                "agent memory context session_id=%s user_message_id=%s message_count=%s summary_updated=%s\n%s",
+                session_id,
+                user_message_id,
+                memory.message_count,
+                memory.summary_updated,
+                memory_debug_context,
+            )
+
+        run_id = trace_service.create_run(
             agent_name=self.agent_name,
             trace_id=trace_id,
             session_id=session_id,
@@ -352,22 +477,32 @@ class AgentOrchestrator:
             input_data={"question": question},
             meta={
                 "max_steps": self.max_steps,
-                "tools": [KNOWLEDGE_SEARCH_TOOL_NAME],
+                "tools": self._readonly_tool_names(),
                 "permission_level": READONLY_PERMISSION_LEVEL,
+                "memory": {
+                    "message_count": memory.message_count,
+                    "recent_message_count": len(memory.recent_messages),
+                    "has_summary": bool(memory.summary),
+                    "summary_updated": memory.summary_updated,
+                },
             },
         )
-        messages = _build_initial_messages(question) # prompet组装，包含system prompt和用户问题，后续会不断追加agent的回答和工具调用结果
+        messages = _build_initial_messages(
+            question,
+            session_summary=memory.summary,
+            history_messages=memory.recent_messages,
+        )
         tool_schemas = self._tool_schemas()
         observations: List[Dict[str, Any]] = []
         run_closed = False
 
         try:
-            for step_index in range(self.max_steps): # 最大步数循环，防止死循环
+            for step_index in range(self.max_steps):
                 step_name = "agent_step_{0}".format(step_index)
                 step_type = "llm_decision"
                 effective_tool_schemas = tool_schemas if not observations else None
                 effective_tool_choice = "auto" if effective_tool_schemas is not None else None
-                step_id = trace_service.create_step( # agent_steps 表记录每一步的输入输出和决策，方便后续分析和展示
+                step_id = trace_service.create_step(
                     run_id=run_id,
                     step_index=step_index,
                     step_type=step_type,
@@ -389,7 +524,7 @@ class AgentOrchestrator:
                         "status": AgentStepStatus.RUNNING,
                     },
                 )
-                llm_result = llm_service.generate_from_messages( # 调用llm服务
+                llm_result = llm_service.generate_from_messages(
                     messages,
                     tools=effective_tool_schemas,
                     tool_choice=effective_tool_choice,
@@ -403,7 +538,7 @@ class AgentOrchestrator:
                         or (llm_result.get("message") or {}).get("content")
                         or ""
                     ).strip()
-                    trace_service.finish_step( # 更新状态
+                    trace_service.finish_step(
                         step_id=step_id,
                         output_data={
                             "answer": final_answer,
@@ -429,11 +564,13 @@ class AgentOrchestrator:
                             "answer": final_answer,
                         },
                     )
+                    citations = _extract_observation_citations(observations)
                     trace_service.finish_run(
                         run_id=run_id,
                         output_data={
                             "answer": final_answer,
                             "observations": observations,
+                            "citations": citations,
                         },
                     )
                     run_closed = True
@@ -442,6 +579,7 @@ class AgentOrchestrator:
                         "answer": final_answer,
                         "messages": messages,
                         "observations": observations,
+                        "citations": citations,
                         "steps_used": step_index + 1,
                     }
 
@@ -543,5 +681,6 @@ __all__ = [
     "DEFAULT_AGENT_NAME",
     "DEFAULT_MAX_STEPS",
     "READONLY_PERMISSION_LEVEL",
+    "READONLY_TOOL_NAMES",
     "run_agent",
 ]

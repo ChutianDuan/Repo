@@ -25,8 +25,8 @@ UPLOAD_RESP="$(curl -fsS -X POST "${GATEWAY_BASE_URL}/v1/documents" \
   -F "file=@${TEST_FILE}")"
 echo "$UPLOAD_RESP"
 
-DOC_ID="$(printf "%s" "$UPLOAD_RESP" | json_read "data['doc_id']")"
-TASK_ID="$(printf "%s" "$UPLOAD_RESP" | json_read "data['task_id']")"
+DOC_ID="$(printf "%s" "$UPLOAD_RESP" | json_read "data.get('data', data)['doc_id']")"
+TASK_ID="$(printf "%s" "$UPLOAD_RESP" | json_read "data.get('data', data)['task_id']")"
 echo "doc_id=$DOC_ID"
 echo "task_id=$TASK_ID"
 

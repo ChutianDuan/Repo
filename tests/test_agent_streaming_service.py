@@ -46,12 +46,22 @@ class FakeAgentOrchestrator:
         return {
             "run_id": 501,
             "answer": "Agent final answer.",
+            "citations": [
+                {
+                    "doc_id": 7,
+                    "chunk_id": 11,
+                    "chunk_index": 0,
+                    "score": 0.91,
+                    "snippet": "架构说明",
+                }
+            ],
             "steps_used": 1,
         }
 
 
 def test_stream_agent_chat_emits_agent_and_legacy_events(monkeypatch):
     created_messages = []
+    saved_citations = []
 
     def fake_create_message(session_id, role, content, status="SUCCESS", meta=None):
         message_id = 700 + len(created_messages) + 1
@@ -67,6 +77,13 @@ def test_stream_agent_chat_emits_agent_and_legacy_events(monkeypatch):
         return row
 
     monkeypatch.setattr(agent_streaming_service, "create_message", fake_create_message)
+    monkeypatch.setattr(
+        agent_streaming_service,
+        "bulk_insert_citations",
+        lambda message_id, hits: saved_citations.append(
+            {"message_id": message_id, "hits": hits}
+        ),
+    )
     monkeypatch.setattr(
         agent_streaming_service,
         "AgentOrchestrator",
@@ -90,7 +107,21 @@ def test_stream_agent_chat_emits_agent_and_legacy_events(monkeypatch):
     assert "event: final" in raw_stream
     assert '"type": "delta"' in raw_stream
     assert '"type": "done"' in raw_stream
+    assert '"citation_count": 1' in raw_stream
     assert created_messages[0]["role"] == "user"
     assert created_messages[1]["role"] == "assistant"
     assert created_messages[1]["meta"]["agent_run_id"] == 501
-
+    assert saved_citations == [
+        {
+            "message_id": 702,
+            "hits": [
+                {
+                    "doc_id": 7,
+                    "chunk_id": 11,
+                    "chunk_index": 0,
+                    "score": 0.91,
+                    "snippet": "架构说明",
+                }
+            ],
+        }
+    ]

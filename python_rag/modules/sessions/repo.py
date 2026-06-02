@@ -50,3 +50,23 @@ def get_session_by_id(session_id):
             return cursor.fetchone()
     finally:
         conn.close()
+
+
+def update_session_summary(session_id, summary):
+    conn = get_mysql_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE sessions
+                SET summary=%s{updated_clause}
+                WHERE id=%s
+                """.format(
+                    updated_clause=", updated_at=CURRENT_TIMESTAMP"
+                    if has_column("sessions", "updated_at")
+                    else ""
+                ),
+                (summary, session_id),
+            )
+    finally:
+        conn.close()
