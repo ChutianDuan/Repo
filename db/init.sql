@@ -80,10 +80,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id BIGINT NOT NULL,
     title VARCHAR(255) NOT NULL DEFAULT 'New Session',
     summary TEXT NULL,
+    summary_message_id BIGINT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_sessions_user_updated (user_id, updated_at),
+    INDEX idx_sessions_summary_message (summary_message_id),
     CONSTRAINT fk_sessions_user
         FOREIGN KEY (user_id) REFERENCES user_account(id)
         ON DELETE CASCADE

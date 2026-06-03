@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from python_rag.core.errors import AppError
-from python_rag.modules.documents import service as document_service
+from python_rag.app.core.errors import AppError
+from python_rag.app.modules.documents import service as document_service
 
 
 def test_delete_document_removes_db_records_and_index_files(monkeypatch, tmp_path):

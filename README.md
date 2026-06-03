@@ -99,7 +99,7 @@ FastAPI Internal Service
 ```text
 Repo/
 ├── cpp_gateway/          # Drogon C++ 对外网关
-├── python_rag/           # FastAPI + Celery + RAG 业务实现
+├── python_rag/           # FastAPI + Celery + RAG / Agent 业务实现
 ├── db/                   # MySQL 初始化脚本与增量升级脚本
 ├── frontend/             # Vite + React + TypeScript 前端工作台
 ├── scripts/              # 数据库、API、worker、vLLM、E2E 启动脚本
@@ -108,6 +108,31 @@ Repo/
 ├── .env.example          # 后端环境变量示例
 └── README.md
 ```
+
+`python_rag/app` 采用轻量分层目录，重构只调整目录和 import，不改变 API、RAG 检索策略、数据库表结构或 SSE 协议：
+
+```text
+python_rag/app/
+├── main.py
+├── api/v1/routers/       # FastAPI HTTP 路由，保留原有 /internal/* 路径
+├── agent/                # Agent 决策、memory、tools、trace、streaming
+│   ├── memory/           # 会话记忆与摘要任务
+│   ├── streaming/        # Agent SSE 流式输出
+│   ├── tools/
+│   │   ├── base.py       # Tool 基类
+│   │   ├── registry.py   # Tool 注册表
+│   │   ├── local/        # 本地只读工具，如 knowledge_search、document tools
+│   │   └── mcp/          # MCP Tool 包装预留目录
+│   └── trace/            # Agent run / step / tool call trace 服务
+├── modules/              # chat、retrieval、documents、ingest、sessions、messages、tasks 等业务模块
+├── workers/              # Celery app 与 worker task 实现
+├── integrations/mcp/     # MCP client / 协议适配预留目录
+├── infra/                # MySQL、Redis、Storage、schema support
+├── core/                 # config、logger、errors、exception handlers、error codes
+└── shared/               # 无业务状态的公共工具函数
+```
+
+关键边界：HTTP 路由只负责请求入口，业务逻辑放在 `app/modules`；Agent 编排和工具注册放在 `app/agent`；Celery 执行入口放在 `app/workers`；MySQL、Redis、Storage 等基础设施放在 `app/infra`。
 
 ## 快速开始
 
@@ -241,6 +266,7 @@ bash scripts/start_api.sh
 
 # 4. 启动 Celery Worker，默认使用 rag-api
 bash scripts/start_worker.sh
+# Celery app 入口：python_rag.app.workers.celery_app
 
 # 5. 启动 C++ Gateway
 bash cpp_gateway/scripts/start_gateway.sh
@@ -404,7 +430,9 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 
 ```bash
 pip install -r python_rag/requirements-dev.txt
-python3 -m compileall python_rag
+cd python_rag
+python3 -m compileall app
+cd ..
 python3 -m pytest tests
 bash scripts/ci_smoke.sh
 ```

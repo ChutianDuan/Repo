@@ -1,6 +1,6 @@
-from python_rag.core.error_codes import ERR_INVALID_REQUEST
-from python_rag.core.errors import AppError
-from python_rag.modules.chat import streaming_service
+from python_rag.app.core.error_codes import ERR_INVALID_REQUEST
+from python_rag.app.core.errors import AppError
+from python_rag.app.modules.chat import streaming_service
 
 
 class _NullContext:

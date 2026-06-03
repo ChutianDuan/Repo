@@ -1,9 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
-from python_rag.modules.chat.common import build_citations_from_hits
-from python_rag.modules.chat.schemas import SubmitChatJobRequest
-from python_rag.modules.retrieval.schemas import SearchRequest
+from python_rag.app.modules.chat.common import build_citations_from_hits
+from python_rag.app.modules.chat.schemas import SubmitChatJobRequest
+from python_rag.app.modules.retrieval.schemas import SearchRequest
 
 
 def test_doc_ids_are_normalized_consistently_across_requests():

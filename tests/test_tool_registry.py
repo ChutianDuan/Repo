@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from python_rag.app.tools.base import BaseTool
-from python_rag.app.tools.registry import ToolRegistry
+from python_rag.app.agent.tools.base import BaseTool
+from python_rag.app.agent.tools.registry import ToolRegistry
 
 
 class EchoTool(BaseTool):

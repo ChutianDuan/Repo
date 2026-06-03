@@ -1,6 +1,6 @@
 import pytest
 
-from python_rag.modules.retrieval import reranker_service
+from python_rag.app.modules.retrieval import reranker_service
 
 
 def test_rerank_falls_back_to_recall_order(monkeypatch):

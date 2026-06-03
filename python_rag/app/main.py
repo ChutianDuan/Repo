@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 
-from python_rag.core.errors import AppError
-from python_rag.core.exception_handlers import (
+from python_rag.app.core.errors import AppError
+from python_rag.app.core.exception_handlers import (
     app_error_handler,
     generic_exception_handler,
 )
-from python_rag.app.routers import register_routers
+from python_rag.app.api.v1.routers import register_routers
 
 app = FastAPI(
     title="Python RAG",

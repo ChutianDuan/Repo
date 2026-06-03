@@ -144,3 +144,43 @@ SET @stmt = (
 PREPARE s FROM @stmt;
 EXECUTE s;
 DEALLOCATE PREPARE s;
+
+-- =========================================================
+-- 7. 补 sessions.summary_message_id
+-- =========================================================
+SET @stmt = (
+    SELECT IF(
+        COUNT(*) = 0,
+        'ALTER TABLE sessions
+            ADD COLUMN summary_message_id BIGINT NULL
+            AFTER summary',
+        'SELECT ''skip: sessions.summary_message_id exists'''
+    )
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'sessions'
+      AND COLUMN_NAME = 'summary_message_id'
+);
+PREPARE s FROM @stmt;
+EXECUTE s;
+DEALLOCATE PREPARE s;
+
+
+-- =========================================================
+-- 8. sessions(summary_message_id) 索引
+-- =========================================================
+SET @stmt = (
+    SELECT IF(
+        COUNT(*) = 0,
+        'ALTER TABLE sessions ADD INDEX idx_sessions_summary_message (summary_message_id)',
+        'SELECT ''skip: idx_sessions_summary_message exists'''
+    )
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'sessions'
+      AND INDEX_NAME = 'idx_sessions_summary_message'
+);
+PREPARE s FROM @stmt;
+EXECUTE s;
+DEALLOCATE PREPARE s;
+

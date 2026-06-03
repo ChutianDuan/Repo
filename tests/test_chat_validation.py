@@ -1,12 +1,12 @@
 import pytest
 
-from python_rag.core.error_codes import (
+from python_rag.app.core.error_codes import (
     ERR_INVALID_REQUEST,
     ERR_MESSAGE_NOT_FOUND,
     ERR_SESSION_NOT_FOUND,
 )
-from python_rag.core.errors import AppError
-from python_rag.modules.chat import validation
+from python_rag.app.core.errors import AppError
+from python_rag.app.modules.chat import validation
 
 
 def test_validate_chat_user_message_accepts_user_message(monkeypatch):

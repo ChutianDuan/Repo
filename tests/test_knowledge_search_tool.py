@@ -1,7 +1,7 @@
 import asyncio
 
-from python_rag.app.tools import KNOWLEDGE_SEARCH_TOOL_NAME, default_registry
-from python_rag.app.tools.knowledge_tools import KnowledgeSearchTool
+from python_rag.app.agent.tools import KNOWLEDGE_SEARCH_TOOL_NAME, default_registry
+from python_rag.app.agent.tools.local.knowledge_tools import KnowledgeSearchTool
 
 
 def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
@@ -37,11 +37,11 @@ def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "python_rag.app.tools.knowledge_tools.search_in_documents",
+        "python_rag.app.agent.tools.local.knowledge_tools.search_in_documents",
         fake_search_in_documents,
     )
     monkeypatch.setattr(
-        "python_rag.app.tools.knowledge_tools.get_document_by_id",
+        "python_rag.app.agent.tools.local.knowledge_tools.get_document_by_id",
         lambda doc_id: {"id": doc_id, "filename": "guide.md"},
     )
 
@@ -90,7 +90,7 @@ def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
 
 def test_knowledge_search_tool_truncates_content(monkeypatch):
     monkeypatch.setattr(
-        "python_rag.app.tools.knowledge_tools.search_in_documents",
+        "python_rag.app.agent.tools.local.knowledge_tools.search_in_documents",
         lambda **kwargs: {
             "hits": [
                 {
@@ -104,7 +104,7 @@ def test_knowledge_search_tool_truncates_content(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "python_rag.app.tools.knowledge_tools.get_document_by_id",
+        "python_rag.app.agent.tools.local.knowledge_tools.get_document_by_id",
         lambda doc_id: {"id": doc_id, "filename": "long.md"},
     )
 
@@ -126,7 +126,7 @@ def test_knowledge_search_tool_returns_error_on_failure(monkeypatch):
         raise RuntimeError("retrieval backend unavailable")
 
     monkeypatch.setattr(
-        "python_rag.app.tools.knowledge_tools.search_in_documents",
+        "python_rag.app.agent.tools.local.knowledge_tools.search_in_documents",
         fake_search_in_documents,
     )
 

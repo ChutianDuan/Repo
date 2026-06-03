@@ -23,24 +23,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from python_rag.modules.ingest.chunking_service import (
+from python_rag.app.modules.ingest.chunking_service import (
     chunk_text_by_title,
     extract_text_from_document,
 )
-from python_rag.modules.ingest.embedding_service import (
+from python_rag.app.modules.ingest.embedding_service import (
     embed_documents,
     get_embedding_model_name,
     get_embedding_provider,
 )
-from python_rag.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-from python_rag.modules.monitor.request_metrics import (
+from python_rag.app.core.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from python_rag.app.modules.monitor.request_metrics import (
     build_usage_metrics,
     estimate_messages_tokens,
     estimate_text_tokens,
 )
-from python_rag.modules.retrieval import reranker_service
-from python_rag.modules.retrieval import service as retrieval_service
-from python_rag.utils import http_client
+from python_rag.app.modules.retrieval import reranker_service
+from python_rag.app.modules.retrieval import service as retrieval_service
+from python_rag.app.shared import http_client
 
 
 DOC_ID = 1

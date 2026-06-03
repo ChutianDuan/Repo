@@ -29,7 +29,7 @@ CELERY_CONCURRENCY="${CELERY_CONCURRENCY:-4}"
 
 echo "[INFO] worker CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>}"
 
-celery -A python_rag.modules.tasks.celery_app worker \
+celery -A python_rag.app.workers.celery_app worker \
   -l INFO \
   --pool "${CELERY_POOL}" \
   --concurrency "${CELERY_CONCURRENCY}"

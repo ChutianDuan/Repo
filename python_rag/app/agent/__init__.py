@@ -4,7 +4,7 @@ from python_rag.app.agent.models import (
     create_agent_tool_call,
     get_agent_run,
 )
-from python_rag.app.agent.trace_service import (
+from python_rag.app.agent.trace.trace_service import (
     create_run,
     create_step,
     create_tool_call,

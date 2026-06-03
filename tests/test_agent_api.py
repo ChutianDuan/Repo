@@ -4,9 +4,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from python_rag.app.routers import agent_router as agent_api
-from python_rag.core.errors import AppError
-from python_rag.core.exception_handlers import app_error_handler
+from python_rag.app.api.v1.routers import agent_router as agent_api
+from python_rag.app.core.errors import AppError
+from python_rag.app.core.exception_handlers import app_error_handler
 
 
 api_test_app = FastAPI()
@@ -280,14 +280,14 @@ def test_get_agent_run_steps_endpoint(monkeypatch):
 
 
 def test_agent_router_is_in_unified_router_registry():
-    from python_rag.app.routers import ROUTER_MODULES
+    from python_rag.app.api.v1.routers import ROUTER_MODULES
 
-    assert "python_rag.app.routers.agent_router" in ROUTER_MODULES
+    assert "python_rag.app.api.v1.routers.agent_router" in ROUTER_MODULES
 
 
 def test_agent_routes_register_internal_primary_and_api_compatibility():
     paths = {route.path for route in api_test_app.routes}
-    chat_router_source = Path("python_rag/app/routers/chat_router.py").read_text(
+    chat_router_source = Path("python_rag/app/api/v1/routers/chat_router.py").read_text(
         encoding="utf-8",
     )
 

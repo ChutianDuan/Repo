@@ -4,16 +4,16 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from python_rag.app.agent import trace_service
+from python_rag.app.agent.trace import trace_service
 from python_rag.app.agent.memory import session as session_memory
 from python_rag.app.agent.schemas import AgentStepStatus, AgentToolCallStatus
-from python_rag.app.tools.document_tools import (
+from python_rag.app.agent.tools.local.document_tools import (
     DOCUMENT_DETAIL_TOOL_NAME,
     LIST_READY_DOCUMENTS_TOOL_NAME,
 )
-from python_rag.app.tools.knowledge_tools import KNOWLEDGE_SEARCH_TOOL_NAME
-from python_rag.app.tools.registry import ToolRegistry, default_registry
-from python_rag.modules.llm import service as llm_service
+from python_rag.app.agent.tools.local.knowledge_tools import KNOWLEDGE_SEARCH_TOOL_NAME
+from python_rag.app.agent.tools.registry import ToolRegistry, default_registry
+from python_rag.app.modules.llm import service as llm_service
 
 
 DEFAULT_AGENT_NAME = "rag-agent"
@@ -194,28 +194,13 @@ def _extract_observation_citations(
 def _build_initial_messages(
     question: str,
     system_prompt: str = SYSTEM_PROMPT,
-    session_summary: str = "",
-    history_messages: Optional[List[Dict[str, Any]]] = None,
+    memory: Optional[session_memory.SessionMemory] = None,
 ) -> List[Dict[str, Any]]:
-    messages: List[Dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": system_prompt,
-        }
-    ]
-
-    summary_context = session_memory.build_session_summary_context(session_summary)
-    if summary_context:
-        messages.append({"role": "system", "content": summary_context})
-
-    for history_message in history_messages or []:
-        role = str(history_message.get("role") or "").strip()
-        content = str(history_message.get("content") or "").strip()
-        if role in ("user", "assistant") and content:
-            messages.append({"role": role, "content": content})
-
-    messages.append({"role": "user", "content": question})
-    return messages
+    return session_memory.build_agent_messages(
+        system_prompt=system_prompt,
+        question=question,
+        memory=memory,
+    )
 
 
 class AgentOrchestrator:
@@ -461,11 +446,12 @@ class AgentOrchestrator:
         memory_debug_context = session_memory.format_memory_debug_context(memory)
         if memory_debug_context:
             logger.info(
-                "agent memory context session_id=%s user_message_id=%s message_count=%s summary_updated=%s\n%s",
+                "agent memory context session_id=%s user_message_id=%s message_count=%s summary_message_id=%s summary_task_queued=%s\n%s",
                 session_id,
                 user_message_id,
                 memory.message_count,
-                memory.summary_updated,
+                memory.summary_message_id,
+                memory.summary_task_queued,
                 memory_debug_context,
             )
 
@@ -483,14 +469,15 @@ class AgentOrchestrator:
                     "message_count": memory.message_count,
                     "recent_message_count": len(memory.recent_messages),
                     "has_summary": bool(memory.summary),
+                    "summary_message_id": memory.summary_message_id,
+                    "summary_task_queued": memory.summary_task_queued,
                     "summary_updated": memory.summary_updated,
                 },
             },
         )
         messages = _build_initial_messages(
             question,
-            session_summary=memory.summary,
-            history_messages=memory.recent_messages,
+            memory=memory,
         )
         tool_schemas = self._tool_schemas()
         observations: List[Dict[str, Any]] = []

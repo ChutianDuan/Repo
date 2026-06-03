@@ -1,6 +1,6 @@
 import json
 
-from python_rag.modules.llm import service as llm_service
+from python_rag.app.modules.llm import service as llm_service
 
 
 class _FakeResponse:

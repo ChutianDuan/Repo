@@ -1,6 +1,6 @@
 import asyncio
 
-from python_rag.app.streaming import agent_streaming_service
+from python_rag.app.agent.streaming import agent_streaming_service
 
 
 class FakeAgentOrchestrator:

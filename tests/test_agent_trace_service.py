@@ -1,4 +1,4 @@
-from python_rag.app.agent import trace_service
+from python_rag.app.agent.trace import trace_service
 from python_rag.app.agent.schemas import (
     AgentRunStatus,
     AgentStepStatus,

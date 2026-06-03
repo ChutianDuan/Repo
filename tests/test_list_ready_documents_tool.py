@@ -2,14 +2,14 @@ import asyncio
 from datetime import datetime
 
 from python_rag.app.agent.orchestrator import AgentOrchestrator
-from python_rag.app.tools import LIST_READY_DOCUMENTS_TOOL_NAME, default_registry
-from python_rag.app.tools.document_tools import (
+from python_rag.app.agent.tools import LIST_READY_DOCUMENTS_TOOL_NAME, default_registry
+from python_rag.app.agent.tools.local.document_tools import (
     DOCUMENT_DETAIL_TOOL_NAME,
     GetDocumentDetailTool,
     ListReadyDocumentsTool,
 )
-from python_rag.app.tools.knowledge_tools import KNOWLEDGE_SEARCH_TOOL_NAME, KnowledgeSearchTool
-from python_rag.app.tools.registry import ToolRegistry
+from python_rag.app.agent.tools.local.knowledge_tools import KNOWLEDGE_SEARCH_TOOL_NAME, KnowledgeSearchTool
+from python_rag.app.agent.tools.registry import ToolRegistry
 
 
 def test_list_ready_documents_tool_returns_ready_indexed_documents(monkeypatch):
@@ -45,7 +45,7 @@ def test_list_ready_documents_tool_returns_ready_indexed_documents(monkeypatch):
         ]
 
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.list_documents",
+        "python_rag.app.agent.tools.local.document_tools.list_documents",
         fake_list_documents,
     )
 
@@ -68,7 +68,7 @@ def test_list_ready_documents_tool_returns_ready_indexed_documents(monkeypatch):
 
 def test_list_ready_documents_tool_returns_empty_list(monkeypatch):
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.list_documents",
+        "python_rag.app.agent.tools.local.document_tools.list_documents",
         lambda status=None, limit=100: [],
     )
 
@@ -82,7 +82,7 @@ def test_list_ready_documents_tool_returns_error_on_failure(monkeypatch):
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.list_documents",
+        "python_rag.app.agent.tools.local.document_tools.list_documents",
         fake_list_documents,
     )
 

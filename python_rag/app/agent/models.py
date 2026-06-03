@@ -1,7 +1,7 @@
 import json
 from typing import Any, Dict, Optional
 
-from python_rag.infra.mysql import get_mysql_connection
+from python_rag.app.infra.mysql import get_mysql_connection
 
 
 _UNSET = object()

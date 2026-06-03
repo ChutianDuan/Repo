@@ -1,4 +1,4 @@
-from python_rag.utils.http_client import should_bypass_proxy
+from python_rag.app.shared.http_client import should_bypass_proxy
 
 
 def test_should_bypass_proxy_for_local_and_private_urls():

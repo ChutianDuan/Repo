@@ -2,10 +2,10 @@ import asyncio
 from datetime import datetime
 
 from python_rag.app.agent.orchestrator import AgentOrchestrator
-from python_rag.app.tools import DOCUMENT_DETAIL_TOOL_NAME, default_registry
-from python_rag.app.tools.document_tools import GetDocumentDetailTool
-from python_rag.app.tools.knowledge_tools import KNOWLEDGE_SEARCH_TOOL_NAME, KnowledgeSearchTool
-from python_rag.app.tools.registry import ToolRegistry
+from python_rag.app.agent.tools import DOCUMENT_DETAIL_TOOL_NAME, default_registry
+from python_rag.app.agent.tools.local.document_tools import GetDocumentDetailTool
+from python_rag.app.agent.tools.local.knowledge_tools import KNOWLEDGE_SEARCH_TOOL_NAME, KnowledgeSearchTool
+from python_rag.app.agent.tools.registry import ToolRegistry
 
 
 def test_get_document_detail_tool_returns_document_metadata(monkeypatch):
@@ -25,11 +25,11 @@ def test_get_document_detail_tool_returns_document_metadata(monkeypatch):
         return {"doc_id": doc_id, "chunk_count": "128"}
 
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.get_document_by_id",
+        "python_rag.app.agent.tools.local.document_tools.get_document_by_id",
         fake_get_document_by_id,
     )
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.get_document_index_by_doc_id",
+        "python_rag.app.agent.tools.local.document_tools.get_document_index_by_doc_id",
         fake_get_document_index_by_doc_id,
     )
 
@@ -47,7 +47,7 @@ def test_get_document_detail_tool_returns_document_metadata(monkeypatch):
 
 def test_get_document_detail_tool_defaults_missing_index_chunk_count(monkeypatch):
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.get_document_by_id",
+        "python_rag.app.agent.tools.local.document_tools.get_document_by_id",
         lambda doc_id: {
             "id": doc_id,
             "filename": "draft.md",
@@ -56,7 +56,7 @@ def test_get_document_detail_tool_defaults_missing_index_chunk_count(monkeypatch
         },
     )
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.get_document_index_by_doc_id",
+        "python_rag.app.agent.tools.local.document_tools.get_document_index_by_doc_id",
         lambda doc_id: None,
     )
 
@@ -79,7 +79,7 @@ def test_get_document_detail_tool_returns_error_for_invalid_document_id():
 
 def test_get_document_detail_tool_returns_error_when_document_missing(monkeypatch):
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.get_document_by_id",
+        "python_rag.app.agent.tools.local.document_tools.get_document_by_id",
         lambda doc_id: None,
     )
 
@@ -87,7 +87,7 @@ def test_get_document_detail_tool_returns_error_when_document_missing(monkeypatc
         raise AssertionError("index lookup should not run for a missing document")
 
     monkeypatch.setattr(
-        "python_rag.app.tools.document_tools.get_document_index_by_doc_id",
+        "python_rag.app.agent.tools.local.document_tools.get_document_index_by_doc_id",
         fail_get_index,
     )
 
