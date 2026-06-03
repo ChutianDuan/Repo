@@ -55,7 +55,7 @@ Evaluate triplet margin and pseudo retrieval metrics
 | LoRA output | `./outputs/kalm_05b_lora_triplet_ddp_v2/final` |
 | Triplet samples | 1727 |
 
-当前项目的 `python_rag/modules/ingest/embedding_service.py` 通过 `SentenceTransformer(EMBEDDING_MODEL)` 加载 embedding 模型。如果要直接使用 LoRA 结果，建议先将 LoRA adapter 合并或导出为可被 `SentenceTransformer` 直接加载的模型目录；另一种方式是扩展 embedding service，让它显式加载 base model 和 adapter。
+当前项目的 `python_rag/app/modules/ingest/embedding_service.py` 通过 `SentenceTransformer(EMBEDDING_MODEL)` 加载 embedding 模型。如果要直接使用 LoRA 结果，建议先将 LoRA adapter 合并或导出为可被 `SentenceTransformer` 直接加载的模型目录；另一种方式是扩展 embedding service，让它显式加载 base model 和 adapter。
 
 ## Triplet 级别指标
 

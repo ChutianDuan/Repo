@@ -20,8 +20,8 @@
 
 | 优先级 | 发现 | 影响 | 建议 |
 | --- | --- | --- | --- |
-| 已修复 | 流式 chat 对 `user_message_id` 的校验弱于异步 chat。现在已新增 `python_rag/modules/chat/validation.py`，异步提交、Celery 运行时和 SSE 运行时复用 `validate_chat_user_message()`。 | 已避免 assistant/system 消息被直接当作用户问题再次生成，也避免错误改写非 user 消息状态。 | 后续可以继续扩展状态机约束，例如只允许 `PENDING` / `PROCESSING` 的 user message 进入生成链路。 |
-| P1 | 检索按文档 fan-out，并且每次请求从磁盘读取 FAISS 和 mapping。全局检索最多取 1000 个 READY 文档，见 `python_rag/modules/retrieval/service.py:145` 到 `python_rag/modules/retrieval/service.py:150`；每个文档都会调用检索，见 `python_rag/modules/retrieval/service.py:233` 到 `python_rag/modules/retrieval/service.py:257`；底层每次 `faiss.read_index` 和 `json.load`，见 `python_rag/modules/retrieval/faiss_service.py:56` 到 `python_rag/modules/retrieval/faiss_service.py:60`。 | 文档数量或单文档 chunk 数上来后，磁盘 I/O、JSON 解析和 fan-out 延迟会快速放大。 | 短期加 LRU/TTL index cache；中期做知识库级或分片 FAISS；长期评估 ANN / 向量数据库。 |
+| 已修复 | 流式 chat 对 `user_message_id` 的校验弱于异步 chat。现在已新增 `python_rag/app/modules/chat/validation.py`，异步提交、Celery 运行时和 SSE 运行时复用 `validate_chat_user_message()`。 | 已避免 assistant/system 消息被直接当作用户问题再次生成，也避免错误改写非 user 消息状态。 | 后续可以继续扩展状态机约束，例如只允许 `PENDING` / `PROCESSING` 的 user message 进入生成链路。 |
+| P1 | 检索按文档 fan-out，并且每次请求从磁盘读取 FAISS 和 mapping。全局检索最多取 1000 个 READY 文档，见 `python_rag/app/modules/retrieval/service.py:320` 到 `python_rag/app/modules/retrieval/service.py:324`；每个文档都会调用检索，见 `python_rag/app/modules/retrieval/service.py` 的每个文档索引检索分支；底层每次 `faiss.read_index` 和 `json.load`，见 `python_rag/app/modules/retrieval/faiss_service.py:57` 到 `python_rag/app/modules/retrieval/faiss_service.py:60`。 | 文档数量或单文档 chunk 数上来后，磁盘 I/O、JSON 解析和 fan-out 延迟会快速放大。 | 短期加 LRU/TTL index cache；中期做知识库级或分片 FAISS；长期评估 ANN / 向量数据库。 |
 | 部分缓解 | SSE 网关每个流式请求仍会使用一个 detached OS thread 和阻塞 libcurl 读取上游，但现在已用 `GATEWAY_MAX_STREAMS` 限制并发流数量。 | 并发资源不再无限增长；高并发下仍会按活跃流占用线程。 | 后续改为受控线程池、连接计数和超时回收；或者使用支持流式回调的异步 HTTP 客户端。 |
 | 已修复 | Gateway 转发 GET query 时原来手动拼接参数，没有 URL encode。现在 `cpp_gateway/src/main.cc` 已补 `urlEncode()`、`appendQueryParam()` 和 `buildPathWithQuery()`。 | 特殊字符不会再破坏转发语义。 | 后续如果 GET 路由继续增加，复用该 helper。 |
 | P2 | Gateway 的 MySQL / Redis 连接仍以 `cpp_gateway/config.json` 为准，安全配置和部分路径来自 `.env`。 | 部署时容易误以为 `.env` 已经覆盖全部配置，导致环境漂移。 | 将 config.json 生成化，或让启动脚本按 `.env` 渲染 config。 |
@@ -91,7 +91,7 @@
 已执行：
 
 ```bash
-python3 -m compileall python_rag
+cd python_rag && python3 -m compileall app && cd ..
 python3 -m pytest tests
 bash scripts/ci_smoke.sh
 bash -n scripts/init_db.sh

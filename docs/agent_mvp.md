@@ -44,6 +44,10 @@ FastAPI Internal Service
   +-- BM25 + FAISS: knowledge_search retrieval
 ```
 
+## 代码目录
+
+Agent 相关代码已经收敛在 `python_rag/app/agent`：`orchestrator.py` 负责编排决策，`tools/local` 放本地只读工具，`tools/mcp` 是 MCP Tool 包装预留目录，`streaming` 负责 Agent SSE 输出，`trace` 负责持久化 run / step / tool call。普通 RAG、chat、retrieval、documents、ingest、sessions、messages、tasks 等业务模块位于 `python_rag/app/modules`；Celery app 和 worker task 位于 `python_rag/app/workers`。
+
 ## 启动说明
 
 ### 1. 环境变量
@@ -205,6 +209,6 @@ python3 -m pytest \
 更完整的本地检查：
 
 ```bash
-python3 -m compileall python_rag
+cd python_rag && python3 -m compileall app && cd ..
 python3 -m pytest tests
 ```

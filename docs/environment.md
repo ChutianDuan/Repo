@@ -13,6 +13,8 @@
 | Remote LLM API | provider URL | `bash scripts/start_vllm.sh` | OpenAI-compatible API 连通性检查；默认不启动本地模型。 |
 | MySQL / Redis | `.env` / `cpp_gateway/config.json` | 外部服务 | 持久化、任务队列、限流。 |
 
+代码目录边界：FastAPI 入口仍是 `python_rag.app.main:app`；HTTP 路由位于 `python_rag/app/api/v1/routers`；业务模块位于 `python_rag/app/modules`；Agent 编排、工具、Trace 和流式输出位于 `python_rag/app/agent`；Celery app 入口为 `python_rag.app.workers.celery_app`；配置、基础设施和公共工具分别位于 `python_rag/app/core`、`python_rag/app/infra`、`python_rag/app/shared`。
+
 重要区别：
 
 - 前端默认使用流式回答，调用 `POST /v1/chat/stream`，不会产生 `chat_generate` Celery task。

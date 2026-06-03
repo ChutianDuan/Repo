@@ -2,7 +2,7 @@
 
 本文说明当前系统从“上传文件”到“基于文档问答”的完整链路，并重点解释 chunk 切片、embedding 向量化、FAISS 本地索引、Top-K 召回、重排序、上下文拼接和 vLLM 调用之间的关系。
 
-本文按目标设计说明时，假设 embedding 向量维度为 `512`，向量类型为 `float32`，索引类型为 FAISS `IndexFlatIP`。当前代码的 chunk 配置来自 [python_rag/config.py](../python_rag/config.py)，默认 `INGEST_CHUNK_SIZE=800`、`INGEST_CHUNK_OVERLAP=100`。
+本文按目标设计说明时，假设 embedding 向量维度为 `512`，向量类型为 `float32`，索引类型为 FAISS `IndexFlatIP`。当前代码的 chunk 配置来自 [python_rag/app/core/config.py](../python_rag/app/core/config.py)，默认 `INGEST_CHUNK_SIZE=800`、`INGEST_CHUNK_OVERLAP=100`。
 
 ## 1. 总体链路
 
