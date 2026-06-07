@@ -1,6 +1,6 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 
 from python_rag.app.agent.models import (
@@ -20,7 +20,8 @@ from python_rag.app.core.errors import AppError, SessionNotFoundError
 from python_rag.app.modules.chat.repo import bulk_insert_citations
 from python_rag.app.modules.messages.repo import create_message
 from python_rag.app.modules.sessions.repo import get_session_by_id
-from python_rag.app.shared.common import ApiResponse, api_response
+from python_rag.app.shared.common import api_response
+from python_rag.app.shared.schemas import ApiResponse
 
 
 internal_router = APIRouter(prefix="/internal/agent", tags=["agent"])
@@ -66,13 +67,17 @@ def _save_agent_citations(message_id: int, citations: List[Dict[str, Any]]) -> N
         bulk_insert_citations(message_id=message_id, hits=citations)
 
 
-def _agent_streaming_response(req: AgentChatRequest) -> StreamingResponse:
+def _agent_streaming_response(
+    req: AgentChatRequest,
+    last_event_id: Optional[str] = None,
+) -> StreamingResponse:
     _ensure_session(req.session_id)
     return StreamingResponse(
         stream_agent_chat(
             session_id=req.session_id,
             message=req.message,
             trace_id=req.trace_id,
+            last_event_id=last_event_id,
         ),
         media_type="text/event-stream",
         headers={
@@ -85,9 +90,12 @@ def _agent_streaming_response(req: AgentChatRequest) -> StreamingResponse:
 
 @legacy_router.post("/chat", response_model=ApiResponse)
 @internal_router.post("/chat", response_model=ApiResponse)
-async def agent_chat(req: AgentChatRequest):
+async def agent_chat(
+    req: AgentChatRequest,
+    last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+):
     if req.stream:
-        return _agent_streaming_response(req)
+        return _agent_streaming_response(req, last_event_id=last_event_id)
 
     _ensure_session(req.session_id)
     user_message = create_message(
@@ -140,8 +148,11 @@ async def agent_chat(req: AgentChatRequest):
 
 @legacy_router.post("/chat/stream")
 @internal_router.post("/chat/stream")
-async def agent_chat_stream(req: AgentChatRequest):
-    return _agent_streaming_response(req)
+async def agent_chat_stream(
+    req: AgentChatRequest,
+    last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+):
+    return _agent_streaming_response(req, last_event_id=last_event_id)
 
 
 @legacy_router.get("/runs/{run_id}", response_model=ApiResponse)

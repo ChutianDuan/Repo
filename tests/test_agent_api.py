@@ -141,7 +141,9 @@ def test_agent_chat_stream_returns_sse(monkeypatch):
         lambda session_id: {"id": session_id, "user_id": 1},
     )
 
-    async def fake_stream_agent_chat(session_id, message, trace_id=None):
+    async def fake_stream_agent_chat(
+        session_id, message, trace_id=None, last_event_id=None
+    ):
         yield 'event: agent_step\ndata: {"type":"agent_step","step_index":0}\n\n'
         yield 'event: final\ndata: {"type":"final","answer":"hello"}\n\n'
         yield 'data: {"type":"done","meta":{"run_id":1001}}\n\n'

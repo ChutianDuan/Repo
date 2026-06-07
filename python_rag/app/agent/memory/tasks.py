@@ -4,6 +4,7 @@ from python_rag.app.agent.memory.session import run_session_summary_update
 from python_rag.app.workers.celery_app import celery_app
 
 
+# Celery 只负责调度，实际摘要选择、生成和落库逻辑都在 session.py。
 @celery_app.task(bind=True, name="python_rag.tasks.session_summary_update")
 def session_summary_task(
     self,

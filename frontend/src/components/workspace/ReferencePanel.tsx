@@ -3,7 +3,7 @@ import type { TaskStatus } from "../../types/task";
 import { EmptyState } from "../common/EmptyState";
 import { ProgressBar } from "../common/ProgressBar";
 import { StatusBadge } from "../common/StatusBadge";
-import { formatScore, stateTone } from "../../utils/format";
+import { formatDurationMs, formatNumber, formatScore, stateTone } from "../../utils/format";
 
 interface ReferencePanelProps {
   citations: Citation[];
@@ -13,36 +13,79 @@ interface ReferencePanelProps {
 
 function getMetaText(meta: Record<string, unknown> | null | undefined, key: string): string {
   const value = meta?.[key];
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || value === "") {
     return "--";
   }
   return String(value);
 }
 
+function getMetaNumber(meta: Record<string, unknown> | null | undefined, key: string): number | null {
+  const value = meta?.[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 export function ReferencePanel({ citations, chatTask, ingestTask }: ReferencePanelProps) {
+  const retrievedCount = getMetaNumber(chatTask?.meta, "retrieved_count");
+  const rawHitCount = getMetaNumber(chatTask?.meta, "raw_hit_count");
+  const retrievalMs = getMetaNumber(chatTask?.meta, "retrieval_ms");
+  const citationCount = citations.length || getMetaNumber(chatTask?.meta, "citation_count") || 0;
+
   return (
     <aside className="reference-panel">
       <div className="reference-panel__head">
         <div>
-          <p className="eyebrow">Evidence</p>
-          <h2>引用与检索命中</h2>
+          <span className="section-label">Evidence</span>
+          <h2>检索证据</h2>
         </div>
-        <StatusBadge label={`${citations.length} sources`} tone={citations.length > 0 ? "ok" : "muted"} />
+        <StatusBadge label={`${formatNumber(citationCount)} sources`} tone={citationCount > 0 ? "ok" : "muted"} />
       </div>
 
+      <section className="reference-section reference-section--metrics">
+        <div className="evidence-metrics" aria-label="retrieval evidence metrics">
+          <div>
+            <span>Retrieval Chunks</span>
+            <strong>{formatNumber(retrievedCount)}</strong>
+          </div>
+          <div>
+            <span>Citations</span>
+            <strong>{formatNumber(citationCount)}</strong>
+          </div>
+          <div>
+            <span>Latency</span>
+            <strong>{formatDurationMs(retrievalMs)}</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>{chatTask?.state || "idle"}</strong>
+          </div>
+        </div>
+      </section>
+
       <section className="reference-section">
-        <h3>Answer Sources</h3>
+        <div className="reference-section__title">
+          <h3>Citations</h3>
+          <span>{formatNumber(citations.length)} shown</span>
+        </div>
         {citations.length === 0 ? (
-          <EmptyState title="暂无引用" description="回答完成后，这里会展示 chunk 分数、片段和来源文档。" />
+          <EmptyState title="暂无引用" description="回答完成后展示来源文档、chunk、分数和片段。" />
         ) : (
           <div className="source-list">
             {citations.map((citation, index) => (
               <article key={`${citation.chunk_id}-${index}`} className="source-card">
-                <div>
-                  <strong>doc #{citation.doc_id}</strong>
-                  <span>chunk #{citation.chunk_index}</span>
-                </div>
-                <span className="score-pill">{formatScore(citation.score)}</span>
+                <header>
+                  <div>
+                    <strong>doc #{citation.doc_id}</strong>
+                    <span>chunk #{citation.chunk_index}</span>
+                  </div>
+                  <span className="score-pill">score {formatScore(citation.score)}</span>
+                </header>
                 <p>{citation.snippet}</p>
               </article>
             ))}
@@ -51,21 +94,27 @@ export function ReferencePanel({ citations, chatTask, ingestTask }: ReferencePan
       </section>
 
       <section className="reference-section">
-        <h3>Retrieved Chunks</h3>
+        <div className="reference-section__title">
+          <h3>Retrieval Chunks</h3>
+          <span>{rawHitCount === null ? "raw hits --" : `raw hits ${formatNumber(rawHitCount)}`}</span>
+        </div>
         <div className="context-grid">
           <span>retrieved</span>
-          <strong>{getMetaText(chatTask?.meta, "retrieved_count")}</strong>
-          <span>raw hits</span>
-          <strong>{getMetaText(chatTask?.meta, "raw_hit_count")}</strong>
+          <strong>{formatNumber(retrievedCount)}</strong>
           <span>context mode</span>
           <strong>{getMetaText(chatTask?.meta, "context_mode")}</strong>
-          <span>source</span>
+          <span>answer source</span>
           <strong>{getMetaText(chatTask?.meta, "answer_source")}</strong>
+          <span>steps used</span>
+          <strong>{getMetaText(chatTask?.meta, "steps_used")}</strong>
         </div>
       </section>
 
       <section className="reference-section">
-        <h3>Pipeline</h3>
+        <div className="reference-section__title">
+          <h3>Status</h3>
+          <span>ingest and answer tasks</span>
+        </div>
         <div className="pipeline-card">
           <div>
             <span>Ingest</span>
@@ -76,7 +125,7 @@ export function ReferencePanel({ citations, chatTask, ingestTask }: ReferencePan
         </div>
         <div className="pipeline-card">
           <div>
-            <span>Chat</span>
+            <span>LLM</span>
             <StatusBadge label={chatTask?.state || "idle"} tone={stateTone(chatTask?.state)} />
           </div>
           <ProgressBar value={chatTask?.progress || 0} />

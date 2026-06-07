@@ -35,7 +35,8 @@ SYSTEM_PROMPT = (
     "如果用户询问当前知识库有哪些文档、能问哪些资料或哪些文档已经建好索引，必须调用 list_ready_documents。"
     "如果 knowledge_search 没有返回结果，应明确说明当前知识库证据不足，不要编造。"
     "如果 knowledge_search 返回 error，应说明检索工具失败并给出降级说明，不要编造文档结论。"
-    "获取工具结果后，应直接回答用户问题。"
+    "获取工具结果后，应判断证据是否足够；足够时回答用户问题，不足时可继续调用只读工具补充上下文。"
+    "避免重复发起相同或无意义的工具调用。"
     "如果工具结果中包含有用的文档标题，应在回答中引用这些标题。"
 )
 AgentEventSink = Callable[[Dict[str, Any]], Any]
@@ -439,6 +440,7 @@ class AgentOrchestrator:
         if not question:
             raise AgentOrchestratorError("question is required")
 
+        # 读取会话记忆；后续构造 messages 时会注入摘要和最近对话。
         memory = session_memory.load_session_memory(
             session_id=session_id,
             current_user_message_id=user_message_id,
@@ -475,6 +477,7 @@ class AgentOrchestrator:
                 },
             },
         )
+        # 初始 messages 包含 system prompt、会话记忆和当前 question。
         messages = _build_initial_messages(
             question,
             memory=memory,
@@ -487,7 +490,8 @@ class AgentOrchestrator:
             for step_index in range(self.max_steps):
                 step_name = "agent_step_{0}".format(step_index)
                 step_type = "llm_decision"
-                effective_tool_schemas = tool_schemas if not observations else None
+                # 每轮都暴露只读工具，让 agent 自己决定继续调工具还是结束回答。
+                effective_tool_schemas = tool_schemas
                 effective_tool_choice = "auto" if effective_tool_schemas is not None else None
                 step_id = trace_service.create_step(
                     run_id=run_id,
@@ -511,11 +515,13 @@ class AgentOrchestrator:
                         "status": AgentStepStatus.RUNNING,
                     },
                 )
+                # 循环调用 LLM：messages 会累积 question、assistant 工具请求和 tool 结果。
                 llm_result = llm_service.generate_from_messages(
                     messages,
                     tools=effective_tool_schemas,
                     tool_choice=effective_tool_choice,
                 )
+                # 解析本轮 LLM 决策；没有 tool_calls 表示 agent 选择输出最终答案。
                 usage = _extract_usage(llm_result)
                 tool_calls = llm_result.get("tool_calls") or []
 
@@ -570,6 +576,7 @@ class AgentOrchestrator:
                         "steps_used": step_index + 1,
                     }
 
+                # 先记录 assistant 的工具请求，下一条 tool 消息需要与 tool_call_id 配对。
                 assistant_message = {
                     "role": "assistant",
                     "content": (llm_result.get("message") or {}).get("content") or "",
@@ -579,6 +586,7 @@ class AgentOrchestrator:
 
                 step_observations = []
                 for call_index, tool_call in enumerate(tool_calls):
+                    # 执行工具调用，并把原始结果保存为 observation 供 trace 和引用提取使用。
                     observation = await self._execute_tool_call(
                         run_id=run_id,
                         step_id=step_id,
@@ -588,6 +596,7 @@ class AgentOrchestrator:
                     )
                     observations.append(observation)
                     step_observations.append(observation)
+                    # 工具结果追加到 messages，相当于把检索结果加入上下文给下一轮 LLM 判断。
                     messages.append(
                         {
                             "role": "tool",

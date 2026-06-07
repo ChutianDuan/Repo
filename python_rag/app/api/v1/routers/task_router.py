@@ -13,7 +13,8 @@ from python_rag.app.modules.tasks.service import (
     list_tasks,
     list_tasks_by_entity,
 )
-from python_rag.app.shared.common import ApiResponse, api_response
+from python_rag.app.shared.common import api_response
+from python_rag.app.shared.schemas import ApiResponse
 
 router = APIRouter(prefix="/internal", tags=["tasks"])
 

@@ -2,8 +2,9 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from python_rag.app.core.error_codes import OK
+from python_rag.app.modules.health.schemas import HealthData
 from python_rag.app.modules.health.service import get_health_status
-from python_rag.app.shared.common import ApiResponse, HealthData
+from python_rag.app.shared.schemas import ApiResponse
 
 router = APIRouter(prefix="/internal", tags=["health"])
 

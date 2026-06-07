@@ -44,40 +44,55 @@ export function ChatInputBar({
 
   return (
     <form className="chat-input-bar" onSubmit={handleSubmit}>
-      <textarea
-        value={question}
-        onChange={(event) => onQuestionChange(event.target.value)}
-        placeholder={isChatting ? "正在生成回答..." : "基于已上传笔记提问..."}
-        rows={3}
-        disabled={isChatting}
-      />
+      <label className="question-field" htmlFor="rag-question-input">
+        <span>User Question</span>
+        <textarea
+          id="rag-question-input"
+          value={question}
+          onChange={(event) => onQuestionChange(event.target.value)}
+          placeholder={isChatting ? "正在生成回答..." : "基于已上传笔记提问"}
+          rows={3}
+          disabled={isChatting}
+        />
+      </label>
+
       <div className="chat-input-bar__controls">
-        <label className="file-control">
-          <input type="file" accept=".md,.txt,.json,.csv,.pdf,.docx,.xlsx" onChange={handleFileChange} />
-          <span>{selectedFileName || "选择笔记"}</span>
-        </label>
-        <button type="button" className="button-secondary" onClick={onUpload} disabled={pending !== null}>
-          {pending === "upload" ? "索引中" : "上传并索引"}
-        </button>
-        <label className="toggle-control">
-          <input
-            type="checkbox"
-            checked={ragEnabled}
-            onChange={(event) => onRagEnabledChange(event.target.checked)}
-          />
-          <span>使用知识库</span>
-        </label>
-        <label className="mini-field">
-          <span>引用数</span>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={topK}
-            onChange={(event) => onTopKChange(Number(event.target.value))}
-          />
-        </label>
-        <button type="submit" disabled={pending !== null || !canAsk || !question.trim()}>
+        <div className="chat-input-bar__upload">
+          <span>Document Upload</span>
+          <div>
+            <label className="file-control">
+              <input type="file" accept=".md,.txt,.json,.csv,.pdf,.docx,.xlsx" onChange={handleFileChange} />
+              <strong>{selectedFileName || "选择文件"}</strong>
+            </label>
+            <button type="button" className="button-secondary" onClick={onUpload} disabled={pending !== null}>
+              {pending === "upload" ? "索引中" : "上传并索引"}
+            </button>
+          </div>
+        </div>
+
+        <div className="chat-input-bar__settings">
+          <span>Retrieval</span>
+          <label className="toggle-control">
+            <input
+              type="checkbox"
+              checked={ragEnabled}
+              onChange={(event) => onRagEnabledChange(event.target.checked)}
+            />
+            <span>知识库</span>
+          </label>
+          <label className="mini-field">
+            <span>topK</span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={topK}
+              onChange={(event) => onTopKChange(Number(event.target.value))}
+            />
+          </label>
+        </div>
+
+        <button className="chat-submit-button" type="submit" disabled={pending !== null || !canAsk || !question.trim()}>
           {isChatting ? (streamingEnabled ? "回答中" : "处理中") : "提问"}
         </button>
       </div>

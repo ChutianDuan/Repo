@@ -124,9 +124,9 @@ def _patch_trace(monkeypatch, recorder):
     )
 
 
-def _tool_call(arguments):
+def _tool_call(arguments, call_id="call_knowledge_1"):
     return {
-        "id": "call_knowledge_1",
+        "id": call_id,
         "type": "function",
         "function": {
             "name": "knowledge_search",
@@ -208,8 +208,10 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
     assert knowledge_tool.calls == [{"query": "系统架构", "top_k": 5}]
     assert len(llm_calls) == 2
     assert llm_calls[0]["tool_choice"] == "auto"
-    assert llm_calls[1]["tools"] is None
-    assert llm_calls[1]["tool_choice"] is None
+    assert [tool["function"]["name"] for tool in llm_calls[1]["tools"]] == [
+        "knowledge_search",
+    ]
+    assert llm_calls[1]["tool_choice"] == "auto"
     assert [tool["function"]["name"] for tool in llm_calls[0]["tools"]] == [
         "knowledge_search",
     ]
@@ -233,6 +235,102 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
     assert "agent_step" in event_types
     assert "tool_call" in event_types
     assert "tool_result" in event_types
+
+
+def test_agent_orchestrator_allows_multiple_tool_rounds_before_final_answer(monkeypatch):
+    recorder = FakeTraceRecorder()
+    _patch_trace(monkeypatch, recorder)
+    knowledge_tool = FakeKnowledgeSearchTool()
+    registry = ToolRegistry([knowledge_tool])
+    llm_calls = []
+
+    def fake_generate_from_messages(messages, tools=None, tool_choice=None):
+        llm_calls.append(
+            {
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice,
+            }
+        )
+        if len(llm_calls) == 1:
+            return {
+                "answer": "先查系统架构。",
+                "message": {
+                    "content": "先查系统架构。",
+                    "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
+                },
+                "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
+                "usage": {},
+            }
+
+        if len(llm_calls) == 2:
+            tool_messages = [message for message in messages if message["role"] == "tool"]
+            assert len(tool_messages) == 1
+            assert tools is not None
+            assert tool_choice == "auto"
+            return {
+                "answer": "还需要查 Celery。",
+                "message": {
+                    "content": "还需要查 Celery。",
+                    "tool_calls": [
+                        _tool_call(
+                            {"query": "Celery Worker", "top_k": 5},
+                            call_id="call_knowledge_2",
+                        )
+                    ],
+                },
+                "tool_calls": [
+                    _tool_call(
+                        {"query": "Celery Worker", "top_k": 5},
+                        call_id="call_knowledge_2",
+                    )
+                ],
+                "usage": {},
+            }
+
+        tool_messages = [message for message in messages if message["role"] == "tool"]
+        assert len(tool_messages) == 2
+        return {
+            "answer": "项目架构和 Celery Worker 信息已补齐。",
+            "message": {
+                "content": "项目架构和 Celery Worker 信息已补齐。",
+                "tool_calls": [],
+            },
+            "tool_calls": [],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(
+        orchestrator.llm_service,
+        "generate_from_messages",
+        fake_generate_from_messages,
+    )
+
+    result = asyncio.run(
+        orchestrator.AgentOrchestrator(registry=registry, max_steps=3).run(
+            "根据项目文档总结系统架构和 Celery Worker"
+        )
+    )
+
+    assert result["answer"] == "项目架构和 Celery Worker 信息已补齐。"
+    assert result["steps_used"] == 3
+    assert knowledge_tool.calls == [
+        {"query": "系统架构", "top_k": 5},
+        {"query": "Celery Worker", "top_k": 5},
+    ]
+    assert len(llm_calls) == 3
+    assert [tool["function"]["name"] for tool in llm_calls[1]["tools"]] == [
+        "knowledge_search",
+    ]
+    assert llm_calls[1]["tool_choice"] == "auto"
+    assert [step["decision"] for step in recorder.finished_steps] == [
+        "tool_call",
+        "tool_call",
+        "final_answer",
+    ]
+    assert len(recorder.tool_calls) == 2
+    assert recorder.tool_calls[1]["tool_call_id"] == "call_knowledge_2"
+    assert recorder.finished_runs
 
 
 def test_agent_orchestrator_answers_greeting_without_tool(monkeypatch):

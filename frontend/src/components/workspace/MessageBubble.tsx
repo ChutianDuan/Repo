@@ -14,7 +14,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     <article className={`message-bubble message-bubble--${message.role}`}>
       <div className="message-bubble__head">
         <div>
-          <span>{message.role === "user" ? "Question" : "Answer"}</span>
+          <span>{message.role === "user" ? "User Question" : isStreaming ? "Answer Stream" : "Final Answer"}</span>
           <TimestampText value={message.created_at} />
         </div>
         <StatusBadge label={message.status} tone={stateTone(message.status)} />
@@ -27,7 +27,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         <div className="inline-citations">
           {message.citations.slice(0, 4).map((citation, index) => (
             <span key={`${message.message_id}-${citation.chunk_id}-${index}`}>
-              doc {citation.doc_id} · chunk {citation.chunk_index} · {formatScore(citation.score)}
+              doc {citation.doc_id} / chunk {citation.chunk_index} / score {formatScore(citation.score)}
             </span>
           ))}
         </div>

@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Query
 
-from python_rag.app.modules.sessions.schemas import (
-    CreateSessionRequest,
-    CreateSessionResponse,
+from python_rag.app.modules.messages.schemas import (
     CreateMessageRequest,
     CreateMessageResponse,
     ListMessagesResponse,
     UpdateMessageStatusRequest,
     UpdateMessageStatusResponse,
+)
+from python_rag.app.modules.sessions.schemas import (
+    CreateSessionRequest,
+    CreateSessionResponse,
 )
 from python_rag.app.modules.sessions.service import (
     create_session_service,

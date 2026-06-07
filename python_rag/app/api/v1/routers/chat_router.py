@@ -2,7 +2,8 @@ from fastapi import APIRouter
 
 from python_rag.app.modules.chat.schemas import SubmitChatJobRequest
 from python_rag.app.modules.chat.service import submit_chat_job
-from python_rag.app.shared.common import ApiResponse, api_response
+from python_rag.app.shared.common import api_response
+from python_rag.app.shared.schemas import ApiResponse
 
 router = APIRouter(prefix="/internal/jobs", tags=["chat"])
 

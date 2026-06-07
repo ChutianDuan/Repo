@@ -2,12 +2,7 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from typing import Any, Dict, Optional
 
-
-DEFAULT_INPUT_SCHEMA: Dict[str, Any] = {
-    "type": "object",
-    "properties": {},
-    "additionalProperties": False,
-}
+from python_rag.app.agent.tools.schemas import DEFAULT_INPUT_SCHEMA
 
 __all__ = [
     "BaseTool",

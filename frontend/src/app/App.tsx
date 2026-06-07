@@ -132,7 +132,6 @@ export default function App() {
   const [monitorError, setMonitorError] = useState<string | null>(null);
 
   const currentMessages = session ? messagesBySession[session.session_id] || [] : [];
-  const currentDocument = documents.find((document) => document.doc_id === currentDocumentId) || null;
   const readyDocuments = documents.filter((document) => document.status === "READY");
   const overview = monitorOverview || buildFallbackOverview(health, taskRecords, documents, apiLatencyMs, topK);
   const selectedFileName = selectedFile?.name || null;
@@ -361,7 +360,7 @@ export default function App() {
     });
   }
 
-  function handleAgentFinalEvent(event: AgentFinalEvent) {
+  function handleAgentFinalEvent(_event: AgentFinalEvent) {
     upsertAgentTraceRow({
       id: "agent-generation",
       type: "agent_step",
@@ -1060,6 +1059,8 @@ export default function App() {
   useEffect(() => {
     void refreshUsers(true);
     void refreshDocuments(true);
+    // This effect is intentionally keyed only by API base URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl]);
 
   usePolling(() => refreshHealth(true), route === "monitor" ? 2000 : 5000, true);

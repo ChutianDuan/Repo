@@ -30,6 +30,7 @@ _ROLE_LABELS = {
     "assistant": "助手",
 }
 
+# 历史消息属于不可信输入，进入摘要或 prompt 前先过滤明显的提示注入片段。
 _PROMPT_INJECTION_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in [
@@ -135,6 +136,7 @@ def _coerce_memory_message(
         return None
 
 
+# 统一清洗数据库消息：只保留用户消息和成功完成的助手消息，避免把当前问题重复注入记忆。
 def _clean_memory_messages(
     messages: List[Dict[str, Any]],
     current_user_message_id: Optional[int] = None,
@@ -191,6 +193,7 @@ def _message_token_count(message: MemoryMessage) -> int:
     )
 
 
+# 摘要来源会先做安全过滤和 token 截断，防止旧消息过长或携带注入内容。
 def _limit_summary_source_messages(
     messages: Iterable[MemoryMessage],
     max_tokens: int = SUMMARY_SOURCE_MAX_TOKENS,
@@ -226,6 +229,7 @@ def _limit_summary_source_messages(
     return selected
 
 
+# 只摘要短期记忆窗口之外、且还没有被 summary_message_id 覆盖过的旧消息。
 def _select_summary_source_messages(
     messages: Sequence[MemoryMessage],
     summary_message_id: Optional[int],
@@ -247,6 +251,7 @@ def _select_summary_source_messages(
     return _limit_summary_source_messages(selected)
 
 
+# 构造摘要 LLM prompt：旧摘要作为已有中期记忆，新旧消息只作为待整理资料。
 def build_summary_messages(
     existing_summary: str,
     source_messages: Sequence[Union[MemoryMessage, Dict[str, Any]]],
@@ -284,6 +289,7 @@ def build_summary_messages(
     ]
 
 
+# 调用 LLM 生成新的中期记忆，并在返回前再次清洗和限长。
 def summarize_messages(
     existing_summary: str,
     source_messages: Sequence[Union[MemoryMessage, Dict[str, Any]]],
@@ -313,6 +319,7 @@ def build_session_summary_context(summary: str) -> str:
     )
 
 
+# Agent prompt 中先放中期记忆摘要，再放最近对话作为短期记忆。
 def build_agent_memory_messages(memory: SessionMemory) -> List[Dict[str, str]]:
     messages: List[Dict[str, str]] = []
     summary_context = build_session_summary_context(memory.summary)
@@ -325,6 +332,7 @@ def build_agent_memory_messages(memory: SessionMemory) -> List[Dict[str, str]]:
     return messages
 
 
+# 最终发给 Agent 的 messages = 系统提示 + 记忆上下文 + 当前用户 question。
 def build_agent_messages(
     system_prompt: str,
     question: str,
@@ -352,6 +360,7 @@ def format_memory_debug_context(memory: SessionMemory) -> str:
     return "\n\n".join(parts)
 
 
+# 根据消息数量和已摘要位置决定是否需要异步更新 session summary。
 def _build_summary_task_payload(
     session_id: int,
     messages: List[Dict[str, Any]],
@@ -382,6 +391,7 @@ def _build_summary_task_payload(
     )
 
 
+# 延迟导入 Celery task，避免 memory.session 和 memory.tasks 在模块加载时循环依赖。
 def enqueue_summary_update(payload: SessionSummaryTaskPayload) -> None:
     from python_rag.app.agent.memory.tasks import session_summary_task
 
@@ -418,6 +428,7 @@ def _maybe_enqueue_summary_update(
         return False
 
 
+# 请求链路读取记忆：立即返回最近对话，同时按需触发后台摘要更新。
 def load_session_memory(
     session_id: Optional[int],
     current_user_message_id: Optional[int] = None,
@@ -455,6 +466,7 @@ def load_session_memory(
     )
 
 
+# 后台任务入口：重新读取会话消息，生成并持久化新的 session summary。
 def run_session_summary_update(
     session_id: int,
     current_user_message_id: Optional[int] = None,

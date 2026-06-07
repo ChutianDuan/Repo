@@ -1,6 +1,6 @@
 import { EmptyState } from "./common/EmptyState";
 import { StatusBadge } from "./common/StatusBadge";
-import { stateTone } from "../utils/format";
+import { formatNumber, stateTone } from "../utils/format";
 
 export interface AgentTraceRow {
   id: string;
@@ -32,61 +32,104 @@ function displayText(value: string | undefined): string {
   return value && value.trim() ? value : "--";
 }
 
+function traceKind(row: AgentTraceRow): string {
+  if (row.type === "tool_call") {
+    return "Tool Call";
+  }
+  if (row.type === "tool_result") {
+    return "Tool Result";
+  }
+  if (row.id.includes("generation")) {
+    return "Final Answer";
+  }
+  return "Agent Step";
+}
+
+function traceTitle(row: AgentTraceRow): string {
+  if (row.type === "tool_call") {
+    return row.tool ? `调用 ${row.tool}` : "调用工具";
+  }
+  if (row.type === "tool_result") {
+    return row.tool ? `${row.tool} 返回结果` : "工具返回结果";
+  }
+  return displayText(row.output || row.type);
+}
+
 export function AgentTracePanel({ rows }: AgentTracePanelProps) {
   const latestStatus = rows[rows.length - 1]?.status || "idle";
+  const toolCallCount = rows.filter((row) => row.type === "tool_call").length;
+  const agentStepCount = rows.filter((row) => row.type !== "tool_call" && row.type !== "tool_result").length;
+  const totalLatency = rows.reduce((sum, row) => sum + (row.latencyMs || 0), 0);
 
   return (
     <aside className="agent-trace-panel">
       <div className="agent-trace-panel__head">
         <div>
-          <p className="eyebrow">Agent Trace</p>
-          <h2>执行轨迹</h2>
+          <span className="section-label">Agent Trace</span>
+          <h2>执行路径</h2>
         </div>
         <StatusBadge label={latestStatus} tone={stateTone(latestStatus)} />
       </div>
 
       <section className="agent-trace-section">
-        {rows.length === 0 ? (
-          <EmptyState title="暂无 Agent 轨迹" description="Agent 开始判断、检索和生成后会实时展示步骤。" />
-        ) : (
-          <>
-            <div className="agent-trace-timeline">
-              {rows.map((row) => (
-                <div key={`${row.id}-summary`}>
-                  <strong>Step {row.step}</strong>
-                  <span>{displayText(row.output || row.type)}</span>
-                </div>
-              ))}
-            </div>
+        <div className="trace-metrics" aria-label="agent trace metrics">
+          <div>
+            <span>Agent Steps</span>
+            <strong>{formatNumber(agentStepCount)}</strong>
+          </div>
+          <div>
+            <span>Tool Calls</span>
+            <strong>{formatNumber(toolCallCount)}</strong>
+          </div>
+          <div>
+            <span>Latency</span>
+            <strong>{formatLatency(totalLatency || undefined)}</strong>
+          </div>
+        </div>
 
-            <div className="agent-trace-table" role="table" aria-label="Agent trace">
-              <div className="agent-trace-table__row agent-trace-table__row--head" role="row">
-                <span>Step</span>
-                <span>Type</span>
-                <span>Tool</span>
-                <span>Input</span>
-                <span>Output</span>
-                <span>Latency</span>
-                <span>Status</span>
-              </div>
-              {rows.map((row) => (
-                <div key={row.id} className="agent-trace-table__row" role="row">
-                  <span>{row.step}</span>
-                  <span>{displayText(row.type)}</span>
-                  <span>{displayText(row.tool)}</span>
-                  <span title={row.input}>{displayText(row.input)}</span>
-                  <span title={row.output}>{displayText(row.output)}</span>
-                  <span>{formatLatency(row.latencyMs)}</span>
-                  <span>
+        {rows.length === 0 ? (
+          <EmptyState title="暂无 Agent 轨迹" description="提问后展示判断、工具调用、检索结果和生成步骤。" />
+        ) : (
+          <div className="agent-path" aria-label="Agent execution path">
+            {rows.map((row) => (
+              <article key={row.id} className={`agent-path-card agent-path-card--${stateTone(row.status)}`}>
+                <div className="agent-path-card__marker">{row.step}</div>
+                <div className="agent-path-card__body">
+                  <div className="agent-path-card__top">
+                    <span>{traceKind(row)}</span>
                     <StatusBadge label={row.status} tone={stateTone(row.status)} />
-                  </span>
+                  </div>
+                  <h3>{traceTitle(row)}</h3>
+                  <dl className="agent-path-card__meta">
+                    <div>
+                      <dt>Type</dt>
+                      <dd>{displayText(row.type)}</dd>
+                    </div>
+                    <div>
+                      <dt>Tool</dt>
+                      <dd>{displayText(row.tool)}</dd>
+                    </div>
+                    <div>
+                      <dt>Latency</dt>
+                      <dd>{formatLatency(row.latencyMs)}</dd>
+                    </div>
+                  </dl>
+                  <div className="agent-path-card__io">
+                    <div>
+                      <span>Input</span>
+                      <p title={row.input}>{displayText(row.input)}</p>
+                    </div>
+                    <div>
+                      <span>Output</span>
+                      <p title={row.output}>{displayText(row.output)}</p>
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </>
+              </article>
+            ))}
+          </div>
         )}
       </section>
     </aside>
   );
 }
-

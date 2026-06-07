@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Query
 
-from python_rag.app.modules.user.service import create_user, get_latest_users
-from python_rag.app.shared.common import (
-    ApiResponse,
+from python_rag.app.modules.user.schemas import (
     CreateUserRequest,
     UserItem,
     UserListData,
-    api_response,
 )
+from python_rag.app.modules.user.service import create_user, get_latest_users
+from python_rag.app.shared.common import api_response
+from python_rag.app.shared.schemas import ApiResponse
 
 router = APIRouter(prefix="/internal/users", tags=["users"])
 

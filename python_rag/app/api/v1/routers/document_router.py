@@ -6,7 +6,8 @@ from python_rag.app.modules.documents.service import (
     get_document_detail,
     list_document_items,
 )
-from python_rag.app.shared.common import ApiResponse, api_response
+from python_rag.app.shared.common import api_response
+from python_rag.app.shared.schemas import ApiResponse
 
 router = APIRouter(prefix="/internal", tags=["documents"])
 

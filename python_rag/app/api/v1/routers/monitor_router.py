@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 
 from python_rag.app.modules.monitor.service import get_monitor_overview
-from python_rag.app.shared.common import ApiResponse, api_response
+from python_rag.app.shared.common import api_response
+from python_rag.app.shared.schemas import ApiResponse
 
 
 router = APIRouter(prefix="/internal/monitor", tags=["monitor"])

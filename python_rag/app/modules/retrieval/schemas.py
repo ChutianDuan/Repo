@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from python_rag.app.shared.schemas import ApiResponse
 from python_rag.app.shared.validators import normalize_positive_int_list
 
 
@@ -72,9 +73,7 @@ class SearchResponseData(BaseModel):
     metrics: SearchMetrics | None = None
 
 
-class SearchResponse(BaseModel):
-    code: int = 0
-    message: str = "ok"
+class SearchResponse(ApiResponse):
     data: SearchResponseData
 
 

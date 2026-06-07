@@ -1,8 +1,7 @@
-from typing import Any, Dict, List, Optional
-
-from pydantic import BaseModel, Field
+from typing import Any, Dict
 
 from python_rag.app.core.error_codes import OK
+from python_rag.app.shared.schemas import ApiResponse
 
 
 def api_response(
@@ -17,34 +16,7 @@ def api_response(
     }
 
 
-class ApiResponse(BaseModel):
-    code: int = OK
-    message: str = "ok"
-    data: Optional[Any] = None
-
-
-class DependencyHealth(BaseModel):
-    ok: bool
-    code: Optional[int] = None
-    message: Optional[str] = None
-
-
-class HealthData(BaseModel):
-    ok: bool
-    mysql: DependencyHealth
-    redis: DependencyHealth
-
-
-class CreateUserRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=64)
-
-
-class UserItem(BaseModel):
-    id: int
-    name: str
-    created_at: str
-
-
-class UserListData(BaseModel):
-    count: int
-    items: List[UserItem]
+__all__ = [
+    "ApiResponse",
+    "api_response",
+]
