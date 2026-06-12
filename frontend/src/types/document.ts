@@ -1,6 +1,8 @@
 export interface UploadDocumentResponse {
   doc_id: number;
   filename: string;
+  status?: string;
+  index_status?: string | null;
   task_id: string;
   db_task_id: number;
   state: string;
@@ -24,13 +26,14 @@ export interface DocumentDetail {
   mime: string;
   size_bytes: number;
   status: string;
+  index_status?: string | null;
   storage_path: string;
   error_message?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
 
-export type DocumentStatus = "UPLOADED" | "PROCESSING" | "INGESTING" | "READY" | "FAILED";
+export type DocumentStatus = "UPLOADED" | "PROCESSING" | "INGESTING" | "READY" | "FAILED" | "uploaded" | "parsing" | "parsed" | "indexing" | "indexed" | "failed";
 
 export interface DocumentListItem {
   doc_id: number;

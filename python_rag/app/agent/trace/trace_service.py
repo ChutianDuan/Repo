@@ -21,6 +21,7 @@ __all__ = [
     "create_tool_call",
     "finish_tool_call",
     "fail_tool_call",
+    "build_tool_result_preview",
 ]
 
 
@@ -50,6 +51,43 @@ def _model_value(value: Any) -> Any:
     if value is _UNSET:
         return models._UNSET
     return value
+
+
+def build_tool_result_preview(tool_name: str, result: Any) -> Optional[str]:
+    if not isinstance(result, dict):
+        return _preview(result)
+
+    if tool_name == "knowledge_search":
+        retrieval = result.get("retrieval") or {}
+        parts = []
+        total = result.get("total")
+        if total is not None:
+            parts.append("total={0}".format(total))
+        provider = retrieval.get("provider")
+        if provider:
+            parts.append("provider={0}".format(provider))
+        dense_top_k = retrieval.get("dense_top_k")
+        if dense_top_k is not None:
+            parts.append("dense_top_k={0}".format(dense_top_k))
+        rerank_top_k = retrieval.get("rerank_top_k")
+        if rerank_top_k is not None:
+            parts.append("rerank_top_k={0}".format(rerank_top_k))
+        candidate_count = retrieval.get("candidate_count")
+        if candidate_count is not None:
+            parts.append("candidates={0}".format(candidate_count))
+        vector_ms = retrieval.get("vector_search_latency_ms")
+        if vector_ms is not None:
+            parts.append("vector_ms={0}".format(vector_ms))
+        rerank_ms = retrieval.get("rerank_latency_ms")
+        if rerank_ms is not None:
+            parts.append("rerank_ms={0}".format(rerank_ms))
+        retrieval_ms = retrieval.get("retrieval_latency_ms")
+        if retrieval_ms is not None:
+            parts.append("retrieval_ms={0}".format(retrieval_ms))
+        if parts:
+            return "; ".join(parts)[:_PREVIEW_MAX_CHARS]
+
+    return _preview(result)
 
 
 def create_run(

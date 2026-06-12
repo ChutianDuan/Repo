@@ -14,6 +14,7 @@ def test_delete_document_removes_db_records_and_index_files(monkeypatch, tmp_pat
         path.write_text("content", encoding="utf-8")
 
     calls = []
+    vector_delete_calls = []
     monkeypatch.setattr(
         document_service,
         "get_document_by_id",
@@ -35,10 +36,12 @@ def test_delete_document_removes_db_records_and_index_files(monkeypatch, tmp_pat
         }
 
     monkeypatch.setattr(document_service, "delete_document_by_id", fake_delete)
+    monkeypatch.setattr(document_service, "delete_document_vectors", lambda doc_id: vector_delete_calls.append(doc_id))
 
     result = document_service.delete_document(7)
 
     assert calls == [7]
+    assert vector_delete_calls == [7]
     assert result["deleted"] is True
     assert result["deleted_chunks"] == 3
     assert not upload_path.exists()

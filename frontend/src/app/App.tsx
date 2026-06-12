@@ -11,6 +11,7 @@ import {
   buildLocalMessage,
   buildMetricPoint,
   getChunkCount,
+  isIndexedDocument,
   isTerminalTask,
   normalizeTopK,
   parsePositiveInteger,
@@ -44,6 +45,7 @@ import { createUser, listLatestUsers } from "../services/userService";
 import { usePolling } from "../hooks/usePolling";
 import type { HealthSnapshot } from "../types/api";
 import type { DocumentListItem } from "../types/document";
+import type { Citation } from "../types/citation";
 import type { ChatMessage } from "../types/message";
 import type { MetricPoint, MonitorOverview } from "../types/monitor";
 import type { Session, SessionSummary } from "../types/session";
@@ -51,7 +53,7 @@ import type { TaskRecord, TaskStatus } from "../types/task";
 import type { UserItem } from "../types/user";
 import { nowIso } from "../utils/format";
 import type { PendingAction } from "./appState";
-import type { AgentTraceRow } from "../components/AgentTracePanel";
+import type { AgentTraceRow, RetrievalTraceDetails, TraceCitation } from "../components/AgentTracePanel";
 
 type AgentTracePatch = Omit<AgentTraceRow, "step">;
 
@@ -64,6 +66,87 @@ function summarizeValue(value: unknown, maxLength = 140): string {
     return "";
   }
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function getRetrievalTrace(result: unknown): RetrievalTraceDetails | undefined {
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const retrieval = (result as { retrieval?: unknown }).retrieval;
+  if (!retrieval || typeof retrieval !== "object") {
+    return undefined;
+  }
+  const item = retrieval as Record<string, unknown>;
+  return {
+    provider: typeof item.provider === "string" ? item.provider : undefined,
+    denseTopK: asNumber(item.dense_top_k),
+    rerankTopK: asNumber(item.rerank_top_k),
+    candidateCount: asNumber(item.candidate_count),
+    vectorSearchLatencyMs: asNumber(item.vector_search_latency_ms),
+    rerankLatencyMs: asNumber(item.rerank_latency_ms),
+    retrievalLatencyMs: asNumber(item.retrieval_latency_ms),
+  };
+}
+
+function normalizeCitation(value: unknown): Citation | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const item = value as Record<string, unknown>;
+  const docId = asNumber(item.doc_id ?? item.document_id);
+  const chunkId = asNumber(item.chunk_id ?? item.id);
+  const chunkIndex = asNumber(item.chunk_index ?? item.index ?? item.seq);
+  if (docId === null || chunkId === null || chunkIndex === null) {
+    return null;
+  }
+  return {
+    citation_id: asNumber(item.citation_id) ?? undefined,
+    doc_id: docId,
+    chunk_id: chunkId,
+    chunk_index: chunkIndex,
+    score: asNumber(item.score) ?? 0,
+    snippet: String(item.snippet ?? item.content ?? ""),
+    created_at: typeof item.created_at === "string" ? item.created_at : undefined,
+  };
+}
+
+function normalizeCitations(value: unknown): Citation[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(normalizeCitation).filter((item): item is Citation => item !== null);
+}
+
+function getResultCitations(result: unknown): TraceCitation[] {
+  if (!result || typeof result !== "object") {
+    return [];
+  }
+  const results = (result as { results?: unknown }).results;
+  if (!Array.isArray(results)) {
+    return [];
+  }
+  return results.map((value) => {
+    const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    return {
+      docId: asNumber(item.doc_id ?? item.document_id),
+      chunkId: asNumber(item.chunk_id ?? item.id),
+      chunkIndex: asNumber(item.chunk_index ?? item.index ?? item.seq),
+      score: asNumber(item.score),
+      snippet: String(item.snippet ?? item.content ?? ""),
+      title: typeof item.title === "string" ? item.title : undefined,
+    };
+  });
 }
 
 function getResultCount(result: unknown): number | null {
@@ -132,7 +215,7 @@ export default function App() {
   const [monitorError, setMonitorError] = useState<string | null>(null);
 
   const currentMessages = session ? messagesBySession[session.session_id] || [] : [];
-  const readyDocuments = documents.filter((document) => document.status === "READY");
+  const readyDocuments = documents.filter(isIndexedDocument);
   const overview = monitorOverview || buildFallbackOverview(health, taskRecords, documents, apiLatencyMs, topK);
   const selectedFileName = selectedFile?.name || null;
 
@@ -331,6 +414,8 @@ export default function App() {
         ? "获得工具结果"
         : `获得 ${resultCount} 条结果`;
     const status = normalizeTraceStatus(event.status, "SUCCESS");
+    const retrieval = getRetrievalTrace(event.result);
+    const citations = getResultCitations(event.result);
 
     upsertAgentTraceRow({
       id: `tool-call-${agentToolTraceId(event)}`,
@@ -349,6 +434,8 @@ export default function App() {
       output,
       latencyMs: event.latency_ms,
       status,
+      retrieval,
+      citations,
     });
     upsertAgentTraceRow({
       id: "agent-generation",
@@ -373,6 +460,10 @@ export default function App() {
 
   function updateDocumentFromTask(docId: number, task: TaskStatus) {
     const chunkCount = getChunkCount(task.meta);
+    const metaIndexStatus = typeof task.meta?.index_status === "string" ? task.meta.index_status : null;
+    const nextIndexStatus =
+      metaIndexStatus || (task.state === "FAILURE" ? "failed" : task.state === "SUCCESS" ? "indexed" : "indexing");
+    const indexed = ["indexed", "ready"].includes(String(nextIndexStatus).toLowerCase());
     setDocuments((current) =>
       current.map((document) => {
         if (document.doc_id !== docId) {
@@ -381,10 +472,11 @@ export default function App() {
 
         return {
           ...document,
-          status: task.state === "SUCCESS" ? "READY" : task.state === "FAILURE" ? "FAILED" : "PROCESSING",
-          progress: task.progress,
+          status: task.state === "FAILURE" ? "failed" : document.status || "uploaded",
+          index_status: nextIndexStatus,
+          progress: indexed ? 100 : task.progress,
           chunks: chunkCount ?? document.chunks,
-          vectorized: task.state === "SUCCESS",
+          vectorized: indexed,
           error: task.error,
           updated_at: nowIso(),
         };
@@ -463,7 +555,7 @@ export default function App() {
           const local = current.find((document) => document.doc_id === item.doc_id);
           return {
             ...item,
-            progress: local?.progress ?? (item.status === "READY" ? 100 : 0),
+            progress: local?.progress ?? (isIndexedDocument(item) ? 100 : 0),
             task_id: local?.task_id,
             error: item.error || item.error_message || local?.error || null,
           };
@@ -587,7 +679,8 @@ export default function App() {
       const documentItem: DocumentListItem = {
         doc_id: uploadResult.doc_id,
         filename: uploadResult.filename,
-        status: "PROCESSING",
+        status: "uploaded",
+        index_status: "not_indexed",
         chunks: null,
         vectorized: false,
         created_at: createdAt,
@@ -596,7 +689,7 @@ export default function App() {
         progress: 0,
       };
       const taskDefaults: Partial<TaskRecord> = {
-        type: "ingest_document",
+        type: "parse_document",
         entity_type: "document",
         entity_id: uploadResult.doc_id,
         db_task_id: uploadResult.db_task_id,
@@ -634,7 +727,7 @@ export default function App() {
   async function handleDeleteDocument(docId: number) {
     const target = documents.find((document) => document.doc_id === docId);
     const label = target?.filename || `doc ${docId}`;
-    if (!window.confirm(`删除 ${label}？这会同步删除数据库记录、chunk 和 FAISS 索引文件。`)) {
+    if (!window.confirm(`删除 ${label}？这会同步删除数据库记录、chunk 和 LanceDB 索引。`)) {
       return;
     }
 
@@ -662,7 +755,7 @@ export default function App() {
       return;
     }
     if (readyDocuments.length === 0) {
-      setError("请先上传文档并等待索引 READY 后再提问");
+      setError("请先上传文档并等待 index_status indexed 后再提问");
       return;
     }
     const prompt = question.trim();
@@ -764,6 +857,9 @@ export default function App() {
                           citation_count: meta.citation_count,
                           doc_ids: meta.doc_ids || readyDocIds,
                           retrieval_ms: meta.retrieval_ms,
+                          lancedb_ms: meta.lancedb_ms,
+                          rerank_ms: meta.rerank_ms,
+                          raw_hit_count: meta.raw_hit_count,
                           ttft_ms: meta.ttft_ms,
                           e2e_latency_ms: meta.e2e_latency_ms,
                           steps_used: meta.steps_used,
@@ -786,6 +882,9 @@ export default function App() {
                   retrieved_count: meta.retrieved_count,
                   citation_count: meta.citation_count,
                   retrieval_ms: meta.retrieval_ms,
+                  lancedb_ms: meta.lancedb_ms,
+                  rerank_ms: meta.rerank_ms,
+                  raw_hit_count: meta.raw_hit_count,
                   ttft_ms: meta.ttft_ms,
                   e2e_latency_ms: meta.e2e_latency_ms,
                   prompt_tokens: meta.prompt_tokens,
@@ -800,7 +899,20 @@ export default function App() {
             onAgentStep: (event: AgentStepEvent) => handleAgentStepEvent(event, prompt),
             onToolCall: handleAgentToolCallEvent,
             onToolResult: handleAgentToolResultEvent,
-            onFinal: handleAgentFinalEvent,
+            onFinal: (event: AgentFinalEvent) => {
+              handleAgentFinalEvent(event);
+              const citations = normalizeCitations(event.citations);
+              if (citations.length === 0) {
+                return;
+              }
+              updateMessagesForSession(session.session_id, (messages) =>
+                messages.map((message) =>
+                  message.message_id === assistantMessage.message_id
+                    ? { ...message, citations, updated_at: nowIso() }
+                    : message,
+                ),
+              );
+            },
           };
 
           if (useAgentStream) {

@@ -96,6 +96,7 @@ def stream_chat_for_message(
     started_at = time.perf_counter()
     retrieval_ms = None
     faiss_ms = None
+    lancedb_ms = None
     rerank_ms = None
     candidate_top_k = None
     final_top_k = top_k
@@ -132,6 +133,7 @@ def stream_chat_for_message(
             retrieval_metrics = retrieval_result.get("metrics") or {}
             retrieval_ms = retrieval_metrics.get("retrieval_ms")
             faiss_ms = retrieval_metrics.get("faiss_ms")
+            lancedb_ms = retrieval_metrics.get("lancedb_ms")
             rerank_ms = retrieval_metrics.get("rerank_ms")
             candidate_top_k = retrieval_metrics.get("candidate_top_k")
             final_top_k = retrieval_metrics.get("final_top_k") or top_k
@@ -259,6 +261,7 @@ def stream_chat_for_message(
                     "doc_ids": resolved_doc_ids,
                     "retrieval_ms": retrieval_ms,
                     "faiss_ms": faiss_ms,
+                    "lancedb_ms": lancedb_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -305,6 +308,7 @@ def stream_chat_for_message(
                     "llm_latency_ms": llm_result.get("latency_ms") if llm_result else None,
                     "llm_ttft_ms": llm_result.get("ttft_ms") if llm_result else None,
                     "faiss_ms": faiss_ms,
+                    "lancedb_ms": lancedb_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -323,6 +327,7 @@ def stream_chat_for_message(
                     "citation_count": citation_count,
                     "retrieval_ms": retrieval_ms,
                     "faiss_ms": faiss_ms,
+                    "lancedb_ms": lancedb_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": candidate_top_k,
                     "final_top_k": final_top_k,
@@ -372,6 +377,7 @@ def stream_chat_for_message(
                 "total_tokens": total_tokens,
                 "doc_ids": resolved_doc_ids,
                 "faiss_ms": faiss_ms,
+                    "lancedb_ms": lancedb_ms,
                 "rerank_ms": rerank_ms,
                 "candidate_top_k": candidate_top_k,
                 "final_top_k": final_top_k,

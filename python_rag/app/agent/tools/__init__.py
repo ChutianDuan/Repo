@@ -1,4 +1,9 @@
 from python_rag.app.agent.tools.base import BaseTool
+from python_rag.app.agent.tools.local.citation_tools import (
+    LIST_MESSAGE_CITATIONS_TOOL_NAME,
+    ListMessageCitationsTool,
+    register_citation_tools,
+)
 from python_rag.app.agent.tools.local.document_tools import (
     DOCUMENT_DETAIL_TOOL_NAME,
     LIST_READY_DOCUMENTS_TOOL_NAME,
@@ -18,11 +23,14 @@ __all__ = [
     "DOCUMENT_DETAIL_TOOL_NAME",
     "GetDocumentDetailTool",
     "LIST_READY_DOCUMENTS_TOOL_NAME",
+    "LIST_MESSAGE_CITATIONS_TOOL_NAME",
     "ListReadyDocumentsTool",
+    "ListMessageCitationsTool",
     "KNOWLEDGE_SEARCH_TOOL_NAME",
     "KnowledgeSearchTool",
     "ToolRegistry",
     "default_registry",
+    "register_citation_tools",
     "register_document_tools",
     "register_knowledge_tools",
 ]

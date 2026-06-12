@@ -115,7 +115,7 @@ export function WorkspacePage({
   const assistantMessage = latestMessageByRole(messages, "assistant");
   const userMessage = latestMessageByRole(messages, "user");
   const documentLabel = `${readyDocumentCount} 份文档可检索`;
-  const documentStatus = readyDocumentCount > 0 ? "READY" : "EMPTY";
+  const documentStatus = readyDocumentCount > 0 ? "indexed" : "EMPTY";
   const canAsk = Boolean(session);
   const latestStatus = agentTraceRows[agentTraceRows.length - 1]?.status || chatTask?.state || "idle";
   const latestQuestion = textPreview(userMessage?.content || question, "等待提问");
@@ -147,7 +147,7 @@ export function WorkspacePage({
       state: hasReadyDocuments ? "done" : ingestActive ? "active" : "idle",
     },
     {
-      label: "FAISS",
+      label: "LanceDB",
       detail: hasReadyDocuments ? "index ready" : "waiting for vectors",
       state: hasReadyDocuments ? "done" : ingestActive ? "active" : "idle",
     },

@@ -1,11 +1,12 @@
 from typing import Any, Dict, Optional
+from python_rag.app.core.config import RETRIEVAL_RERANK_TOP_K
 
 from python_rag.app.agent.tools.base import BaseTool
 from python_rag.app.agent.tools.registry import ToolRegistry, default_registry
 
 
 KNOWLEDGE_SEARCH_TOOL_NAME = "knowledge_search"
-DEFAULT_KNOWLEDGE_SEARCH_TOP_K = 5
+DEFAULT_KNOWLEDGE_SEARCH_TOP_K = RETRIEVAL_RERANK_TOP_K
 DEFAULT_CONTENT_MAX_CHARS = 800
 
 
@@ -16,7 +17,7 @@ def get_document_by_id(doc_id):
 
 
 def search_in_documents(**kwargs):
-    from python_rag.app.modules.retrieval.service import (
+    from python_rag.app.retrieval.hybrid_service import (
         search_in_documents as retrieval_search_in_documents,
     )
 
@@ -45,6 +46,25 @@ def _normalize_top_k(value: Any) -> int:
     except (TypeError, ValueError):
         return DEFAULT_KNOWLEDGE_SEARCH_TOP_K
     return min(20, max(1, top_k))
+
+
+def _build_retrieval_detail(search_result: Dict[str, Any]) -> Dict[str, Any]:
+    metrics = search_result.get("metrics") or {}
+    rerank = metrics.get("rerank") or {}
+    return {
+        "provider": metrics.get("recall_provider"),
+        "dense_top_k": metrics.get("candidate_top_k"),
+        "rerank_top_k": metrics.get("final_top_k"),
+        "candidate_count": metrics.get("candidate_count"),
+        "lancedb_candidate_count": metrics.get("lancedb_candidate_count"),
+        "mysql_hydrated_candidate_count": metrics.get("mysql_hydrated_candidate_count"),
+        "vector_search_latency_ms": metrics.get("lancedb_ms"),
+        "rerank_latency_ms": metrics.get("rerank_ms"),
+        "retrieval_latency_ms": metrics.get("retrieval_ms"),
+        "rerank_used": rerank.get("used"),
+        "rerank_model": rerank.get("model"),
+        "rerank_provider": rerank.get("provider"),
+    }
 
 
 class KnowledgeSearchTool(BaseTool):
@@ -114,6 +134,10 @@ class KnowledgeSearchTool(BaseTool):
             ),
             "snippet": hit.get("snippet") or "",
             "score": _safe_score(hit.get("score")),
+            "lancedb_score": _safe_score(hit.get("lancedb_score")),
+            "rerank_score": _safe_score(hit.get("rerank_score")),
+            "lancedb_rank": hit.get("lancedb_rank"),
+            "original_rank": hit.get("original_rank"),
         }
 
     async def run(self, arguments: dict) -> dict:
@@ -143,6 +167,7 @@ class KnowledgeSearchTool(BaseTool):
             return {
                 "results": results,
                 "total": len(results),
+                "retrieval": _build_retrieval_detail(search_result),
             }
         except Exception as exc:
             return {

@@ -103,6 +103,7 @@ def test_agent_chat_endpoint_calls_agent_and_returns_answer(monkeypatch):
                     "snippet": "架构说明",
                 }
             ],
+            "retrieval": {},
         },
     }
     assert created_messages[0]["role"] == "user"
@@ -110,6 +111,7 @@ def test_agent_chat_endpoint_calls_agent_and_returns_answer(monkeypatch):
     assert created_messages[1]["role"] == "assistant"
     assert created_messages[1]["meta"]["agent_run_id"] == 1001
     assert created_messages[1]["meta"]["citation_count"] == 1
+    assert created_messages[1]["meta"]["retrieval"] == {}
     assert saved_citations == [
         {
             "message_id": 3002,

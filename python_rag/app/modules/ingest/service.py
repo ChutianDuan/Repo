@@ -1,45 +1,44 @@
-import os
 import time
 
 from python_rag.app.core.config import INGEST_CHUNK_OVERLAP, INGEST_CHUNK_SIZE
-from python_rag.app.modules.documents.schemas import DocumentState
-from python_rag.app.core.error_codes import TaskState,ERR_CELERY_ERROR
+from python_rag.app.core.error_codes import ERR_CELERY_ERROR, TaskState
 from python_rag.app.core.errors import AppError
 from python_rag.app.core.logger import logger
+from python_rag.app.infra.storage import resolve_storage_path
 from python_rag.app.modules.documents.repo import (
-    get_document_by_id,
-    update_document_status,
+    CHUNK_EMBEDDING_EMBEDDED,
+    CHUNK_EMBEDDING_FAILED,
+    CHUNK_VECTOR_FAILED,
+    CHUNK_VECTOR_INDEXED,
     delete_chunks_by_doc_id,
     bulk_insert_chunks,
+    get_document_by_id,
     list_chunks_by_doc_id,
+    update_chunks_index_status,
+    update_document_index_status,
+    update_document_status,
     upsert_document_index,
 )
-
-from python_rag.app.modules.tasks.repo import update_task_record
-from python_rag.app.infra.storage import resolve_storage_path
-from python_rag.app.modules.ingest.embedding_service import (
-    embed_documents,
-    get_embedding_model_name,
-)
+from python_rag.app.modules.documents.schemas import DocumentIndexStatus, DocumentState
 from python_rag.app.modules.ingest.chunking_service import (
     chunk_text_by_title,
     extract_text_from_document,
     validate_supported_document_filename,
+)
+from python_rag.app.modules.ingest.embedding_service import (
+    embed_documents,
+    get_embedding_model_name,
 )
 from python_rag.app.modules.monitor.request_metrics import (
     estimate_embedding_cost_usd,
     is_timeout_error,
     record_request_metric,
 )
-from python_rag.app.modules.retrieval.faiss_service import build_doc_faiss_index
+from python_rag.app.retrieval.indexing_service import upsert_document_chunk_vectors
+from python_rag.app.modules.tasks.repo import update_task_record
 
 
 def _emit_progress(celery_task_id, state, progress, meta, progress_callback=None, error=None):
-    """
-    同时更新：
-    1. MySQL tasks 表
-    2. Celery backend 状态（如果传入 callback）
-    """
     update_task_record(
         celery_task_id=celery_task_id,
         state=state,
@@ -55,41 +54,45 @@ def _emit_progress(celery_task_id, state, progress, meta, progress_callback=None
             logger.exception("progress_callback failed")
 
 
-def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
-    """
-    Day 2 ingest 逻辑：
-    - 读文档
-    - 切片
-    - 重建 chunks
-    - 生成 embeddings
-    - 构建 FAISS 索引
-    - 写 document_indexes
-    - 更新 document/task 状态
-    """
+def _ready_latency_ms(doc):
+    if not doc or not doc.get("created_at"):
+        return None
+    return int(max(0, (time.time() - doc["created_at"].timestamp()) * 1000))
+
+
+def _get_document_or_raise(doc_id):
+    doc = get_document_by_id(doc_id)
+    if not doc:
+        raise AppError(ERR_CELERY_ERROR, "document not found")
+    validate_supported_document_filename(doc.get("filename") or "")
+    return doc
+
+
+def parse_document_for_chunks(doc_id, celery_task_id, progress_callback=None):
     started_at = time.perf_counter()
     text_extract_ms = None
     chunking_ms = None
     chunk_insert_ms = None
-    embedding_ms = None
-    index_ms = None
-    embedding_tokens = None
+    chunk_count = 0
 
     try:
-        embedding_model_name = get_embedding_model_name()
-        doc = get_document_by_id(doc_id)
-        if not doc:
-            raise AppError(ERR_CELERY_ERROR, "document not found")
-
-        update_document_status(doc_id, DocumentState.INGESTING, None)
-        validate_supported_document_filename(doc.get("filename") or "")
+        doc = _get_document_or_raise(doc_id)
+        update_document_status(
+            doc_id,
+            DocumentState.UPLOADED,
+            None,
+            index_status=DocumentIndexStatus.PARSING,
+        )
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.STARTED,
             progress=5,
             meta={
-                "stage": "document_marked_ingesting",
+                "stage": "parse_started",
                 "doc_id": doc_id,
                 "filename": doc["filename"],
+                "document_status": DocumentState.UPLOADED,
+                "index_status": DocumentIndexStatus.PARSING,
             },
             progress_callback=progress_callback,
         )
@@ -106,7 +109,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.PROGRESS,
-            progress=20,
+            progress=35,
             meta={
                 "stage": "document_loaded",
                 "doc_id": doc_id,
@@ -130,7 +133,7 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.PROGRESS,
-            progress=40,
+            progress=65,
             meta={
                 "stage": "document_chunked",
                 "doc_id": doc_id,
@@ -142,60 +145,141 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             progress_callback=progress_callback,
         )
 
-        # 先删旧 chunks，再重建
         insert_started_at = time.perf_counter()
         delete_chunks_by_doc_id(doc_id)
-        inserted = bulk_insert_chunks(doc_id, chunks)
+        chunk_count = bulk_insert_chunks(doc_id, chunks)
         chunk_insert_ms = int((time.perf_counter() - insert_started_at) * 1000)
-
-        if inserted <= 0:
+        if chunk_count <= 0:
             raise AppError(ERR_CELERY_ERROR, "bulk_insert_chunks inserted 0 rows")
 
+        update_document_status(
+            doc_id,
+            DocumentState.UPLOADED,
+            None,
+            index_status=DocumentIndexStatus.PARSED,
+        )
+        result = {
+            "stage": "chunks_written",
+            "doc_id": doc_id,
+            "filename": doc["filename"],
+            "document_status": DocumentState.UPLOADED,
+            "index_status": DocumentIndexStatus.PARSED,
+            "chunk_count": chunk_count,
+            "chunk_embedding_status": "pending",
+            "next_stage": "build_embedding_task",
+            "timings_ms": {
+                "text_extract_ms": text_extract_ms,
+                "chunking_ms": chunking_ms,
+                "chunk_insert_ms": chunk_insert_ms,
+            },
+        }
         _emit_progress(
             celery_task_id=celery_task_id,
-            state=TaskState.PROGRESS,
-            progress=60,
-            meta={
-                "stage": "chunks_inserted",
-                "doc_id": doc_id,
-                "filename": doc["filename"],
-                "chunk_count": inserted,
-            },
+            state=TaskState.SUCCESS,
+            progress=100,
+            meta=result,
             progress_callback=progress_callback,
         )
+        return result
+    except Exception as exc:
+        logger.exception("parse_document_for_chunks failed")
+        try:
+            update_document_status(
+                doc_id,
+                DocumentState.FAILED,
+                str(exc),
+                index_status=DocumentIndexStatus.FAILED,
+            )
+        except Exception:
+            logger.exception("failed to mark document parse failure")
+        try:
+            _emit_progress(
+                celery_task_id=celery_task_id,
+                state=TaskState.FAILURE,
+                progress=100,
+                meta={
+                    "stage": "parse_failed",
+                    "doc_id": doc_id,
+                    "error": str(exc),
+                },
+                error=str(exc),
+                progress_callback=progress_callback,
+            )
+        except Exception:
+            logger.exception("failed to update parse task failure")
+        record_request_metric(
+            request_type="ingest",
+            status="error",
+            channel="celery",
+            doc_id=doc_id,
+            celery_task_id=celery_task_id,
+            e2e_latency_ms=int((time.perf_counter() - started_at) * 1000),
+            timed_out=is_timeout_error(exc),
+            error_message=str(exc),
+            extra={
+                "stage": "parse_document",
+                "text_extract_ms": text_extract_ms,
+                "chunking_ms": chunking_ms,
+                "chunk_insert_ms": chunk_insert_ms,
+                "chunk_count": chunk_count,
+            },
+        )
+        raise
 
-        # 一定重新从 DB 读取，拿真实 chunk_id
+
+def build_embedding_index_for_document(doc_id, celery_task_id, progress_callback=None):
+    started_at = time.perf_counter()
+    embedding_ms = None
+    index_ms = None
+    embedding_tokens = None
+
+    try:
+        embedding_model_name = get_embedding_model_name()
+        doc = _get_document_or_raise(doc_id)
         chunk_rows = list_chunks_by_doc_id(doc_id, limit=None)
         if not chunk_rows:
-            raise AppError(ERR_CELERY_ERROR, "no chunks found after insert")
+            raise AppError(ERR_CELERY_ERROR, "no chunks found for embedding")
 
-        texts = [row.get("content", row.get("text", "")) for row in chunk_rows]
+        update_document_status(
+            doc_id,
+            DocumentState.UPLOADED,
+            None,
+            index_status=DocumentIndexStatus.INDEXING,
+        )
         _emit_progress(
             celery_task_id=celery_task_id,
-            state=TaskState.PROGRESS,
-            progress=75,
+            state=TaskState.STARTED,
+            progress=10,
             meta={
-                "stage": "embedding_chunks",
+                "stage": "embedding_started",
                 "doc_id": doc_id,
                 "filename": doc["filename"],
                 "chunk_count": len(chunk_rows),
                 "embedding_model": embedding_model_name,
+                "index_status": DocumentIndexStatus.INDEXING,
             },
             progress_callback=progress_callback,
         )
 
+        texts = [row.get("content") or row.get("text") or "" for row in chunk_rows]
         embedding_started_at = time.perf_counter()
         vectors = embed_documents(texts)
         embedding_ms = int((time.perf_counter() - embedding_started_at) * 1000)
         if vectors is None or len(vectors) != len(chunk_rows):
             raise AppError(ERR_CELERY_ERROR, "embedding result count mismatch")
 
+        chunk_ids = [row["id"] for row in chunk_rows]
+        update_chunks_index_status(
+            doc_id,
+            chunk_ids=chunk_ids,
+            embedding_status=CHUNK_EMBEDDING_EMBEDDED,
+        )
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.PROGRESS,
-            progress=90,
+            progress=65,
             meta={
-                "stage": "building_faiss_index",
+                "stage": "embedding_finished",
                 "doc_id": doc_id,
                 "filename": doc["filename"],
                 "chunk_count": len(chunk_rows),
@@ -205,60 +289,61 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
         )
 
         index_started_at = time.perf_counter()
-        index_meta = build_doc_faiss_index(
-            doc_id=doc_id,
+        index_meta = upsert_document_chunk_vectors(
+            document=doc,
             chunk_rows=chunk_rows,
             vectors=vectors,
         )
-        index_ms = int((time.perf_counter() - index_started_at) * 1000)
-
         upsert_document_index(
             doc_id=doc_id,
             index_type=index_meta["index_type"],
             embedding_model=embedding_model_name,
             dimension=index_meta["dimension"],
-            index_path=index_meta["index_path"],
-            mapping_path=index_meta["mapping_path"],
+            index_path="",
+            mapping_path="",
             chunk_count=index_meta["chunk_count"],
             status="READY",
         )
-
-        update_document_status(doc_id, DocumentState.READY, None)
+        index_ms = int((time.perf_counter() - index_started_at) * 1000)
+        update_chunks_index_status(
+            doc_id,
+            chunk_ids=chunk_ids,
+            vector_index_status=CHUNK_VECTOR_INDEXED,
+        )
+        update_document_status(
+            doc_id,
+            DocumentState.UPLOADED,
+            None,
+            index_status=DocumentIndexStatus.INDEXED,
+        )
 
         embedding_tokens = sum(int(row.get("tokens_est") or 0) for row in chunk_rows)
-        ready_latency_ms = None
-        if doc.get("created_at"):
-            ready_latency_ms = int(
-                max(0, (time.time() - doc["created_at"].timestamp()) * 1000),
-            )
         total_ingest_ms = int((time.perf_counter() - started_at) * 1000)
+        ready_latency_ms = _ready_latency_ms(doc)
         cost_usd = estimate_embedding_cost_usd(embedding_tokens)
-
         result = {
             "stage": "finished",
             "doc_id": doc_id,
             "filename": doc["filename"],
             "chunk_count": len(chunk_rows),
-            "document_status": DocumentState.READY,
-            "index_status": "READY",
+            "document_status": DocumentState.UPLOADED,
+            "index_status": DocumentIndexStatus.INDEXED,
+            "chunk_embedding_status": CHUNK_EMBEDDING_EMBEDDED,
+            "chunk_vector_index_status": CHUNK_VECTOR_INDEXED,
             "embedding_model": embedding_model_name,
             "index_type": index_meta["index_type"],
+            "lancedb_uri": index_meta["uri"],
+            "lancedb_table": index_meta["table_name"],
             "dimension": index_meta["dimension"],
-            "index_path": index_meta["index_path"],
-            "mapping_path": index_meta["mapping_path"],
             "ingest_ready_ms": ready_latency_ms,
             "ingest_runtime_ms": total_ingest_ms,
             "embedding_tokens": embedding_tokens,
             "cost_usd": cost_usd,
             "timings_ms": {
-                "text_extract_ms": text_extract_ms,
-                "chunking_ms": chunking_ms,
-                "chunk_insert_ms": chunk_insert_ms,
                 "embedding_ms": embedding_ms,
                 "index_ms": index_ms,
             },
         }
-
         record_request_metric(
             request_type="ingest",
             status="success",
@@ -273,11 +358,10 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             extra={
                 **result["timings_ms"],
                 "chunk_count": len(chunk_rows),
-                "char_count": len(text),
                 "document_size_bytes": int(doc.get("size_bytes") or 0),
+                "index_type": index_meta["index_type"],
             },
         )
-
         _emit_progress(
             celery_task_id=celery_task_id,
             state=TaskState.SUCCESS,
@@ -285,52 +369,66 @@ def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
             meta=result,
             progress_callback=progress_callback,
         )
-
         return result
-
-    except Exception as e:
-        logger.exception("run_ingest_for_document failed")
-        total_ingest_ms = int((time.perf_counter() - started_at) * 1000)
-
+    except Exception as exc:
+        logger.exception("build_embedding_index_for_document failed")
         try:
-            update_document_status(doc_id, DocumentState.FAILED, str(e))
+            update_document_status(
+                doc_id,
+                DocumentState.FAILED,
+                str(exc),
+                index_status=DocumentIndexStatus.FAILED,
+            )
+            update_chunks_index_status(
+                doc_id,
+                embedding_status=CHUNK_EMBEDDING_FAILED,
+                vector_index_status=CHUNK_VECTOR_FAILED,
+            )
         except Exception:
-            logger.exception("update_document_status FAILED failed")
-
+            logger.exception("failed to mark embedding/index failure")
         try:
             _emit_progress(
                 celery_task_id=celery_task_id,
                 state=TaskState.FAILURE,
                 progress=100,
                 meta={
-                    "stage": "failed",
+                    "stage": "embedding_failed",
                     "doc_id": doc_id,
-                    "error": str(e),
+                    "error": str(exc),
                 },
-                error=str(e),
+                error=str(exc),
                 progress_callback=progress_callback,
             )
         except Exception:
-            logger.exception("update_task_record FAILURE failed")
-
+            logger.exception("failed to update embedding task failure")
         record_request_metric(
             request_type="ingest",
             status="error",
             channel="celery",
             doc_id=doc_id,
             celery_task_id=celery_task_id,
-            e2e_latency_ms=total_ingest_ms,
+            e2e_latency_ms=int((time.perf_counter() - started_at) * 1000),
             embedding_tokens=embedding_tokens,
             cost_usd=estimate_embedding_cost_usd(embedding_tokens),
-            timed_out=is_timeout_error(e),
-            error_message=str(e),
+            timed_out=is_timeout_error(exc),
+            error_message=str(exc),
             extra={
-                "text_extract_ms": text_extract_ms,
-                "chunking_ms": chunking_ms,
-                "chunk_insert_ms": chunk_insert_ms,
+                "stage": "build_embedding",
                 "embedding_ms": embedding_ms,
                 "index_ms": index_ms,
             },
         )
-
         raise
+
+
+def run_ingest_for_document(doc_id, celery_task_id, progress_callback=None):
+    parse_document_for_chunks(
+        doc_id=doc_id,
+        celery_task_id=celery_task_id,
+        progress_callback=progress_callback,
+    )
+    return build_embedding_index_for_document(
+        doc_id=doc_id,
+        celery_task_id=celery_task_id,
+        progress_callback=progress_callback,
+    )

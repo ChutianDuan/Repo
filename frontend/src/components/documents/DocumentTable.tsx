@@ -5,6 +5,7 @@ import { ProgressBar } from "../common/ProgressBar";
 import { StatusBadge } from "../common/StatusBadge";
 import { TimestampText } from "../common/TimestampText";
 import { formatNumber, stateTone } from "../../utils/format";
+import { isIndexedDocument } from "../../app/appState";
 
 interface DocumentTableProps {
   documents: DocumentListItem[];
@@ -50,6 +51,7 @@ export function DocumentTable({
       </div>
       {documents.map((document) => {
         const deleting = pending === `delete-document-${document.doc_id}`;
+        const displayStatus = document.index_status || document.status;
         return (
           <div
             key={document.doc_id}
@@ -60,11 +62,11 @@ export function DocumentTable({
             onKeyDown={(event) => handleRowKeyDown(event, document.doc_id)}
           >
             <strong>{document.filename}</strong>
-            <StatusBadge label={document.status} tone={stateTone(document.status)} />
+            <StatusBadge label={displayStatus} tone={stateTone(displayStatus)} />
             <span>{document.chunks === null ? "--" : formatNumber(document.chunks)}</span>
             <span>{document.vectorized ? "是" : "否"}</span>
             <TimestampText value={document.created_at} />
-            <ProgressBar value={document.progress || (document.status === "READY" ? 100 : 0)} />
+            <ProgressBar value={document.progress || (isIndexedDocument(document) ? 100 : 0)} />
             <button
               type="button"
               className="button-danger button-compact"

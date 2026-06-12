@@ -35,6 +35,31 @@ export function normalizeTopK(value: number): number {
   return Math.max(1, Math.min(20, Math.round(value)));
 }
 
+export function normalizeDocumentState(value: string | null | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+export function isIndexedDocument(document: DocumentListItem): boolean {
+  const indexStatus = normalizeDocumentState(document.index_status);
+  const status = normalizeDocumentState(document.status);
+  return indexStatus === "indexed" || indexStatus === "ready" || status === "indexed" || status === "ready";
+}
+
+export function isFailedDocument(document: DocumentListItem): boolean {
+  const indexStatus = normalizeDocumentState(document.index_status);
+  const status = normalizeDocumentState(document.status);
+  return indexStatus === "failed" || indexStatus === "failure" || status === "failed" || status === "failure";
+}
+
+export function isProcessingDocument(document: DocumentListItem): boolean {
+  if (isIndexedDocument(document) || isFailedDocument(document)) {
+    return false;
+  }
+  const indexStatus = normalizeDocumentState(document.index_status);
+  const status = normalizeDocumentState(document.status);
+  return ["not_indexed", "parsing", "parsed", "indexing", "pending", "uploaded", "processing", "ingesting"].includes(indexStatus || status);
+}
+
 function serviceState(ok: boolean | undefined): ServiceState {
   if (ok === true) {
     return "ok";
@@ -64,7 +89,7 @@ export function buildFallbackOverview(
   const pending = tasks.filter((task) => task.state === "PENDING").length;
   const running = tasks.filter((task) => !isTerminalTask(task.state) && task.state !== "PENDING").length;
   const failed = tasks.filter((task) => task.state === "FAILURE" || task.state === "FAILED").length;
-  const readyDocuments = documents.filter((document) => document.status === "READY");
+  const readyDocuments = documents.filter(isIndexedDocument);
   const knownChunks = readyDocuments
     .map((document) => document.chunks)
     .filter((value): value is number => typeof value === "number");

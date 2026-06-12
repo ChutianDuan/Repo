@@ -53,15 +53,35 @@ CELERY_POOL = os.getenv("CELERY_POOL", "threads")
 CELERY_CONCURRENCY = int(os.getenv("CELERY_CONCURRENCY", "4"))
 
 CHAT_MAX_CHUNK_CHARS = int(os.getenv("CHAT_MAX_CHUNK_CHARS", "1000"))
-CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", "5"))
-CHAT_CANDIDATE_TOP_K = int(os.getenv("CHAT_CANDIDATE_TOP_K", "30"))
+_DEFAULT_CHAT_TOP_K = os.getenv("CHAT_TOP_K", "5")
+_DEFAULT_CHAT_CANDIDATE_TOP_K = os.getenv("CHAT_CANDIDATE_TOP_K", "50")
+RETRIEVAL_DENSE_TOP_K = int(
+    os.getenv("RETRIEVAL_DENSE_TOP_K", _DEFAULT_CHAT_CANDIDATE_TOP_K)
+)
+RETRIEVAL_RERANK_TOP_K = int(
+    os.getenv("RETRIEVAL_RERANK_TOP_K", _DEFAULT_CHAT_TOP_K)
+)
+CHAT_TOP_K = int(os.getenv("CHAT_TOP_K", str(RETRIEVAL_RERANK_TOP_K)))
+CHAT_CANDIDATE_TOP_K = int(
+    os.getenv("CHAT_CANDIDATE_TOP_K", str(RETRIEVAL_DENSE_TOP_K))
+)
 CHAT_MIN_RETRIEVAL_SCORE = float(os.getenv("CHAT_MIN_RETRIEVAL_SCORE", "0.0"))
 RETRIEVAL_CONTEXT_WINDOW = int(os.getenv("RETRIEVAL_CONTEXT_WINDOW", "1"))
 RETRIEVAL_CONTEXT_MAX_CHARS = int(os.getenv("RETRIEVAL_CONTEXT_MAX_CHARS", "3000"))
 RETRIEVAL_RECALL_PROVIDER = os.getenv(
     "RETRIEVAL_RECALL_PROVIDER",
-    "hybrid_rrf",
+    "lancedb",
 ).strip().lower()
+VECTOR_STORE_PROVIDER = os.getenv("VECTOR_STORE_PROVIDER", "lancedb").strip().lower()
+LANCEDB_PATH = _resolve_repo_path(
+    os.getenv("LANCEDB_PATH", os.getenv("LANCEDB_URI", "./data/lancedb"))
+)
+LANCEDB_TABLE = os.getenv(
+    "LANCEDB_TABLE",
+    os.getenv("LANCEDB_TABLE_NAME", "chunk_vectors"),
+).strip()
+LANCEDB_URI = LANCEDB_PATH
+LANCEDB_TABLE_NAME = LANCEDB_TABLE
 BM25_K1 = float(os.getenv("BM25_K1", "1.5"))
 BM25_B = float(os.getenv("BM25_B", "0.75"))
 RRF_K = int(os.getenv("RRF_K", "60"))

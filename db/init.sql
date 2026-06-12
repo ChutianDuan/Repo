@@ -1,7 +1,11 @@
 CREATE TABLE IF NOT EXISTS user_account (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    memory_summary TEXT NULL,
+    memory_message_id BIGINT NULL,
+    memory_updated_at TIMESTAMP NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_account_memory_message (memory_message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -12,7 +16,8 @@ CREATE TABLE IF NOT EXISTS documents (
     sha256 CHAR(64) NOT NULL,
     size_bytes BIGINT NOT NULL DEFAULT 0,
     storage_path VARCHAR(1024) NOT NULL,
-    status VARCHAR(32) NOT NULL DEFAULT 'UPLOADED',
+    status VARCHAR(32) NOT NULL DEFAULT 'uploaded',
+    index_status VARCHAR(32) NOT NULL DEFAULT 'not_indexed',
     error_message TEXT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -20,6 +25,7 @@ CREATE TABLE IF NOT EXISTS documents (
     UNIQUE KEY uk_documents_user_sha256 (user_id, sha256),
     INDEX idx_documents_user (user_id),
     INDEX idx_documents_status_created (status, created_at),
+    INDEX idx_documents_index_status_created (index_status, created_at),
     CONSTRAINT fk_documents_user
         FOREIGN KEY (user_id) REFERENCES user_account(id)
         ON DELETE CASCADE
@@ -31,9 +37,13 @@ CREATE TABLE IF NOT EXISTS doc_chunks (
     chunk_index INT NOT NULL,
     text LONGTEXT NOT NULL,
     tokens_est INT NOT NULL DEFAULT 0,
+    embedding_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    vector_index_status VARCHAR(32) NOT NULL DEFAULT 'pending',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_doc_chunks_doc_chunk_index (doc_id, chunk_index),
     INDEX idx_doc_chunks_doc (doc_id),
+    INDEX idx_doc_chunks_embedding_status (embedding_status),
+    INDEX idx_doc_chunks_vector_index_status (vector_index_status),
     CONSTRAINT fk_doc_chunks_doc
         FOREIGN KEY (doc_id) REFERENCES documents(id)
         ON DELETE CASCADE
@@ -71,6 +81,25 @@ CREATE TABLE IF NOT EXISTS document_indexes (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_document_indexes_doc
+        FOREIGN KEY (doc_id) REFERENCES documents(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS vector_index_jobs (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    doc_id BIGINT NOT NULL,
+    celery_task_id VARCHAR(128) NULL,
+    provider VARCHAR(64) NOT NULL DEFAULT 'lancedb',
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    chunk_count INT NOT NULL DEFAULT 0,
+    error_message TEXT NULL,
+    meta_json JSON NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_vector_index_jobs_doc (doc_id),
+    INDEX idx_vector_index_jobs_status_updated (status, updated_at),
+    CONSTRAINT fk_vector_index_jobs_doc
         FOREIGN KEY (doc_id) REFERENCES documents(id)
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

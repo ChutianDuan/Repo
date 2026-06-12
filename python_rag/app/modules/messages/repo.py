@@ -27,7 +27,7 @@ def _normalize_message_row(row):
     return row
 
 
-def _message_select_fields() -> str:
+def _message_select_fields(table_alias=None) -> str:
     fields = [
         "id",
         "session_id",
@@ -39,6 +39,8 @@ def _message_select_fields() -> str:
     ]
     if has_column("messages", "updated_at"):
         fields.append("updated_at")
+    if table_alias:
+        return ", ".join("{0}.{1}".format(table_alias, field) for field in fields)
     return ", ".join(fields)
 
 
@@ -89,6 +91,45 @@ def list_messages_by_session_id(session_id, limit=100):
                 LIMIT %s
                 """.format(fields=_message_select_fields()),
                 (session_id, limit),
+            )
+            rows = cursor.fetchall()
+            return [_normalize_message_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def list_messages_by_user_id(
+    user_id,
+    limit=100,
+    after_message_id=None,
+    until_message_id=None,
+):
+    filters = ["s.user_id=%s"]
+    params = [user_id]
+    if after_message_id is not None:
+        filters.append("m.id>%s")
+        params.append(after_message_id)
+    if until_message_id is not None:
+        filters.append("m.id<=%s")
+        params.append(until_message_id)
+    params.append(limit)
+
+    conn = get_mysql_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT {fields}
+                FROM messages m
+                INNER JOIN sessions s ON s.id=m.session_id
+                WHERE {where_clause}
+                ORDER BY m.id ASC
+                LIMIT %s
+                """.format(
+                    fields=_message_select_fields("m"),
+                    where_clause=" AND ".join(filters),
+                ),
+                tuple(params),
             )
             rows = cursor.fetchall()
             return [_normalize_message_row(row) for row in rows]

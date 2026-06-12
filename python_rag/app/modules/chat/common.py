@@ -12,7 +12,7 @@ def retrieve_hits(
     doc_ids: Optional[List[int]],
     top_k: int,
 ) -> Dict[str, Any]:
-    from python_rag.app.modules.retrieval.service import search_in_documents
+    from python_rag.app.retrieval.hybrid_service import search_in_documents
 
     return search_in_documents(
         query=question,
@@ -55,10 +55,13 @@ def normalize_hit_for_citation(hit: Dict[str, Any], rank: int) -> Dict[str, Any]
         "chunk_index": hit.get("chunk_index", hit.get("seq", hit.get("index"))),
         "score": citation_score or 0,
         "faiss_score": hit.get("faiss_score"),
+        "lancedb_score": hit.get("lancedb_score"),
+        "lancedb_distance": hit.get("lancedb_distance"),
         "bm25_score": hit.get("bm25_score"),
         "rrf_score": hit.get("rrf_score"),
         "rerank_score": hit.get("rerank_score"),
         "faiss_rank": hit.get("faiss_rank"),
+        "lancedb_rank": hit.get("lancedb_rank"),
         "bm25_rank": hit.get("bm25_rank"),
         "rrf_rank": hit.get("rrf_rank"),
         "original_rank": hit.get("original_rank"),

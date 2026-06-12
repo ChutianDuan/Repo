@@ -77,13 +77,13 @@ export function formatCurrencyUsd(value: number | null | undefined): string {
 
 export function stateTone(state: string | null | undefined): "ok" | "warn" | "error" | "muted" {
   const normalized = (state || "").toUpperCase();
-  if (["OK", "SUCCESS", "READY", "HEALTHY"].includes(normalized)) {
+  if (["OK", "SUCCESS", "READY", "INDEXED", "HEALTHY"].includes(normalized)) {
     return "ok";
   }
   if (["FAILURE", "FAILED", "ERROR", "UNHEALTHY"].includes(normalized)) {
     return "error";
   }
-  if (["STARTED", "PROGRESS", "PROCESSING", "PENDING", "RUNNING", "UPLOADED", "INGESTING"].includes(normalized)) {
+  if (["STARTED", "PROGRESS", "PROCESSING", "PENDING", "RUNNING", "UPLOADED", "PARSING", "PARSED", "INDEXING", "NOT_INDEXED", "INGESTING"].includes(normalized)) {
     return "warn";
   }
   return "muted";

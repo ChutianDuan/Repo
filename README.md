@@ -2,7 +2,7 @@
 
 面向全局文档知识库问答的工程化 RAG 后端项目。它不是单页问答 demo，而是一套把外部 API 网关、内部业务服务、异步任务、数据库、向量索引、LLM 调用和监控工作台拆开的可扩展系统骨架。
 
-项目当前由 `C++ Drogon Gateway`、`FastAPI Internal Service`、`Celery Worker`、`MySQL`、`Redis`、`BM25`、`FAISS`、`Embedding Model`、`OpenAI-compatible LLM / vLLM` 和 `React Workbench` 组成。前端主要用于调试、演示和观测，核心能力集中在后端 RAG 链路。
+项目当前由 `C++ Drogon Gateway`、`FastAPI Internal Service`、`Celery Worker`、`MySQL`、`Redis`、`LanceDB`、`Embedding Model`、`OpenAI-compatible LLM / vLLM` 和 `React Workbench` 组成。前端主要用于调试、演示和观测，核心能力集中在后端 RAG 链路。
 
 ![项目运行效果](./docs/项目运行前端界面.png)
 
@@ -11,7 +11,7 @@
 这个项目适合用来验证和展示一套真实 RAG 应用后端应该具备的基础能力：
 
 - 文档上传、去重、解析、切片、向量化、索引构建和全局归档。
-- 基于全局 READY 文档库的 BM25 稀疏召回、FAISS 向量召回、RRF 融合、CrossEncoder rerank、Prompt 组装和 LLM 回答。
+- 基于全局 indexed 文档库的 LanceDB 向量召回、MySQL 批量取 chunk 正文、CrossEncoder rerank、Prompt 组装和 LLM 回答。
 - 会话、消息、任务状态、引用来源和索引元数据的持久化。
 - C++ 网关统一承载外部 API、上传控制、CORS、健康检查聚合和 SSE 代理。
 - Celery 异步化处理 ingest 和 chat，避免长耗时流程阻塞请求。
@@ -22,10 +22,10 @@
 | 能力 | 说明 |
 | --- | --- |
 | 分层架构 | 浏览器只访问 C++ Gateway，内部业务逻辑收敛在 FastAPI 服务中，便于后续接入鉴权、限流和审计。 |
-| 全局知识库 | 文档上传仍记录归属用户，但索引完成后进入全局 READY 文档库；任意用户的会话默认都能检索这些文档。 |
-| 异步任务 | 文档解析、embedding、FAISS 构建和问答任务交给 Celery Worker 执行，任务进度可查询。 |
+| 全局知识库 | 文档上传仍记录归属用户，但索引完成后进入全局 indexed 文档库；任意用户的会话默认都能检索这些文档。 |
+| 异步任务 | 文档解析和 embedding/index 构建拆成 Celery 任务执行，任务进度可查询。 |
 | 可追溯回答 | 每条 assistant 消息都会保存 citations，前端可展示引用片段、chunk、score 和来源文档。 |
-| Agent MVP | 新增只读 `knowledge_search` Agent 路径，支持工具调用 Trace、Agent SSE 事件和 citations 落库展示。 |
+| Agent MVP | 只读 Agent 工具覆盖 `knowledge_search`、文档查询和 citation 查询，支持工具调用 Trace、Agent SSE 事件、用户/会话记忆和 citations 落库展示。 |
 | 模型切换保护 | `document_indexes.embedding_model` 记录索引所用 embedding 模型，避免模型切换后误用旧向量空间。 |
 | 监控视图 | 提供 CPU、内存、磁盘、GPU、MySQL、Redis、Worker、队列和 RAG 数据概览。 |
 | 实验留档 | 包含 embedding LoRA 微调、RAG ingest/retrieval 容量和性能验证文档，方便继续迭代。 |
@@ -54,7 +54,7 @@ FastAPI Internal Service
         +--> MySQL        : users, documents, chunks, indexes, sessions, messages, citations, tasks
         +--> Redis        : Celery broker / result backend
         +--> Celery       : ingest and chat async jobs
-        +--> BM25 + FAISS : sparse/dense recall, RRF fusion, cross-encoder rerank
+        +--> LanceDB    : metadata-only local vector index
         +--> Embedding    : sentence-transformers or OpenAI-compatible provider
         +--> LLM / vLLM   : OpenAI-compatible chat completion endpoint
 ```
@@ -67,7 +67,7 @@ FastAPI Internal Service
 | 内部服务 | Python, FastAPI, Pydantic |
 | 异步任务 | Celery, Redis |
 | 数据存储 | MySQL |
-| 检索排序 | BM25 sparse recall, FAISS dense recall, RRF, sentence-transformers, CrossEncoder reranker |
+| 检索排序 | LanceDB vector recall, MySQL chunk hydration, sentence-transformers, CrossEncoder reranker |
 | 大模型调用 | OpenAI-compatible API, vLLM |
 | 前端工作台 | Vite, React, TypeScript |
 | 运维脚本 | Bash, curl, benchmark scripts |
@@ -79,8 +79,8 @@ FastAPI Internal Service
 1. 客户端上传文档到 `POST /v1/documents`，请求中仍携带 `user_id` 用于归档和审计。
 2. C++ Gateway 校验文件类型、计算 SHA-256、保存文件，并写入文档记录。
 3. Gateway 调用 FastAPI 内部接口提交 ingest 任务。
-4. Celery Worker 抽取文本、切片、生成 embedding、构建 FAISS 索引。
-5. Worker 写入 `doc_chunks`、`document_indexes`，并更新任务和文档状态；READY 后文档进入全局知识库。
+4. Celery `parse_document_task` 抽取文本并写入 `doc_chunks`，chunk 的 `embedding_status` 初始为 `pending`。随后 `build_embedding_task` 生成 embedding 并写入 LanceDB。
+5. Worker 将 LanceDB 行标记为 indexed 后，更新 `doc_chunks.vector_index_status=indexed` 和 `documents.index_status=indexed`；MySQL 仍是 documents/chunks/citations/tasks 的 source of truth。
 6. 客户端通过 `GET /v1/tasks/{task_id}` 查看处理进度。
 
 解析器支持 `.md`、`.txt`、`.json`、`.csv`、`.pdf`、`.docx` 和 `.xlsx`。其中 CSV、JSON records、DOCX 表格和 XLSX 工作表会尽量转换为 Markdown 表格再进入切片和 embedding，以保留列名、行关系和 sheet/table 来源。
@@ -89,7 +89,7 @@ FastAPI Internal Service
 
 1. 客户端创建 session 并提交用户问题；新流程不要求会话绑定某个 `doc_id`。
 2. Gateway 创建 user message，再提交 chat task。
-3. Worker 默认在全局 READY 文档索引中执行 BM25 + FAISS 双路召回，使用 RRF（Reciprocal Rank Fusion）融合候选，再按配置交给 CrossEncoder rerank。兼容旧调用：如果请求显式传 `doc_id` 或 `doc_ids`，则只检索指定文档范围。
+3. Worker 默认在全局 `documents.index_status=indexed` 文档范围内执行 LanceDB 向量召回，LanceDB 只返回 `chunk_id` 等检索元数据；服务再从 MySQL 批量读取 chunk 正文并交给 CrossEncoder rerank。兼容旧调用：如果请求显式传 `doc_id` 或 `doc_ids`，则只检索指定文档范围。
 4. 系统组装上下文和 Prompt，调用 OpenAI-compatible LLM。
 5. assistant message 与 citations 落库。
 6. 前端刷新消息列表，展示回答和引用来源。
@@ -116,12 +116,12 @@ python_rag/app/
 ├── main.py
 ├── api/v1/routers/       # FastAPI HTTP 路由，保留原有 /internal/* 路径
 ├── agent/                # Agent 决策、memory、tools、trace、streaming
-│   ├── memory/           # 会话记忆与摘要任务
+│   ├── memory/           # 用户长期记忆、会话摘要、最近对话和异步更新任务
 │   ├── streaming/        # Agent SSE 流式输出
 │   ├── tools/
 │   │   ├── base.py       # Tool 基类
 │   │   ├── registry.py   # Tool 注册表
-│   │   ├── local/        # 本地只读工具，如 knowledge_search、document tools
+│   │   ├── local/        # 本地只读工具，如 knowledge_search、document/citation tools
 │   │   └── mcp/          # MCP Tool 包装预留目录
 │   └── trace/            # Agent run / step / tool call trace 服务
 ├── modules/              # chat、retrieval、documents、ingest、sessions、messages、tasks 等业务模块
@@ -155,9 +155,12 @@ LLM_MODEL=glm-4.7-flash
 EMBEDDING_PROVIDER=sentence_transformers
 EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 
-CHAT_TOP_K=5
-CHAT_CANDIDATE_TOP_K=30
-RETRIEVAL_RECALL_PROVIDER=hybrid_rrf
+RETRIEVAL_RERANK_TOP_K=5
+RETRIEVAL_DENSE_TOP_K=50
+RETRIEVAL_RECALL_PROVIDER=lancedb
+VECTOR_STORE_PROVIDER=lancedb
+LANCEDB_PATH=./data/lancedb
+LANCEDB_TABLE=chunk_vectors
 RRF_K=60
 BM25_K1=1.5
 BM25_B=0.75
@@ -190,7 +193,7 @@ pip install -r python_rag/requirements-vllm.txt
 bash scripts/init_db.sh
 ```
 
-脚本会读取根目录 `.env`，创建 `MYSQL_DATABASE`，执行 `db/init.sql`，再按文件名字典序执行 `db/*_schema_upgrade.sql`。
+脚本会读取根目录 `.env`，创建 `MYSQL_DATABASE`，执行 `db/init.sql`，再按文件名字典序执行 `db/*_schema_upgrade.sql`。其中 `db/005_schema_upgrade.sql` 会为 `user_account` 补充用户长期记忆字段和已处理消息水位线。
 
 如果业务用户不存在，或没有建库权限，可以在 `.env` 中补充：
 
@@ -332,19 +335,19 @@ bash scripts/e2e_ingest.sh ./day7_demo.md
 bash scripts/e2e_chat.sh ./day7_demo.md
 ```
 
-默认检索链路为 `RETRIEVAL_RECALL_PROVIDER=hybrid_rrf`：每个 READY 文档分别取 BM25 和 FAISS 候选，按 RRF 公式 `1 / (RRF_K + rank)` 融合后，再进入 CrossEncoder rerank。可将该变量设为 `bm25` 或 `faiss` 做单路召回对照实验。
+默认检索链路为 `RETRIEVAL_RECALL_PROVIDER=lancedb`：LanceDB 先召回候选 `chunk_id`，默认 `RETRIEVAL_DENSE_TOP_K=50`，随后 MySQL 批量取 chunk 正文，再进入 CrossEncoder rerank。
 
 CrossEncoder rerank 支持缓存优先加载：`RERANK_LOCAL_FILES_ONLY=true` 时会先从 Hugging Face cache 查找 `RERANK_MODEL`；如果缓存缺失且 `RERANK_DOWNLOAD_IF_MISSING=true`，会先下载 snapshot 到 `RERANK_CACHE_DIR` 或默认 HF cache，再从本地 snapshot 加载。
 
-如果切换 embedding 模型，历史文档需要重新 ingest，否则 FAISS 索引维度或向量空间可能不一致。BM25 召回复用现有 chunk mapping，不需要额外索引文件。
+如果切换 embedding 模型，历史文档需要重新执行 parse/embedding/index 流程，否则 LanceDB 中旧向量空间可能不一致。
 
 ## Agent MVP 演示
 
 第一版 RAG Agent 已固化为 MVP 演示路径：
 
 ```text
-上传文档 -> ingest 建库 -> Agent 问答 -> knowledge_search 工具调用
--> Trace 展示 -> citations 展示
+上传文档 -> ingest 建库 -> Agent 问答 -> 用户/会话记忆注入
+-> 只读工具调用 -> Trace 展示 -> citations 展示
 ```
 
 前端演示：
@@ -353,7 +356,11 @@ CrossEncoder rerank 支持缓存优先加载：`RERANK_LOCAL_FILES_ONLY=true` �
 START_INIT_DB=true START_FRONTEND=true bash scripts/start_all.sh
 ```
 
-打开 `http://127.0.0.1:5173`，上传文档并等待 `READY`，在 Workspace 使用流式 Agent 问答。右侧 `Agent Trace` 会展示决策、工具调用和工具结果；回答完成后消息 citations 会在引用面板展示。
+打开 `http://127.0.0.1:5173`，上传文档并等待 `index_status=indexed`，在 Workspace 使用流式 Agent 问答。右侧 `Agent Trace` 会展示决策、工具调用和工具结果；回答完成后消息 citations 会在引用面板展示。
+
+当前 Agent 记忆分为三层：`user_account.memory_summary` 保存跨 session 的用户长期记忆，`sessions.summary` 保存当前 session 中期摘要，最近 8 条 user/assistant 消息作为短期记忆直接进入 prompt。记忆更新由 Celery 异步触发，`python_rag.tasks.session_summary_update` 维护 session summary，`python_rag.tasks.user_memory_update` 维护用户长期记忆；两者都使用 message id 水位线避免重复处理和旧任务覆盖新结果。
+
+默认只读工具包括：`knowledge_search` 检索 indexed 知识库，`get_document_detail` 查询文档元数据，`list_ready_documents` 列出可检索文档，`list_message_citations` 根据 assistant `message_id` 查询已保存 citations。
 
 CLI 对照：
 
@@ -376,7 +383,7 @@ curl -N -X POST http://127.0.0.1:8080/v1/agent/chat/stream \
 | `Workspace` | 核心问答工作区，包含会话、消息、上传、RAG 开关和引用面板。 |
 | `Documents` | 文档上传、索引状态、chunk/向量化摘要和文档详情。 |
 | `Tasks` | ingest/chat 任务表、进度、meta_json 和错误日志。 |
-| `Monitor` | CPU、GPU、内存、MySQL、Redis、Worker、队列、RAG、ingest、FAISS 和检索质量摘要。 |
+| `Monitor` | CPU、GPU、内存、MySQL、Redis、Worker、队列、RAG、ingest、LanceDB 和检索质量摘要。 |
 | `Settings` | 网关地址、用户、top_k、chunk 参数和模型显示名。 |
 
 ## API 概览
@@ -392,7 +399,7 @@ curl -N -X POST http://127.0.0.1:8080/v1/agent/chat/stream \
 | `GET` | `/v1/documents` | 查询全局文档归档和索引状态，可选 `user_id`、`status`、`limit`。 |
 | `GET` | `/v1/documents/{doc_id}` | 查询文档详情。 |
 | `POST` | `/v1/sessions` | 创建会话。 |
-| `POST` | `/v1/sessions/{session_id}/messages` | 创建用户消息并提交 chat 任务；默认检索全局 READY 文档，兼容可选 `doc_id` / `doc_ids` 限定范围。 |
+| `POST` | `/v1/sessions/{session_id}/messages` | 创建用户消息并提交 chat 任务；默认检索全局 indexed 文档，兼容可选 `doc_id` / `doc_ids` 限定范围。 |
 | `GET` | `/v1/sessions/{session_id}/messages` | 获取消息和 citations。 |
 | `GET` | `/v1/tasks` | 查询任务列表。 |
 | `GET` | `/v1/tasks/{task_id}` | 查询单个任务状态。 |
@@ -420,9 +427,9 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 - 提供 Docker Compose，一键启动 MySQL、Redis、FastAPI、Celery Worker 和 C++ Gateway。
 - 扩展自动化测试覆盖更多失败路径、鉴权限流边界、API contract 和检索评估数据集。
 - 统一 Gateway 配置入口，继续收敛 MySQL、Redis、监听端口和安全配置。
-- Gateway 增加 request id 透传、租户隔离、审计日志和更完整的统一错误响应。
+- Gateway 增加 request id 透传、审计日志、统一错误响应和更清晰的上游异常映射。
 - 继续完善流式 TTFT、客户端断连、上游异常和高并发 SSE 代理处理。
-- 将全局知识库检索从多 FAISS 文件 fan-out 优化为知识库级索引、分片索引或向量数据库。
+- 完善 LanceDB 索引维护：索引状态回查、重建指定文档索引、孤儿向量清理、备份恢复和容量监控。
 - 为扫描件 PDF 接入 OCR 解析链路。
 - 将 embedding LoRA 接入方式标准化，支持合并模型路径或 adapter 加载。
 

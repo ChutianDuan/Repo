@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from python_rag.app.core.config import RETRIEVAL_RERANK_TOP_K
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -11,7 +12,7 @@ class SearchRequest(BaseModel):
     doc_ids: Optional[List[int]] = Field(default=None, min_length=1, max_length=100)
     user_id: Optional[int] = Field(default=None, gt=0)
     query: str = Field(..., min_length=1)
-    top_k: int = Field(5, ge=1, le=100)
+    top_k: int = Field(RETRIEVAL_RERANK_TOP_K, ge=1, le=100)
     relevant_chunk_ids: Optional[List[int]] = None
     relevant_chunk_indexes: Optional[List[int]] = None
 
@@ -21,6 +22,23 @@ class SearchRequest(BaseModel):
         return normalize_positive_int_list(value, "doc_ids")
 
 
+
+
+class CleanupLanceDBOrphansRequest(BaseModel):
+    dry_run: bool = True
+    limit: int = Field(100000, ge=1, le=1000000)
+
+
+class LanceDBBackupRequest(BaseModel):
+    backup_dir: Optional[str] = None
+    label: Optional[str] = Field(default=None, max_length=80)
+
+
+class LanceDBRestoreRequest(BaseModel):
+    backup_path: str = Field(..., min_length=1)
+    overwrite: bool = False
+
+
 class SearchHit(BaseModel):
     doc_id: int
     chunk_id: int
@@ -28,10 +46,13 @@ class SearchHit(BaseModel):
     rank: Optional[int] = None
     score: float
     faiss_score: Optional[float] = None
+    lancedb_score: Optional[float] = None
+    lancedb_distance: Optional[float] = None
     bm25_score: Optional[float] = None
     rrf_score: Optional[float] = None
     rerank_score: Optional[float] = None
     faiss_rank: Optional[int] = None
+    lancedb_rank: Optional[int] = None
     bm25_rank: Optional[int] = None
     rrf_rank: Optional[int] = None
     original_rank: Optional[int] = None
@@ -42,6 +63,7 @@ class SearchHit(BaseModel):
 class SearchMetrics(BaseModel):
     embedding_ms: int | None = None
     faiss_ms: int | None = None
+    lancedb_ms: int | None = None
     bm25_ms: int | None = None
     rrf_ms: int | None = None
     doc_faiss_ms: Optional[Dict[str, int]] = None
@@ -54,6 +76,8 @@ class SearchMetrics(BaseModel):
     candidate_count: Optional[int] = None
     bm25_candidate_count: Optional[int] = None
     faiss_candidate_count: Optional[int] = None
+    lancedb_candidate_count: Optional[int] = None
+    mysql_hydrated_candidate_count: Optional[int] = None
     rerank: Optional[Dict[str, Any]] = None
     context_expansion: Optional[Dict[str, Any]] = None
     recall_at_k: float | None = None
@@ -85,10 +109,13 @@ class RetrievedChunk(BaseModel):
     chunk_index: Optional[int] = None
     score: Optional[float] = None
     faiss_score: Optional[float] = None
+    lancedb_score: Optional[float] = None
+    lancedb_distance: Optional[float] = None
     bm25_score: Optional[float] = None
     rrf_score: Optional[float] = None
     rerank_score: Optional[float] = None
     faiss_rank: Optional[int] = None
+    lancedb_rank: Optional[int] = None
     bm25_rank: Optional[int] = None
     rrf_rank: Optional[int] = None
     original_rank: Optional[int] = None

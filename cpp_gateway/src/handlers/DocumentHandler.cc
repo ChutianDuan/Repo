@@ -367,6 +367,6 @@ void DocumentService::uploadAndSubmit(
         sha256,
         sizeBytes,
         storagePath,
-        "UPLOADED"
+        "uploaded"
     );
 }

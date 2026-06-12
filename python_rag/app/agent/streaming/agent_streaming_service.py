@@ -235,6 +235,12 @@ async def _run_agent_task(state: _AgentStreamState) -> None:
             },
         )
         citations = result.get("citations") or []
+        retrieval = result.get("retrieval") or {}
+        citation_doc_ids = sorted({
+            int(item["doc_id"])
+            for item in citations
+            if isinstance(item, dict) and item.get("doc_id") is not None
+        })
         if citations:
             bulk_insert_citations(
                 message_id=assistant_message["message_id"],
@@ -251,6 +257,12 @@ async def _run_agent_task(state: _AgentStreamState) -> None:
             "e2e_latency_ms": e2e_latency_ms,
             "answer_source": "agent",
             "citation_count": len(citations),
+            "retrieved_count": retrieval.get("retrieved_count"),
+            "raw_hit_count": retrieval.get("candidate_count"),
+            "retrieval_ms": retrieval.get("retrieval_latency_ms"),
+            "lancedb_ms": retrieval.get("vector_search_latency_ms"),
+            "rerank_ms": retrieval.get("rerank_latency_ms"),
+            "doc_ids": citation_doc_ids,
         }
 
         if result["answer"]:
@@ -263,6 +275,7 @@ async def _run_agent_task(state: _AgentStreamState) -> None:
                 "message_id": assistant_message["message_id"],
                 "answer": result["answer"],
                 "citations": citations,
+                "retrieval": retrieval,
                 "steps_used": result.get("steps_used"),
                 "e2e_latency_ms": e2e_latency_ms,
             }

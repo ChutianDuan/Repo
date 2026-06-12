@@ -46,6 +46,7 @@ private:
     void startStreamResponse(
         const Json::Value& body,
         std::string upstreamPath,
+        std::string lastEventId,
         std::shared_ptr<StreamSlotLease> streamSlot,
         std::function<void(const drogon::HttpResponsePtr&)>&& callback
     );

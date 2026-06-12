@@ -73,7 +73,9 @@ def _normalize_limit(value: Any) -> int:
 
 
 def _is_ready_indexed_document(row: dict) -> bool:
-    return row.get("status") == "READY" and row.get("index_status") == "READY"
+    index_status = _normalize_status(row.get("index_status"))
+    status = _normalize_status(row.get("status"))
+    return index_status in ("indexed", "ready") and status not in ("failed", "failure")
 
 
 def _format_document_item(row: dict) -> dict:
@@ -159,7 +161,7 @@ class ListReadyDocumentsTool(BaseTool):
         limit = _normalize_limit(arguments.get("limit"))
 
         try:
-            rows = list_documents(status="READY", limit=limit)
+            rows = list_documents(status="indexed", limit=limit)
             documents = [
                 _format_document_item(row)
                 for row in rows

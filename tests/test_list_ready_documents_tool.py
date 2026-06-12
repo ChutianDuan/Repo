@@ -21,24 +21,24 @@ def test_list_ready_documents_tool_returns_ready_indexed_documents(monkeypatch):
             {
                 "id": 1,
                 "filename": "xxx.pdf",
-                "status": "READY",
-                "index_status": "READY",
+                "status": "uploaded",
+                "index_status": "indexed",
                 "chunk_count": "128",
                 "created_at": datetime(2026, 1, 2, 3, 4, 5),
             },
             {
                 "id": 2,
                 "filename": "not-indexed.pdf",
-                "status": "READY",
-                "index_status": "BUILDING",
+                "status": "uploaded",
+                "index_status": "indexing",
                 "chunk_count": 9,
                 "created_at": datetime(2026, 1, 3, 3, 4, 5),
             },
             {
                 "id": 3,
                 "filename": "failed.pdf",
-                "status": "FAILED",
-                "index_status": "READY",
+                "status": "failed",
+                "index_status": "indexed",
                 "chunk_count": 7,
                 "created_at": datetime(2026, 1, 4, 3, 4, 5),
             },
@@ -51,13 +51,13 @@ def test_list_ready_documents_tool_returns_ready_indexed_documents(monkeypatch):
 
     result = asyncio.run(ListReadyDocumentsTool().run({"limit": "2"}))
 
-    assert calls == [{"status": "READY", "limit": 2}]
+    assert calls == [{"status": "indexed", "limit": 2}]
     assert result == {
         "documents": [
             {
                 "document_id": 1,
                 "title": "xxx.pdf",
-                "status": "ready",
+                "status": "uploaded",
                 "chunk_count": 128,
                 "created_at": "2026-01-02T03:04:05",
             }

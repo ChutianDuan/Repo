@@ -75,7 +75,8 @@ void PythonSSEClient::postStream(
     const std::string& path,
     const Json::Value& body,
     const ChunkCallback& onChunk,
-    const FinishCallback& onFinish
+    const FinishCallback& onFinish,
+    const std::string& lastEventId
 ) const {
     ensureCurlGlobalInit();
 
@@ -94,6 +95,11 @@ void PythonSSEClient::postStream(
     headers = curl_slist_append(headers, "Content-Type: application/json");
     headers = curl_slist_append(headers, "Accept: text/event-stream");
     headers = curl_slist_append(headers, "Cache-Control: no-cache");
+    std::string lastEventIdHeader;
+    if (!lastEventId.empty()) {
+        lastEventIdHeader = "Last-Event-ID: " + lastEventId;
+        headers = curl_slist_append(headers, lastEventIdHeader.c_str());
+    }
 
     CurlWriteContext writeCtx{onChunk, ""};
 

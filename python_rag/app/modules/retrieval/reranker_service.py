@@ -268,6 +268,7 @@ def _with_ranks(hits: List[Dict[str, Any]], final_top_k: int) -> List[Dict[str, 
         item["rank"] = rank
         if (
             "faiss_score" not in item
+            and "lancedb_score" not in item
             and "bm25_score" not in item
             and "rrf_score" not in item
             and item.get("score") is not None
@@ -341,6 +342,7 @@ def rerank_hits(
             item["original_rank"] = original_rank
             if (
                 "faiss_score" not in item
+                and "lancedb_score" not in item
                 and "bm25_score" not in item
                 and "rrf_score" not in item
             ):

@@ -223,7 +223,7 @@ void GatewaySecurity::authorize(
     ResponseCallback&& callback,
     Next&& next
 ) const {
-    auto auth = authenticate(req);
+    auto auth = authenticate(req); // api 鉴权矫正 return {true, principal, error}
     if (!auth.ok) {
         auto resp = makeErrorResponse(k401Unauthorized, "UNAUTHORIZED", auth.error);
         resp->addHeader("WWW-Authenticate", "Bearer");

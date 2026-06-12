@@ -312,7 +312,7 @@ def _query_dashboard_counts() -> Dict[str, Any]:
             cursor.execute(
                 """
                 SELECT
-                    SUM(status='READY') AS documents_ready,
+                    SUM(d.index_status='indexed') AS documents_ready,
                     COUNT(c.id) AS total_chunks
                 FROM documents d
                 LEFT JOIN doc_chunks c ON c.doc_id = d.id

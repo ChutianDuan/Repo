@@ -46,11 +46,10 @@ from python_rag.app.shared import http_client
 DOC_ID = 1
 
 
-def test_search_in_documents_hybrid_fanout_and_metrics(monkeypatch):
-    monkeypatch.setattr(retrieval_service, "RETRIEVAL_RECALL_PROVIDER", "hybrid_rrf")
+def test_search_in_documents_lancedb_hydrates_chunks_and_metrics(monkeypatch):
+    monkeypatch.setattr(retrieval_service, "RETRIEVAL_RECALL_PROVIDER", "lancedb")
     monkeypatch.setattr(retrieval_service, "RERANK_ENABLE", True)
-    monkeypatch.setattr(retrieval_service, "CHAT_CANDIDATE_TOP_K", 3)
-    monkeypatch.setattr(retrieval_service, "get_embedding_model_name", lambda: "embedding-v1")
+    monkeypatch.setattr(retrieval_service, "CHAT_CANDIDATE_TOP_K", 50)
     monkeypatch.setattr(
         retrieval_service,
         "list_ready_document_ids",
@@ -62,9 +61,11 @@ def test_search_in_documents_hybrid_fanout_and_metrics(monkeypatch):
         lambda doc_id: {
             "doc_id": doc_id,
             "status": "READY",
-            "embedding_model": "embedding-v1",
-            "index_path": "doc_{0}".format(doc_id),
-            "mapping_path": "mapping_{0}".format(doc_id),
+            "embedding_model": retrieval_service.get_embedding_model_name(),
+            "dimension": 2,
+            "index_path": "",
+            "mapping_path": "",
+            "chunk_count": 1,
         },
     )
     monkeypatch.setattr(
@@ -73,28 +74,58 @@ def test_search_in_documents_hybrid_fanout_and_metrics(monkeypatch):
         lambda query: np.asarray([1.0, 0.0], dtype="float32"),
     )
 
-    def fake_faiss(index_path, mapping_path, query_vector, top_k):
-        doc_id = int(index_path.split("_")[-1])
+    lancedb_calls = []
+
+    def fake_lancedb(query_vector, top_k, doc_ids=None):
+        lancedb_calls.append(
+            {
+                "query_vector": query_vector.tolist(),
+                "top_k": top_k,
+                "doc_ids": doc_ids,
+            }
+        )
         return [
             {
-                "doc_id": doc_id,
-                "chunk_id": doc_id * 100 + 1,
+                "doc_id": 2,
+                "chunk_id": 201,
                 "chunk_index": 0,
-                "score": 0.9 - doc_id * 0.1,
-                "content": "faiss doc {0}".format(doc_id),
-            }
+                "score": 0.9,
+                "lancedb_score": 0.9,
+                "lancedb_distance": 0.1,
+                "lancedb_rank": 1,
+                "content_hash": "hash-201",
+            },
+            {
+                "doc_id": 1,
+                "chunk_id": 101,
+                "chunk_index": 1,
+                "score": 0.8,
+                "lancedb_score": 0.8,
+                "lancedb_distance": 0.2,
+                "lancedb_rank": 2,
+                "content_hash": "hash-101",
+            },
         ]
 
-    def fake_bm25(mapping_path, query, top_k):
-        doc_id = int(mapping_path.split("_")[-1])
+    chunk_lookup_calls = []
+
+    def fake_list_chunks_by_ids(chunk_ids):
+        chunk_lookup_calls.append(list(chunk_ids))
         return [
             {
-                "doc_id": doc_id,
-                "chunk_id": doc_id * 100 + 2,
+                "id": 101,
+                "doc_id": 1,
                 "chunk_index": 1,
-                "bm25_score": 2.0 - doc_id * 0.1,
-                "content": "bm25 doc {0}".format(doc_id),
-            }
+                "content": "mysql chunk 101",
+                "tokens_est": 3,
+            },
+            {
+                "id": 201,
+                "doc_id": 2,
+                "chunk_index": 0,
+                "content": "mysql chunk 201",
+                "tokens_est": 3,
+            },
         ]
 
     def fake_rerank(query, hits, final_top_k, recall_provider):
@@ -105,8 +136,8 @@ def test_search_in_documents_hybrid_fanout_and_metrics(monkeypatch):
             ranked.append(item)
         return ranked, {"used": False, "fallback": True}
 
-    monkeypatch.setattr(retrieval_service, "search_doc_faiss_index", fake_faiss)
-    monkeypatch.setattr(retrieval_service, "search_doc_bm25_index", fake_bm25)
+    monkeypatch.setattr(retrieval_service, "search_lancedb_index", fake_lancedb)
+    monkeypatch.setattr(retrieval_service, "list_chunks_by_ids", fake_list_chunks_by_ids)
     monkeypatch.setattr(retrieval_service, "rerank_hits", fake_rerank)
 
     result = retrieval_service.search_in_documents(
@@ -118,11 +149,22 @@ def test_search_in_documents_hybrid_fanout_and_metrics(monkeypatch):
     assert result["doc_ids"] == [1, 2]
     assert result["doc_count"] == 2
     assert result["top_k"] == 2
-    assert len(result["hits"]) == 2
-    assert result["metrics"]["recall_provider"] == "hybrid_rrf"
-    assert result["metrics"]["faiss_candidate_count"] == 2
-    assert result["metrics"]["bm25_candidate_count"] == 2
-    assert result["metrics"]["candidate_count"] == 4
+    assert result["candidate_top_k"] == 50
+    assert [hit["chunk_id"] for hit in result["hits"]] == [201, 101]
+    assert [hit["content"] for hit in result["hits"]] == ["mysql chunk 201", "mysql chunk 101"]
+    assert lancedb_calls == [
+        {
+            "query_vector": [1.0, 0.0],
+            "top_k": 50,
+            "doc_ids": [1, 2],
+        }
+    ]
+    assert chunk_lookup_calls == [[201, 101]]
+    assert result["metrics"]["recall_provider"] == "lancedb"
+    assert result["metrics"]["lancedb_candidate_count"] == 2
+    assert result["metrics"]["mysql_hydrated_candidate_count"] == 2
+    assert result["metrics"]["candidate_count"] == 2
+
 
 
 def _build_chunks(document_path, *, chunk_size, overlap):

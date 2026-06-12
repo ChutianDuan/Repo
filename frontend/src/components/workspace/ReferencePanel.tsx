@@ -35,6 +35,8 @@ export function ReferencePanel({ citations, chatTask, ingestTask }: ReferencePan
   const retrievedCount = getMetaNumber(chatTask?.meta, "retrieved_count");
   const rawHitCount = getMetaNumber(chatTask?.meta, "raw_hit_count");
   const retrievalMs = getMetaNumber(chatTask?.meta, "retrieval_ms");
+  const vectorSearchMs = getMetaNumber(chatTask?.meta, "lancedb_ms");
+  const rerankMs = getMetaNumber(chatTask?.meta, "rerank_ms");
   const citationCount = citations.length || getMetaNumber(chatTask?.meta, "citation_count") || 0;
 
   return (
@@ -60,6 +62,14 @@ export function ReferencePanel({ citations, chatTask, ingestTask }: ReferencePan
           <div>
             <span>Latency</span>
             <strong>{formatDurationMs(retrievalMs)}</strong>
+          </div>
+          <div>
+            <span>Vector Search</span>
+            <strong>{formatDurationMs(vectorSearchMs)}</strong>
+          </div>
+          <div>
+            <span>Rerank</span>
+            <strong>{formatDurationMs(rerankMs)}</strong>
           </div>
           <div>
             <span>Status</span>

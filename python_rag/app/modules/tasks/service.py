@@ -12,7 +12,7 @@ from python_rag.app.modules.tasks.repo import (
 
 from python_rag.app.workers.celery_app import celery_app
 from python_rag.app.workers.worker_tasks.ping_task import ping_task
-from python_rag.app.workers.worker_tasks.ingest_task import ingest_task
+from python_rag.app.tasks.index_tasks import parse_document_task
 
 
 def submit_ping_job(seconds):
@@ -46,7 +46,7 @@ def submit_ingest_job(doc_id):
 
         db_task_id = create_task_record(
             celery_task_id=celery_task_id,
-            task_type="ingest_document",
+            task_type="parse_document",
             entity_type="document",
             entity_id=doc_id,
             state=TaskState.PENDING,
@@ -55,7 +55,7 @@ def submit_ingest_job(doc_id):
         )
 
         try:
-            ingest_task.apply_async(
+            parse_document_task.apply_async(
                 kwargs={"doc_id": doc_id},
                 task_id=celery_task_id,
             )

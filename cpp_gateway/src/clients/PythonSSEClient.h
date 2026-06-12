@@ -18,7 +18,8 @@ public:
         const std::string& path,
         const Json::Value& body,
         const ChunkCallback& onChunk,
-        const FinishCallback& onFinish
+        const FinishCallback& onFinish,
+        const std::string& lastEventId = ""
     ) const;
 
 private:

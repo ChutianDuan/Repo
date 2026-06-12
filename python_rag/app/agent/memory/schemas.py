@@ -26,10 +26,15 @@ class MemoryMessage(BaseModel):
 
 # load_session_memory 返回给 Agent 的完整记忆包。
 class SessionMemory(BaseModel):
+    user_id: Optional[int] = Field(default=None, gt=0)
+    user_memory: str = ""
+    user_memory_message_id: Optional[int] = Field(default=None, gt=0)
     summary: str = ""
     summary_message_id: Optional[int] = Field(default=None, gt=0)
     recent_messages: List[MemoryMessage] = Field(default_factory=list)
     message_count: int = Field(default=0, ge=0)
+    user_memory_task_queued: bool = False
+    user_memory_updated: bool = False
     summary_task_queued: bool = False
     summary_updated: bool = False
 
@@ -50,9 +55,26 @@ class SessionSummaryResult(BaseModel):
     reason: Optional[str] = None
 
 
+class UserMemoryTaskPayload(BaseModel):
+    user_id: int = Field(..., gt=0)
+    current_session_id: Optional[int] = Field(default=None, gt=0)
+    current_user_message_id: Optional[int] = Field(default=None, gt=0)
+    source_until_message_id: Optional[int] = Field(default=None, gt=0)
+
+
+class UserMemoryResult(BaseModel):
+    user_id: int = Field(..., gt=0)
+    updated: bool = False
+    memory_message_id: Optional[int] = Field(default=None, gt=0)
+    source_message_count: int = Field(default=0, ge=0)
+    reason: Optional[str] = None
+
+
 __all__ = [
     "MemoryMessage",
     "SessionMemory",
     "SessionSummaryResult",
     "SessionSummaryTaskPayload",
+    "UserMemoryResult",
+    "UserMemoryTaskPayload",
 ]

@@ -1,6 +1,25 @@
 import { EmptyState } from "./common/EmptyState";
 import { StatusBadge } from "./common/StatusBadge";
-import { formatNumber, stateTone } from "../utils/format";
+import { formatNumber, formatScore, stateTone } from "../utils/format";
+
+export interface TraceCitation {
+  docId?: number | null;
+  chunkId?: number | null;
+  chunkIndex?: number | null;
+  score?: number | null;
+  snippet?: string;
+  title?: string;
+}
+
+export interface RetrievalTraceDetails {
+  provider?: string;
+  denseTopK?: number | null;
+  rerankTopK?: number | null;
+  candidateCount?: number | null;
+  vectorSearchLatencyMs?: number | null;
+  rerankLatencyMs?: number | null;
+  retrievalLatencyMs?: number | null;
+}
 
 export interface AgentTraceRow {
   id: string;
@@ -12,6 +31,8 @@ export interface AgentTraceRow {
   latencyMs?: number;
   status: string;
   startedAtMs?: number;
+  retrieval?: RetrievalTraceDetails;
+  citations?: TraceCitation[];
 }
 
 interface AgentTracePanelProps {
@@ -26,6 +47,10 @@ function formatLatency(value: number | undefined): string {
     return `${value} ms`;
   }
   return `${(value / 1000).toFixed(1)} s`;
+}
+
+function metricValue(value: number | null | undefined): string {
+  return value === null || value === undefined ? "--" : formatNumber(value);
 }
 
 function displayText(value: string | undefined): string {
@@ -114,6 +139,51 @@ export function AgentTracePanel({ rows }: AgentTracePanelProps) {
                       <dd>{formatLatency(row.latencyMs)}</dd>
                     </div>
                   </dl>
+                  {row.retrieval ? (
+                    <dl className="agent-path-card__meta">
+                      <div>
+                        <dt>Provider</dt>
+                        <dd>{displayText(row.retrieval.provider)}</dd>
+                      </div>
+                      <div>
+                        <dt>Dense TopK</dt>
+                        <dd>{metricValue(row.retrieval.denseTopK)}</dd>
+                      </div>
+                      <div>
+                        <dt>Rerank TopK</dt>
+                        <dd>{metricValue(row.retrieval.rerankTopK)}</dd>
+                      </div>
+                      <div>
+                        <dt>Candidates</dt>
+                        <dd>{metricValue(row.retrieval.candidateCount)}</dd>
+                      </div>
+                      <div>
+                        <dt>Vector</dt>
+                        <dd>{formatLatency(row.retrieval.vectorSearchLatencyMs ?? undefined)}</dd>
+                      </div>
+                      <div>
+                        <dt>Rerank</dt>
+                        <dd>{formatLatency(row.retrieval.rerankLatencyMs ?? undefined)}</dd>
+                      </div>
+                      <div>
+                        <dt>Total</dt>
+                        <dd>{formatLatency(row.retrieval.retrievalLatencyMs ?? undefined)}</dd>
+                      </div>
+                    </dl>
+                  ) : null}
+                  {row.citations && row.citations.length > 0 ? (
+                    <div className="agent-trace-citations">
+                      {row.citations.slice(0, 3).map((citation, index) => (
+                        <article key={`${row.id}-citation-${citation.chunkId ?? index}`}>
+                          <header>
+                            <strong>{displayText(citation.title || `doc ${citation.docId ?? "--"}`)}</strong>
+                            <span>chunk {metricValue(citation.chunkIndex)} / score {formatScore(citation.score ?? Number.NaN)}</span>
+                          </header>
+                          <p title={citation.snippet}>{displayText(citation.snippet)}</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="agent-path-card__io">
                     <div>
                       <span>Input</span>

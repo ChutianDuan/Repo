@@ -7,6 +7,9 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from python_rag.app.agent.trace import trace_service
 from python_rag.app.agent.memory import session as session_memory
 from python_rag.app.agent.schemas import AgentStepStatus, AgentToolCallStatus
+from python_rag.app.agent.tools.local.citation_tools import (
+    LIST_MESSAGE_CITATIONS_TOOL_NAME,
+)
 from python_rag.app.agent.tools.local.document_tools import (
     DOCUMENT_DETAIL_TOOL_NAME,
     LIST_READY_DOCUMENTS_TOOL_NAME,
@@ -23,6 +26,7 @@ READONLY_TOOL_NAMES = [
     KNOWLEDGE_SEARCH_TOOL_NAME,
     DOCUMENT_DETAIL_TOOL_NAME,
     LIST_READY_DOCUMENTS_TOOL_NAME,
+    LIST_MESSAGE_CITATIONS_TOOL_NAME,
 ]
 SYSTEM_PROMPT = (
     "你是一个本地知识库检索智能体。"
@@ -33,6 +37,7 @@ SYSTEM_PROMPT = (
     "如果用户询问项目文档、系统架构、模块、实现细节或文档中是否存在某能力，必须先调用 knowledge_search。"
     "如果用户要求根据 document_id 查询文档详情，必须调用 get_document_detail。"
     "如果用户询问当前知识库有哪些文档、能问哪些资料或哪些文档已经建好索引，必须调用 list_ready_documents。"
+    "如果用户要求按 message_id 查看某条 assistant 消息的已保存引用或 citations，必须调用 list_message_citations。"
     "如果 knowledge_search 没有返回结果，应明确说明当前知识库证据不足，不要编造。"
     "如果 knowledge_search 返回 error，应说明检索工具失败并给出降级说明，不要编造文档结论。"
     "获取工具结果后，应判断证据是否足够；足够时回答用户问题，不足时可继续调用只读工具补充上下文。"
@@ -192,6 +197,26 @@ def _extract_observation_citations(
     return citations
 
 
+def _extract_observation_retrieval_summary(
+    observations: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {}
+    for observation in observations:
+        if observation.get("tool_name") != KNOWLEDGE_SEARCH_TOOL_NAME:
+            continue
+
+        result = observation.get("result")
+        if not isinstance(result, dict):
+            continue
+
+        retrieval = result.get("retrieval")
+        if isinstance(retrieval, dict):
+            summary = dict(retrieval)
+            total = result.get("total")
+            if total is not None:
+                summary["retrieved_count"] = total
+    return summary
+
 def _build_initial_messages(
     question: str,
     system_prompt: str = SYSTEM_PROMPT,
@@ -285,6 +310,7 @@ class AgentOrchestrator:
                 tool_call_id=tool_row_id,
                 error_message=str(exc),
                 result=result,
+                result_preview=trace_service.build_tool_result_preview(tool_name or "unknown", result),
             )
             await _emit_agent_event(
                 event_sink,
@@ -341,6 +367,7 @@ class AgentOrchestrator:
                     tool_call_id=tool_row_id,
                     error_message=error_message,
                     result=result,
+                    result_preview=trace_service.build_tool_result_preview(tool_name, result),
                     latency_ms=latency_ms,
                 )
                 await _emit_agent_event(
@@ -370,6 +397,7 @@ class AgentOrchestrator:
             trace_service.finish_tool_call(
                 tool_call_id=tool_row_id,
                 result=result,
+                result_preview=trace_service.build_tool_result_preview(tool_name, result),
                 latency_ms=latency_ms,
             )
             await _emit_agent_event(
@@ -403,6 +431,7 @@ class AgentOrchestrator:
                 tool_call_id=tool_row_id,
                 error_message=str(exc),
                 result=result,
+                result_preview=trace_service.build_tool_result_preview(tool_name, result),
                 latency_ms=int((time.time() - started_at) * 1000),
             )
             await _emit_agent_event(
@@ -448,10 +477,13 @@ class AgentOrchestrator:
         memory_debug_context = session_memory.format_memory_debug_context(memory)
         if memory_debug_context:
             logger.info(
-                "agent memory context session_id=%s user_message_id=%s message_count=%s summary_message_id=%s summary_task_queued=%s\n%s",
+                "agent memory context session_id=%s user_id=%s user_message_id=%s message_count=%s user_memory_message_id=%s user_memory_task_queued=%s summary_message_id=%s summary_task_queued=%s\n%s",
                 session_id,
+                memory.user_id,
                 user_message_id,
                 memory.message_count,
+                memory.user_memory_message_id,
+                memory.user_memory_task_queued,
                 memory.summary_message_id,
                 memory.summary_task_queued,
                 memory_debug_context,
@@ -468,8 +500,13 @@ class AgentOrchestrator:
                 "tools": self._readonly_tool_names(),
                 "permission_level": READONLY_PERMISSION_LEVEL,
                 "memory": {
+                    "user_id": memory.user_id,
                     "message_count": memory.message_count,
                     "recent_message_count": len(memory.recent_messages),
+                    "has_user_memory": bool(memory.user_memory),
+                    "user_memory_message_id": memory.user_memory_message_id,
+                    "user_memory_task_queued": memory.user_memory_task_queued,
+                    "user_memory_updated": memory.user_memory_updated,
                     "has_summary": bool(memory.summary),
                     "summary_message_id": memory.summary_message_id,
                     "summary_task_queued": memory.summary_task_queued,
@@ -558,12 +595,14 @@ class AgentOrchestrator:
                         },
                     )
                     citations = _extract_observation_citations(observations)
+                    retrieval = _extract_observation_retrieval_summary(observations)
                     trace_service.finish_run(
                         run_id=run_id,
                         output_data={
                             "answer": final_answer,
                             "observations": observations,
                             "citations": citations,
+                            "retrieval": retrieval,
                         },
                     )
                     run_closed = True
@@ -573,6 +612,7 @@ class AgentOrchestrator:
                         "messages": messages,
                         "observations": observations,
                         "citations": citations,
+                            "retrieval": retrieval,
                         "steps_used": step_index + 1,
                     }
 

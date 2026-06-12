@@ -7,7 +7,7 @@ celery_app = Celery(
     backend=CELERY_RESULT_BACKEND,
     include=[
         "python_rag.app.workers.worker_tasks.ping_task",
-        "python_rag.app.workers.worker_tasks.ingest_task",
+        "python_rag.app.tasks.index_tasks",
         "python_rag.app.workers.worker_tasks.chat_task",
         "python_rag.app.agent.memory.tasks",
     ],

@@ -46,7 +46,7 @@ void applyCorsHeaders(const HttpRequestPtr& req, const HttpResponsePtr& resp) {
     } else {
         resp->addHeader(
             "Access-Control-Allow-Headers",
-            "Content-Type, Authorization, X-API-Key, X-User-Id, X-Requested-With"
+            "Content-Type, Authorization, X-API-Key, X-User-Id, X-Requested-With, Last-Event-ID"
         );
     }
 

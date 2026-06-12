@@ -24,7 +24,7 @@ export function TasksPage({ tasks, selectedTaskId, taskListError, onSelectTask, 
       return true;
     }
     if (filter === "ingest") {
-      return task.type.includes("ingest");
+      return task.type.includes("ingest") || task.type === "parse_document" || task.type === "build_embedding";
     }
     if (filter === "chat") {
       return task.type.includes("chat");

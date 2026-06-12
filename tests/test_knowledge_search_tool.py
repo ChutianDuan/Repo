@@ -33,7 +33,19 @@ def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
                     "snippet": "more context",
                     "score": 0.5,
                 },
-            ]
+            ],
+            "metrics": {
+                "recall_provider": "lancedb",
+                "candidate_top_k": 50,
+                "final_top_k": 2,
+                "candidate_count": 12,
+                "lancedb_candidate_count": 12,
+                "mysql_hydrated_candidate_count": 10,
+                "lancedb_ms": 7,
+                "rerank_ms": 11,
+                "retrieval_ms": 25,
+                "rerank": {"used": True, "provider": "cross_encoder", "model": "reranker"},
+            }
         }
 
     monkeypatch.setattr(
@@ -61,31 +73,18 @@ def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
             "track_metric": True,
         }
     ]
-    assert result == {
-        "results": [
-            {
-                "chunk_id": 1,
-                "chunk_index": 0,
-                "doc_id": 7,
-                "document_id": 7,
-                "title": "guide.md",
-                "content": "important context",
-                "snippet": "important context",
-                "score": 0.891235,
-            },
-            {
-                "chunk_id": 2,
-                "chunk_index": 1,
-                "doc_id": 7,
-                "document_id": 7,
-                "title": "guide.md",
-                "content": "more context",
-                "snippet": "more context",
-                "score": 0.5,
-            },
-        ],
-        "total": 2,
-    }
+    assert result["total"] == 2
+    assert [item["chunk_id"] for item in result["results"]] == [1, 2]
+    assert result["results"][0]["title"] == "guide.md"
+    assert result["results"][0]["score"] == 0.891235
+    assert result["results"][0]["lancedb_score"] == 0.0
+    assert result["results"][0]["rerank_score"] == 0.0
+    assert result["retrieval"]["provider"] == "lancedb"
+    assert result["retrieval"]["vector_search_latency_ms"] == 7
+    assert result["retrieval"]["rerank_latency_ms"] == 11
+    assert result["retrieval"]["retrieval_latency_ms"] == 25
+    assert result["retrieval"]["dense_top_k"] == 50
+    assert result["retrieval"]["rerank_top_k"] == 2
 
 
 def test_knowledge_search_tool_truncates_content(monkeypatch):

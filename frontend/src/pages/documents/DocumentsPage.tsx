@@ -8,6 +8,7 @@ import { MetricCard } from "../../components/common/MetricCard";
 import { PageTitle } from "../../components/common/PageTitle";
 import { SectionCard } from "../../components/common/SectionCard";
 import { formatNumber } from "../../utils/format";
+import { isFailedDocument, isIndexedDocument, isProcessingDocument } from "../../app/appState";
 
 interface DocumentsPageProps {
   documents: DocumentListItem[];
@@ -40,20 +41,20 @@ export function DocumentsPage({
       return true;
     }
     if (filter === "ready") {
-      return document.status === "READY";
+      return isIndexedDocument(document);
     }
     if (filter === "processing") {
-      return document.status === "PROCESSING" || document.status === "INGESTING" || document.status === "UPLOADED";
+      return isProcessingDocument(document);
     }
-    return document.status === "FAILED";
+    return isFailedDocument(document);
   });
   const selectedDocument = documents.find((document) => document.doc_id === selectedDocId) || null;
   const selectedTasks = selectedDocument
     ? tasks.filter((task) => task.entity_type === "document" && task.entity_id === selectedDocument.doc_id)
     : [];
-  const readyCount = documents.filter((document) => document.status === "READY").length;
-  const processingCount = documents.filter((document) => document.status === "PROCESSING" || document.status === "INGESTING" || document.status === "UPLOADED").length;
-  const failedCount = documents.filter((document) => document.status === "FAILED").length;
+  const readyCount = documents.filter(isIndexedDocument).length;
+  const processingCount = documents.filter(isProcessingDocument).length;
+  const failedCount = documents.filter(isFailedDocument).length;
   const totalChunks = documents.reduce((sum, document) => sum + (document.chunks || 0), 0);
 
   return (
@@ -61,7 +62,7 @@ export function DocumentsPage({
       <PageTitle
         eyebrow="文档索引"
         title="笔记文档"
-        description="上传笔记文档，等待索引 READY 后即可在问答页检索；不需要的文档可以直接删除。"
+        description="上传笔记文档，等待 index_status indexed 后即可在问答页检索；不需要的文档可以直接删除。"
         action={
           <UploadDocumentButton
             selectedFileName={selectedFileName}

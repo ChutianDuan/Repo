@@ -32,6 +32,10 @@ std::string jsonToCompactString(const Json::Value& value) {
     builder["indentation"] = "";
     return Json::writeString(builder, value);
 }
+
+std::string getLastEventId(const HttpRequestPtr& req) {
+    return req ? req->getHeader("Last-Event-ID") : std::string();
+}
 }  // namespace
 
 struct StreamChatService::StreamSlotLease {
@@ -163,17 +167,25 @@ std::shared_ptr<StreamChatService::StreamSlotLease> StreamChatService::acquireSt
 void StreamChatService::startStreamResponse(
     const Json::Value& body,
     std::string upstreamPath,
+    std::string lastEventId,
     std::shared_ptr<StreamSlotLease> streamSlot,
     std::function<void(const HttpResponsePtr&)>&& callback
 ) {
     auto resp = HttpResponse::newAsyncStreamResponse(
-        [client = pythonSSEClient_, body, upstreamPath = std::move(upstreamPath), streamSlot = std::move(streamSlot)](
+        [
+            client = pythonSSEClient_,
+            body,
+            upstreamPath = std::move(upstreamPath),
+            lastEventId = std::move(lastEventId),
+            streamSlot = std::move(streamSlot)
+        ](
             ResponseStreamPtr stream
         ) mutable {
             std::thread([
                 client,
                 body,
                 upstreamPath,
+                lastEventId,
                 stream = std::move(stream),
                 streamSlot = std::move(streamSlot)
             ]() mutable {
@@ -194,7 +206,8 @@ void StreamChatService::startStreamResponse(
                             sharedStream->send(buildSseErrorEvent(msg));
                         }
                         sharedStream->close();
-                    }
+                    },
+                    lastEventId
                 );
             }).detach();
         },
@@ -245,6 +258,7 @@ void StreamChatService::handleStream(
         startStreamResponse(
             body,
             "/internal/chat/stream",
+            getLastEventId(req),
             std::move(streamSlot),
             std::move(callback)
         );
@@ -263,7 +277,13 @@ void StreamChatService::handleStream(
     pythonApiClient_->forwardJsonPost(
         "/internal/sessions/" + std::to_string(sessionId) + "/messages",
         createMessageBody,
-        [this, sharedCallback, body, streamSlot = std::move(streamSlot)](
+        [
+            this,
+            sharedCallback,
+            body,
+            lastEventId = getLastEventId(req),
+            streamSlot = std::move(streamSlot)
+        ](
             const HttpResponsePtr& msgResp
         ) mutable {
             if (msgResp->statusCode() >= 400) {
@@ -287,6 +307,7 @@ void StreamChatService::handleStream(
             startStreamResponse(
                 nextBody,
                 "/internal/chat/stream",
+                std::move(lastEventId),
                 std::move(streamSlot),
                 std::move(*sharedCallback)
             );
@@ -329,6 +350,7 @@ void StreamChatService::handleAgentStream(
     startStreamResponse(
         body,
         "/api/agent/chat/stream",
+        getLastEventId(req),
         std::move(streamSlot),
         std::move(callback)
     );

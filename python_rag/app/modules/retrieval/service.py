@@ -3,7 +3,8 @@ import json
 import time
 
 from python_rag.app.core.config import (
-    CHAT_CANDIDATE_TOP_K,
+    RETRIEVAL_DENSE_TOP_K,
+    RETRIEVAL_RERANK_TOP_K,
     RERANK_ENABLE,
     RETRIEVAL_CONTEXT_MAX_CHARS,
     RETRIEVAL_CONTEXT_WINDOW,
@@ -13,7 +14,7 @@ from python_rag.app.core.error_codes import ERR_INDEX_NOT_FOUND, ERR_INTERNAL_ER
 from python_rag.app.core.errors import AppError
 from python_rag.app.core.logger import logger
 
-from python_rag.app.modules.documents.repo import get_document_index_by_doc_id, list_ready_document_ids
+from python_rag.app.modules.documents.repo import get_document_index_by_doc_id, list_chunks_by_ids, list_ready_document_ids
 from python_rag.app.modules.ingest.embedding_service import (
     embed_query,
     get_embedding_model_name,
@@ -25,18 +26,21 @@ from python_rag.app.modules.monitor.request_metrics import (
 )
 from python_rag.app.modules.retrieval.bm25_service import search_doc_bm25_index
 from python_rag.app.modules.retrieval.faiss_service import search_doc_faiss_index
+from python_rag.app.modules.retrieval.lancedb_service import search_lancedb_index
 from python_rag.app.modules.retrieval.fusion_service import fuse_hits_with_rrf
 from python_rag.app.modules.retrieval.reranker_service import rerank_hits
 
 
 def _normalize_recall_provider():
-    provider = (RETRIEVAL_RECALL_PROVIDER or "hybrid_rrf").strip().lower()
-    if provider in ("hybrid", "hybrid_rrf", "rrf"):
-        return "hybrid_rrf"
-    if provider in ("bm25", "sparse"):
-        return "bm25"
-    if provider in ("faiss", "dense"):
-        return "faiss"
+    provider = (RETRIEVAL_RECALL_PROVIDER or "lancedb").strip().lower()
+    if provider in ("lancedb", "lance", "vector", "dense"):
+        return "lancedb"
+    if provider in ("hybrid", "hybrid_rrf", "rrf", "bm25", "sparse", "faiss"):
+        logger.warning(
+            "legacy retrieval provider '%s' requested; using lancedb source-of-truth flow",
+            RETRIEVAL_RECALL_PROVIDER,
+        )
+        return "lancedb"
     raise AppError(
         ERR_INTERNAL_ERROR,
         f"unsupported retrieval recall provider: {RETRIEVAL_RECALL_PROVIDER}",
@@ -250,6 +254,42 @@ def _format_bm25_hit(item):
     }
 
 
+def _format_lancedb_hit(item, chunk_row):
+    content = chunk_row.get("content") or chunk_row.get("text") or ""
+    score = round(float(item.get("lancedb_score", item.get("score") or 0.0)), 6)
+    return {
+        "doc_id": chunk_row.get("doc_id") or item.get("doc_id"),
+        "chunk_id": chunk_row.get("id") or item.get("chunk_id"),
+        "chunk_index": chunk_row.get("chunk_index", item.get("chunk_index")),
+        "score": score,
+        "lancedb_score": score,
+        "lancedb_distance": item.get("lancedb_distance"),
+        "lancedb_rank": item.get("lancedb_rank"),
+        "content_hash": item.get("content_hash"),
+        "content": content,
+        "snippet": _build_snippet(content),
+    }
+
+
+def _hydrate_lancedb_hits(lancedb_hits):
+    if not lancedb_hits:
+        return []
+
+    rows = list_chunks_by_ids([hit.get("chunk_id") for hit in lancedb_hits])
+    rows_by_id = {int(row["id"]): row for row in rows if row.get("id") is not None}
+    hydrated_hits = []
+    for hit in lancedb_hits:
+        try:
+            chunk_id = int(hit.get("chunk_id"))
+        except (TypeError, ValueError):
+            continue
+        chunk_row = rows_by_id.get(chunk_id)
+        if not chunk_row:
+            continue
+        hydrated_hits.append(_format_lancedb_hit(hit, chunk_row))
+    return hydrated_hits
+
+
 def _rank_source_hits(hits, score_field, rank_field):
     hits.sort(
         key=lambda item: item.get(score_field) if item.get(score_field) is not None else float("-inf"),
@@ -356,7 +396,7 @@ def search_in_documents(
     doc_ids=None,
     doc_id=None,
     user_id=None,
-    top_k=3,
+    top_k=None,
     candidate_top_k=None,
     track_metric=True,
     relevant_chunk_ids=None,
@@ -364,20 +404,17 @@ def search_in_documents(
 ):
     started_at = time.perf_counter()
     embedding_ms = None
-    faiss_ms = None
-    bm25_ms = None
-    rrf_ms = None
-    doc_faiss_ms = {}
-    doc_bm25_ms = {}
+    lancedb_ms = None
     rerank_ms = None
     rerank_meta = {}
-    context_expansion_meta = {}
+    context_expansion_meta = {
+        "enabled": False,
+        "reason": "lancedb_returns_ids_mysql_returns_content",
+    }
     resolved_doc_ids = []
     recall_provider = _normalize_recall_provider()
-    use_faiss = recall_provider in ("faiss", "hybrid_rrf")
-    use_bm25 = recall_provider in ("bm25", "hybrid_rrf")
-    final_top_k = max(1, int(top_k or 1))
-    configured_candidate_top_k = int(candidate_top_k or CHAT_CANDIDATE_TOP_K)
+    final_top_k = max(1, int(top_k or RETRIEVAL_RERANK_TOP_K))
+    configured_candidate_top_k = int(candidate_top_k or RETRIEVAL_DENSE_TOP_K)
     effective_candidate_top_k = (
         max(final_top_k, configured_candidate_top_k)
         if RERANK_ENABLE
@@ -392,59 +429,22 @@ def search_in_documents(
             user_id=user_id,
             embedding_model=current_embedding_model,
         )
-        index_metas = [
-            _load_ready_index_meta(item, current_embedding_model)
-            for item in resolved_doc_ids
-        ]
+        for resolved_doc_id in resolved_doc_ids:
+            _load_ready_index_meta(resolved_doc_id, current_embedding_model)
 
-        query_vector = None
-        if use_faiss:
-            embedding_started_at = time.perf_counter()
-            query_vector = embed_query(query)
-            embedding_ms = int((time.perf_counter() - embedding_started_at) * 1000)
+        embedding_started_at = time.perf_counter()
+        query_vector = embed_query(query)
+        embedding_ms = int((time.perf_counter() - embedding_started_at) * 1000)
 
-        faiss_hits = []
-        bm25_hits = []
-        for index_meta in index_metas:
-            if use_faiss:
-                doc_search_started_at = time.perf_counter()
-                hits = search_doc_faiss_index(
-                    index_path=index_meta["index_path"],
-                    mapping_path=index_meta["mapping_path"],
-                    query_vector=query_vector,
-                    top_k=effective_candidate_top_k,
-                )
-                elapsed_ms = int((time.perf_counter() - doc_search_started_at) * 1000)
-                doc_faiss_ms[str(index_meta["doc_id"])] = elapsed_ms
-                faiss_ms = (faiss_ms or 0) + elapsed_ms
-                faiss_hits.extend(_format_faiss_hit(item) for item in hits)
-
-            if use_bm25:
-                doc_search_started_at = time.perf_counter()
-                hits = search_doc_bm25_index(
-                    mapping_path=index_meta["mapping_path"],
-                    query=query,
-                    top_k=effective_candidate_top_k,
-                )
-                elapsed_ms = int((time.perf_counter() - doc_search_started_at) * 1000)
-                doc_bm25_ms[str(index_meta["doc_id"])] = elapsed_ms
-                bm25_ms = (bm25_ms or 0) + elapsed_ms
-                bm25_hits.extend(_format_bm25_hit(item) for item in hits)
-
-        candidate_hits = []
-        if recall_provider == "hybrid_rrf":
-            _rank_source_hits(faiss_hits, "faiss_score", "faiss_rank")
-            _rank_source_hits(bm25_hits, "bm25_score", "bm25_rank")
-            rrf_started_at = time.perf_counter()
-            candidate_hits = fuse_hits_with_rrf(
-                [("bm25", bm25_hits), ("faiss", faiss_hits)],
-                limit=effective_candidate_top_k * max(1, len(index_metas)),
-            )
-            rrf_ms = int((time.perf_counter() - rrf_started_at) * 1000)
-        elif recall_provider == "bm25":
-            candidate_hits = _rank_source_hits(bm25_hits, "bm25_score", "bm25_rank")
-        else:
-            candidate_hits = _rank_source_hits(faiss_hits, "faiss_score", "faiss_rank")
+        lancedb_started_at = time.perf_counter()
+        lancedb_hits = search_lancedb_index(
+            query_vector=query_vector,
+            top_k=effective_candidate_top_k,
+            doc_ids=resolved_doc_ids,
+        )
+        candidate_hits = _hydrate_lancedb_hits(lancedb_hits)
+        lancedb_ms = int((time.perf_counter() - lancedb_started_at) * 1000)
+        _rank_source_hits(candidate_hits, "lancedb_score", "lancedb_rank")
 
         rerank_started_at = time.perf_counter()
         result_hits, rerank_meta = rerank_hits(
@@ -456,9 +456,8 @@ def search_in_documents(
         rerank_meta.update(
             {
                 "recall_provider": recall_provider,
-                "bm25_candidate_count": len(bm25_hits),
-                "faiss_candidate_count": len(faiss_hits),
-                "rrf_candidate_count": len(candidate_hits) if recall_provider == "hybrid_rrf" else None,
+                "lancedb_candidate_count": len(lancedb_hits),
+                "mysql_hydrated_candidate_count": len(candidate_hits),
             }
         )
         rerank_ms = int((time.perf_counter() - rerank_started_at) * 1000)
@@ -467,10 +466,6 @@ def search_in_documents(
             result_hits,
             relevant_chunk_ids=relevant_chunk_ids,
             relevant_chunk_indexes=relevant_chunk_indexes,
-        )
-        result_hits, context_expansion_meta = _expand_hits_with_neighbor_context(
-            result_hits,
-            index_metas,
         )
 
         retrieval_ms = int((time.perf_counter() - started_at) * 1000)
@@ -484,19 +479,22 @@ def search_in_documents(
             "hits": result_hits,
             "metrics": {
                 "embedding_ms": embedding_ms,
-                "faiss_ms": faiss_ms,
-                "bm25_ms": bm25_ms,
-                "rrf_ms": rrf_ms,
+                "lancedb_ms": lancedb_ms,
+                "faiss_ms": None,
+                "bm25_ms": None,
+                "rrf_ms": None,
                 "rerank_ms": rerank_ms,
                 "retrieval_ms": retrieval_ms,
-                "doc_faiss_ms": doc_faiss_ms,
-                "doc_bm25_ms": doc_bm25_ms,
+                "doc_faiss_ms": {},
+                "doc_bm25_ms": {},
                 "candidate_top_k": effective_candidate_top_k,
                 "final_top_k": final_top_k,
                 "recall_provider": recall_provider,
                 "candidate_count": len(candidate_hits),
-                "bm25_candidate_count": len(bm25_hits),
-                "faiss_candidate_count": len(faiss_hits),
+                "lancedb_candidate_count": len(lancedb_hits),
+                "mysql_hydrated_candidate_count": len(candidate_hits),
+                "bm25_candidate_count": 0,
+                "faiss_candidate_count": 0,
                 "rerank": rerank_meta,
                 "context_expansion": context_expansion_meta,
                 **eval_metrics,
@@ -511,23 +509,19 @@ def search_in_documents(
                 doc_id=resolved_doc_ids[0] if len(resolved_doc_ids) == 1 else None,
                 top_k=final_top_k,
                 retrieval_ms=retrieval_ms,
-                embedding_tokens=estimate_text_tokens(query) if use_faiss else 0,
+                embedding_tokens=estimate_text_tokens(query),
                 cost_usd=0.0,
                 extra={
                     "embedding_ms": embedding_ms,
-                    "faiss_ms": faiss_ms,
-                    "bm25_ms": bm25_ms,
-                    "rrf_ms": rrf_ms,
-                    "doc_faiss_ms": doc_faiss_ms,
-                    "doc_bm25_ms": doc_bm25_ms,
+                    "lancedb_ms": lancedb_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": effective_candidate_top_k,
                     "final_top_k": final_top_k,
                     "recall_provider": recall_provider,
                     "hit_count": len(result_hits),
                     "candidate_count": len(candidate_hits),
-                    "bm25_candidate_count": len(bm25_hits),
-                    "faiss_candidate_count": len(faiss_hits),
+                    "lancedb_candidate_count": len(lancedb_hits),
+                    "mysql_hydrated_candidate_count": len(candidate_hits),
                     "doc_ids": resolved_doc_ids,
                     "doc_count": len(resolved_doc_ids),
                     "rerank": rerank_meta,
@@ -557,11 +551,7 @@ def search_in_documents(
                 error_message=str(exc),
                 extra={
                     "embedding_ms": embedding_ms,
-                    "faiss_ms": faiss_ms,
-                    "bm25_ms": bm25_ms,
-                    "rrf_ms": rrf_ms,
-                    "doc_faiss_ms": doc_faiss_ms,
-                    "doc_bm25_ms": doc_bm25_ms,
+                    "lancedb_ms": lancedb_ms,
                     "rerank_ms": rerank_ms,
                     "candidate_top_k": effective_candidate_top_k,
                     "final_top_k": final_top_k,
@@ -574,11 +564,10 @@ def search_in_documents(
             )
         raise
 
-
 def search_in_document(
     doc_id,
     query,
-    top_k=3,
+    top_k=None,
     candidate_top_k=None,
     track_metric=True,
     relevant_chunk_ids=None,

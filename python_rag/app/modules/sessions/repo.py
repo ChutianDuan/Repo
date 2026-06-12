@@ -60,22 +60,31 @@ def update_session_summary(session_id, summary, summary_message_id=None):
         with conn.cursor() as cursor:
             fields = ["summary=%s"]
             params = [summary]
+            guard_clause = ""
             if (
                 summary_message_id is not None
                 and has_column("sessions", "summary_message_id")
             ):
                 fields.append("summary_message_id=%s")
                 params.append(summary_message_id)
+                guard_clause = (
+                    " AND (summary_message_id IS NULL OR summary_message_id < %s)"
+                )
             if has_column("sessions", "updated_at"):
                 fields.append("updated_at=CURRENT_TIMESTAMP")
             params.append(session_id)
+            if guard_clause:
+                params.append(summary_message_id)
 
             cursor.execute(
                 """
                 UPDATE sessions
                 SET {fields}
-                WHERE id=%s
-                """.format(fields=", ".join(fields)),
+                WHERE id=%s{guard_clause}
+                """.format(
+                    fields=", ".join(fields),
+                    guard_clause=guard_clause,
+                ),
                 tuple(params),
             )
     finally:

@@ -1,7 +1,7 @@
 import os
 
 from python_rag.app.core.config import MAX_DOCUMENT_SIZE_BYTES
-from python_rag.app.modules.documents.schemas import DocumentState
+from python_rag.app.modules.documents.schemas import DocumentIndexStatus, DocumentState
 from python_rag.app.core.error_codes import (
     ERR_DB_ERROR,
     ERR_DOCUMENT_NOT_FOUND,
@@ -19,6 +19,7 @@ from python_rag.app.modules.documents.repo import (
 )
 from python_rag.app.modules.ingest.chunking_service import validate_supported_document_filename
 from python_rag.app.shared.hash_utils import sha256_bytes
+from python_rag.app.retrieval.indexing_service import delete_document_vectors
 
 
 def save_uploaded_document(user_id, upload_file):
@@ -62,6 +63,7 @@ def save_uploaded_document(user_id, upload_file):
             "doc_id": doc_id,
             "filename": upload_file.filename,
             "status": DocumentState.UPLOADED,
+            "index_status": DocumentIndexStatus.NOT_INDEXED,
         }
     except AppError:
         raise
@@ -96,6 +98,11 @@ def delete_document(doc_id):
         stats = delete_document_by_id(doc_id)
         if stats.get("deleted_documents", 0) <= 0:
             raise AppError(ERR_DOCUMENT_NOT_FOUND, "document not found", http_status=404)
+
+        try:
+            delete_document_vectors(doc_id)
+        except Exception:
+            logger.exception("failed to delete LanceDB vectors for doc_id=%s", doc_id)
 
         deleted_files = []
         for path in [row.get("storage_path"), *index_paths]:
@@ -132,6 +139,7 @@ def get_document_detail(doc_id):
             "mime": row["mime"],
             "size_bytes": row["size_bytes"],
             "status": row["status"],
+            "index_status": row.get("index_status"),
             "storage_path": row["storage_path"],
             "error_message": row["error_message"],
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
@@ -159,11 +167,12 @@ def list_document_items(user_id=None, status=None, limit=100):
                     "mime": row["mime"],
                     "size_bytes": row["size_bytes"],
                     "status": row["status"],
+                    "index_status": row.get("index_status"),
                     "storage_path": row["storage_path"],
                     "error_message": row.get("error_message"),
                     "error": row.get("error_message"),
                     "chunks": chunk_count,
-                    "vectorized": index_status == "READY",
+                    "vectorized": str(index_status or "").lower() in ("indexed", "ready"),
                     "index_status": index_status,
                     "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
                     "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,

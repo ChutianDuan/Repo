@@ -8,6 +8,8 @@ export interface TaskStatus {
 
 export type TaskKind =
   | "ingest_document"
+  | "parse_document"
+  | "build_embedding"
   | "chat_generate"
   | "embedding"
   | "indexing"
