@@ -6,6 +6,8 @@
 
 #include <drogon/drogon.h>
 
+#include "common/GatewayConfig.h"
+
 class PythonSSEClient;
 class PythonApiClient;
 
@@ -13,7 +15,8 @@ class StreamChatService {
 public:
     StreamChatService(
         std::shared_ptr<PythonSSEClient> pythonSSEClient,
-        std::shared_ptr<PythonApiClient> pythonApiClient
+        std::shared_ptr<PythonApiClient> pythonApiClient,
+        GatewaySseProxyConfig config = {}
     );
 
     void handleStream(
@@ -36,7 +39,11 @@ private:
 
     static bool validateRequestBody(const Json::Value& body, std::string& error);
     static bool validateAgentRequestBody(const Json::Value& body, std::string& error);
-    static std::string buildSseErrorEvent(const std::string& message);
+    static std::string buildSseErrorEvent(
+        const std::string& message,
+        const std::string& code = "UPSTREAM_STREAM_ERROR",
+        long httpCode = 0
+    );
     static drogon::HttpResponsePtr buildJsonErrorResponse(
         int code,
         const std::string& message,

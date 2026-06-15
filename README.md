@@ -167,7 +167,7 @@ BM25_B=0.75
 CHAT_ENABLE_MOCK_FALLBACK=true
 ```
 
-注意：`cpp_gateway/config.json` 目前仍独立配置 MySQL、Redis 和监听端口。根目录 `.env` 会被 `cpp_gateway/scripts/start_gateway.sh` 读取，但 Drogon 的数据库连接仍以 `cpp_gateway/config.json` 为准。
+注意：C++ Gateway 启动时会从根目录 `.env` / 环境变量构造 Drogon 配置；MySQL、Redis、监听端口、安全和 SSE 代理参数都走统一的 `GatewayConfig` 入口。`cpp_gateway/config.json` 仅保留为手动调试参考。
 
 ### 2. 安装 Python 依赖
 
@@ -426,9 +426,7 @@ FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问
 
 - 提供 Docker Compose，一键启动 MySQL、Redis、FastAPI、Celery Worker 和 C++ Gateway。
 - 扩展自动化测试覆盖更多失败路径、鉴权限流边界、API contract 和检索评估数据集。
-- 统一 Gateway 配置入口，继续收敛 MySQL、Redis、监听端口和安全配置。
 - Gateway 增加 request id 透传、审计日志、统一错误响应和更清晰的上游异常映射。
-- 继续完善流式 TTFT、客户端断连、上游异常和高并发 SSE 代理处理。
 - 完善 LanceDB 索引维护：索引状态回查、重建指定文档索引、孤儿向量清理、备份恢复和容量监控。
 - 为扫描件 PDF 接入 OCR 解析链路。
 - 将 embedding LoRA 接入方式标准化，支持合并模型路径或 adapter 加载。

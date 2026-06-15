@@ -10,6 +10,7 @@
 
 #include "clients/PythonApiClient.h"
 #include "clients/PythonSSEClient.h"
+#include "common/GatewayConfig.h"
 #include "handlers/ChatHandler.h"
 #include "handlers/DocumentHandler.h"
 #include "handlers/HealthHandler.h"
@@ -130,18 +131,25 @@ std::string buildPathWithQuery(
 }  // namespace
 
 int main() {
-    const char* pythonBase = std::getenv("PYTHON_INTERNAL_BASE_URL");
-    std::string pythonBaseUrl = pythonBase ? pythonBase : "http://127.0.0.1:8000";
+    auto gatewayConfig = GatewayConfig::fromEnv();
+    app().loadConfigJson(gatewayConfig.toDrogonConfigJson());
 
-    auto pythonClient = std::make_shared<PythonApiClient>(pythonBaseUrl);
-    auto pythonSSEClient = std::make_shared<PythonSSEClient>(pythonBaseUrl);
+    auto pythonClient = std::make_shared<PythonApiClient>(gatewayConfig.pythonInternalBaseUrl);
+    auto pythonSSEClient = std::make_shared<PythonSSEClient>(
+        gatewayConfig.pythonInternalBaseUrl,
+        gatewayConfig.sse
+    );
 
     auto healthHandler = std::make_shared<HealthService>(pythonClient);
     auto documentHandler = std::make_shared<DocumentService>(pythonClient);
     auto sessionHandler = std::make_shared<SessionService>(pythonClient);
     auto chatHandler = std::make_shared<ChatService>(pythonClient);
-    auto streamChatHandler = std::make_shared<StreamChatService>(pythonSSEClient, pythonClient);
-    auto gatewaySecurity = std::make_shared<GatewaySecurity>(GatewaySecurityConfig::fromEnv());
+    auto streamChatHandler = std::make_shared<StreamChatService>(
+        pythonSSEClient,
+        pythonClient,
+        gatewayConfig.sse
+    );
+    auto gatewaySecurity = std::make_shared<GatewaySecurity>(gatewayConfig.security);
 
     app().registerHandler(
         "/health",
@@ -532,7 +540,6 @@ int main() {
         {Options}
     );
 
-    app().loadConfigFile("config.json");
     app().run();
     return 0;
 }

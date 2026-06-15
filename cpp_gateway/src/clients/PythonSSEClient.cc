@@ -1,15 +1,59 @@
 #include "PythonSSEClient.h"
 
 #include <curl/curl.h>
+
+#include <chrono>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace {
+using Clock = std::chrono::steady_clock;
+
 struct CurlWriteContext {
     PythonSSEClient::ChunkCallback onChunk;
+    Clock::time_point startedAt{Clock::now()};
+    long responseCode{0};
+    bool seenFirstByte{false};
+    bool cancelled{false};
+    bool emitGatewayMetrics{true};
     std::string localError;
 };
+
+long long elapsedMs(Clock::time_point startedAt) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - startedAt).count();
+}
+
+std::string buildGatewayMetricsEvent(long long ttftMs) {
+    Json::Value payload(Json::objectValue);
+    payload["type"] = "gateway_metrics";
+    payload["ttft_ms"] = Json::Int64(ttftMs < 0 ? 0 : ttftMs);
+
+    Json::StreamWriterBuilder builder;
+    builder["indentation"] = "";
+    return "event: gateway_metrics\ndata: " + Json::writeString(builder, payload) + "\n\n";
+}
+
+bool shouldSuppressBody(const CurlWriteContext* ctx) {
+    return ctx && ctx->responseCode >= 400;
+}
+
+bool sendChunk(CurlWriteContext* ctx, const std::string& chunk) {
+    if (!ctx->onChunk) {
+        ctx->localError = "missing onChunk callback";
+        ctx->cancelled = true;
+        return false;
+    }
+
+    const bool ok = ctx->onChunk(chunk);
+    if (!ok) {
+        ctx->localError = "downstream stream closed";
+        ctx->cancelled = true;
+        return false;
+    }
+    return true;
+}
 
 size_t writeCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     const size_t total = size * nmemb;
@@ -18,19 +62,49 @@ size_t writeCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     }
 
     auto* ctx = static_cast<CurlWriteContext*>(userdata);
-    std::string chunk(ptr, total);
-
-    if (!ctx->onChunk) {
-        ctx->localError = "missing onChunk callback";
-        return 0;
+    if (shouldSuppressBody(ctx)) {
+        return total;
     }
 
-    const bool ok = ctx->onChunk(chunk);
-    if (!ok) {
-        ctx->localError = "downstream stream closed";
-        return 0;  // 让 curl 停止读取
+    if (!ctx->seenFirstByte) {
+        ctx->seenFirstByte = true;
+        if (ctx->emitGatewayMetrics) {
+            const auto metrics = buildGatewayMetricsEvent(elapsedMs(ctx->startedAt));
+            if (!sendChunk(ctx, metrics)) {
+                return 0;
+            }
+        }
     }
 
+    if (!sendChunk(ctx, std::string(ptr, total))) {
+        return 0;  // Stop curl when the downstream client is gone.
+    }
+
+    return total;
+}
+
+int progressCallback(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    auto* ctx = static_cast<CurlWriteContext*>(userdata);
+    return ctx && ctx->cancelled ? 1 : 0;
+}
+
+size_t headerCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    const size_t total = size * nmemb;
+    if (total == 0 || userdata == nullptr) {
+        return total;
+    }
+
+    auto* ctx = static_cast<CurlWriteContext*>(userdata);
+    std::string header(ptr, total);
+    if (header.rfind("HTTP/", 0) == 0) {
+        std::istringstream stream(header);
+        std::string httpVersion;
+        long code = 0;
+        stream >> httpVersion >> code;
+        if (code > 0) {
+            ctx->responseCode = code;
+        }
+    }
     return total;
 }
 
@@ -40,10 +114,27 @@ void ensureCurlGlobalInit() {
         curl_global_init(CURL_GLOBAL_DEFAULT);
     });
 }
+
+std::string curlErrorMessage(CURLcode rc) {
+    switch (rc) {
+        case CURLE_OPERATION_TIMEDOUT:
+            return "upstream stream timed out";
+        case CURLE_COULDNT_CONNECT:
+        case CURLE_COULDNT_RESOLVE_HOST:
+        case CURLE_COULDNT_RESOLVE_PROXY:
+            return std::string("upstream connection failed: ") + curl_easy_strerror(rc);
+        case CURLE_ABORTED_BY_CALLBACK:
+        case CURLE_WRITE_ERROR:
+            return "downstream stream closed";
+        default:
+            return curl_easy_strerror(rc);
+    }
+}
 }  // namespace
 
-PythonSSEClient::PythonSSEClient(std::string baseUrl)
-    : baseUrl_(std::move(baseUrl)) {}
+PythonSSEClient::PythonSSEClient(std::string baseUrl, GatewaySseProxyConfig config)
+    : baseUrl_(std::move(baseUrl)),
+      config_(config) {}
 
 std::string PythonSSEClient::joinUrl(const std::string& baseUrl, const std::string& path) {
     if (baseUrl.empty()) {
@@ -101,7 +192,8 @@ void PythonSSEClient::postStream(
         headers = curl_slist_append(headers, lastEventIdHeader.c_str());
     }
 
-    CurlWriteContext writeCtx{onChunk, ""};
+    CurlWriteContext writeCtx{onChunk};
+    writeCtx.emitGatewayMetrics = config_.emitGatewayMetrics;
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -111,17 +203,21 @@ void PythonSSEClient::postStream(
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, bodyStr.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(bodyStr.size()));
 
-    // SSE 常见设置
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeCtx);
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &writeCtx);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &writeCtx);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1L);
 
-    // 仅设置连接超时，不设总超时，避免长连接 SSE 被整体超时截断
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, config_.connectTimeoutSeconds);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
-
-    // 降低缓冲
-    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1024L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, config_.upstreamLowSpeedLimitBytesPerSecond);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, config_.upstreamIdleTimeoutSeconds);
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, config_.curlBufferSizeBytes);
 
     CURLcode rc = curl_easy_perform(curl);
 
@@ -133,11 +229,7 @@ void PythonSSEClient::postStream(
 
     if (rc != CURLE_OK) {
         ok = false;
-        if (!writeCtx.localError.empty()) {
-            errorMessage = writeCtx.localError;
-        } else {
-            errorMessage = curl_easy_strerror(rc);
-        }
+        errorMessage = writeCtx.localError.empty() ? curlErrorMessage(rc) : writeCtx.localError;
     } else if (httpCode >= 400) {
         ok = false;
         std::ostringstream oss;

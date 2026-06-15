@@ -6,12 +6,14 @@
 
 #include <json/json.h>
 
+#include "common/GatewayConfig.h"
+
 class PythonSSEClient {
 public:
     using ChunkCallback = std::function<bool(const std::string&)>;
     using FinishCallback = std::function<void(bool ok, long httpCode, const std::string& errorMessage)>;
 
-    explicit PythonSSEClient(std::string baseUrl);
+    explicit PythonSSEClient(std::string baseUrl, GatewaySseProxyConfig config = {});
 
     // 同步阻塞调用：建议在独立线程里执行
     void postStream(
@@ -24,6 +26,7 @@ public:
 
 private:
     std::string baseUrl_;
+    GatewaySseProxyConfig config_;
 
     static std::string joinUrl(const std::string& baseUrl, const std::string& path);
     static std::string jsonToString(const Json::Value& value);

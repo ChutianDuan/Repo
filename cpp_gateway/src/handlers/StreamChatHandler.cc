@@ -1,9 +1,9 @@
 #include "StreamChatHandler.h"
 
-#include <cstdlib>
+#include <exception>
+#include <memory>
 #include <thread>
 #include <utility>
-#include <memory>
 
 #include <json/json.h>
 
@@ -13,20 +13,6 @@
 using namespace drogon;
 
 namespace {
-int parseMaxConcurrentStreams() {
-    const char* raw = std::getenv("GATEWAY_MAX_STREAMS");
-    if (!raw || raw[0] == '\0') {
-        return 64;
-    }
-
-    try {
-        const int parsed = std::stoi(raw);
-        return parsed > 0 ? parsed : 64;
-    } catch (...) {
-        return 64;
-    }
-}
-
 std::string jsonToCompactString(const Json::Value& value) {
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
@@ -35,6 +21,10 @@ std::string jsonToCompactString(const Json::Value& value) {
 
 std::string getLastEventId(const HttpRequestPtr& req) {
     return req ? req->getHeader("Last-Event-ID") : std::string();
+}
+
+bool isDownstreamClosedError(const std::string& message) {
+    return message == "downstream stream closed";
 }
 }  // namespace
 
@@ -59,11 +49,12 @@ private:
 
 StreamChatService::StreamChatService(
     std::shared_ptr<PythonSSEClient> pythonSSEClient,
-    std::shared_ptr<PythonApiClient> pythonApiClient
+    std::shared_ptr<PythonApiClient> pythonApiClient,
+    GatewaySseProxyConfig config
 )
     : pythonSSEClient_(std::move(pythonSSEClient)),
       pythonApiClient_(std::move(pythonApiClient)),
-      maxConcurrentStreams_(parseMaxConcurrentStreams()),
+      maxConcurrentStreams_(config.maxConcurrentStreams),
       activeStreams_(std::make_shared<std::atomic<int>>(0)) {}
 
 bool StreamChatService::validateRequestBody(const Json::Value& body, std::string& error) {
@@ -131,10 +122,18 @@ bool StreamChatService::validateAgentRequestBody(const Json::Value& body, std::s
     return true;
 }
 
-std::string StreamChatService::buildSseErrorEvent(const std::string& message) {
+std::string StreamChatService::buildSseErrorEvent(
+    const std::string& message,
+    const std::string& code,
+    long httpCode
+) {
     Json::Value root;
     root["type"] = "error";
+    root["code"] = code;
     root["message"] = message;
+    if (httpCode > 0) {
+        root["upstream_http_status"] = Json::Int64(httpCode);
+    }
     return "data: " + jsonToCompactString(root) + "\n\n";
 }
 
@@ -181,35 +180,55 @@ void StreamChatService::startStreamResponse(
         ](
             ResponseStreamPtr stream
         ) mutable {
-            std::thread([
-                client,
-                body,
-                upstreamPath,
-                lastEventId,
-                stream = std::move(stream),
-                streamSlot = std::move(streamSlot)
-            ]() mutable {
-                (void)streamSlot;
-                auto sharedStream = std::shared_ptr<drogon::ResponseStream>(std::move(stream));
+            auto sharedStream = std::shared_ptr<drogon::ResponseStream>(std::move(stream));
+            auto slot = std::move(streamSlot);
 
-                client->postStream(
-                    upstreamPath,
+            try {
+                std::thread([
+                    client,
                     body,
-                    [sharedStream](const std::string& chunk) -> bool {
-                        return sharedStream->send(chunk);
-                    },
-                    [sharedStream](bool ok, long httpCode, const std::string& errorMessage) mutable {
-                        if (!ok) {
-                            const std::string msg = errorMessage.empty()
-                                ? ("gateway upstream stream failed, http=" + std::to_string(httpCode))
-                                : errorMessage;
-                            sharedStream->send(buildSseErrorEvent(msg));
-                        }
-                        sharedStream->close();
-                    },
-                    lastEventId
-                );
-            }).detach();
+                    upstreamPath,
+                    lastEventId,
+                    sharedStream,
+                    streamSlot = std::move(slot)
+                ]() mutable {
+                    (void)streamSlot;
+
+                    client->postStream(
+                        upstreamPath,
+                        body,
+                        [sharedStream](const std::string& chunk) -> bool {
+                            return sharedStream->send(chunk);
+                        },
+                        [sharedStream](bool ok, long httpCode, const std::string& errorMessage) mutable {
+                            if (!ok) {
+                                if (isDownstreamClosedError(errorMessage)) {
+                                    LOG_DEBUG << "SSE downstream closed before upstream completed";
+                                    sharedStream->close();
+                                    return;
+                                }
+
+                                const std::string msg = errorMessage.empty()
+                                    ? ("gateway upstream stream failed, http=" + std::to_string(httpCode))
+                                    : errorMessage;
+                                const std::string code = httpCode >= 400
+                                    ? "UPSTREAM_HTTP_ERROR"
+                                    : "UPSTREAM_STREAM_ERROR";
+                                sharedStream->send(buildSseErrorEvent(msg, code, httpCode));
+                            }
+                            sharedStream->close();
+                        },
+                        lastEventId
+                    );
+                }).detach();
+            } catch (const std::exception& e) {
+                LOG_ERROR << "Failed to start SSE proxy worker: " << e.what();
+                sharedStream->send(buildSseErrorEvent(
+                    "gateway failed to start stream worker",
+                    "GATEWAY_STREAM_WORKER_UNAVAILABLE"
+                ));
+                sharedStream->close();
+            }
         },
         true
     );
@@ -218,6 +237,7 @@ void StreamChatService::startStreamResponse(
     resp->addHeader("Cache-Control", "no-cache");
     resp->addHeader("Connection", "keep-alive");
     resp->addHeader("X-Accel-Buffering", "no");
+    resp->addHeader("X-Gateway-Max-Streams", std::to_string(maxConcurrentStreams_));
     resp->setExpiredTime(0);
 
     callback(resp);
@@ -246,11 +266,13 @@ void StreamChatService::handleStream(
 
     auto streamSlot = acquireStreamSlot();
     if (!streamSlot) {
-        callback(buildJsonErrorResponse(
+        auto resp = buildJsonErrorResponse(
             4290,
             "too many active streams",
             k429TooManyRequests
-        ));
+        );
+        resp->addHeader("Retry-After", "1");
+        callback(resp);
         return;
     }
 
@@ -338,11 +360,13 @@ void StreamChatService::handleAgentStream(
 
     auto streamSlot = acquireStreamSlot();
     if (!streamSlot) {
-        callback(buildJsonErrorResponse(
+        auto resp = buildJsonErrorResponse(
             4290,
             "too many active streams",
             k429TooManyRequests
-        ));
+        );
+        resp->addHeader("Retry-After", "1");
+        callback(resp);
         return;
     }
 

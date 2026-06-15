@@ -17,7 +17,7 @@ X-API-Key: your-secret-key
 Authorization: Bearer your-secret-key
 ```
 
-网关从环境变量读取配置，`cpp_gateway/scripts/start_gateway.sh` 已经会加载根目录 `.env`。
+网关从统一的 `GatewayConfig` 入口读取环境变量配置，`cpp_gateway/scripts/start_gateway.sh` 已经会加载根目录 `.env`。
 
 ```bash
 GATEWAY_AUTH_ENABLED=true
@@ -66,13 +66,20 @@ GATEWAY_TRUST_X_FORWARDED_FOR=false
 
 ```bash
 GATEWAY_MAX_STREAMS=64
+GATEWAY_SSE_CONNECT_TIMEOUT_SECONDS=10
+GATEWAY_SSE_UPSTREAM_IDLE_TIMEOUT_SECONDS=120
+GATEWAY_SSE_UPSTREAM_LOW_SPEED_BYTES=1
+GATEWAY_SSE_CURL_BUFFER_BYTES=1024
+GATEWAY_SSE_EMIT_GATEWAY_METRICS=true
 ```
 
 说明：
 
 - 默认最多允许 64 个并发 SSE 流。
 - 直接携带 `user_message_id` 的请求和需要先创建 user message 的请求都会占用同一个并发配额。
-- slot 会在上游流结束、上游失败或下游断开后释放，避免原先一请求一 detached thread 的并发数量失控。
+- slot 会在上游流结束、上游失败或下游断开后释放，避免一请求一 detached thread 的并发数量失控。
+- 下游断开时，`ResponseStream::send` 失败会中止 curl 读取并释放 slot；上游长时间无数据时按 idle timeout 返回 SSE error。
+- 默认会在首个上游字节到达前发送 `gateway_metrics` SSE 事件，包含网关观测到的 `ttft_ms`。
 
 ## 验证示例
 
