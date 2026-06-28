@@ -228,7 +228,7 @@ SSE 事件：
 | `type` | 说明 |
 | --- | --- |
 | `agent_step` | Agent 决策步骤状态。 |
-| `tool_call` | 工具开始调用，当前工具名为 `knowledge_search`。 |
+| `tool_call` | 工具开始调用，工具名来自当前可用只读工具列表。 |
 | `tool_result` | 工具返回结果或失败信息。 |
 | `delta` | 最终答案文本。MVP 当前在 Agent 完成后一次性输出。 |
 | `final` | 最终回答，包含 `run_id`、`message_id`、`citations`。 |
@@ -323,9 +323,11 @@ GET /internal/agent/runs/{run_id}/steps
 
 ## Agent 工具
 
+Agent 当前只允许只读工具。编排方式是循环决策：LLM 返回 `tool_calls` 时后端执行工具并把结果写回上下文；LLM 不再返回 `tool_calls` 时，该轮内容作为最终答案。重复的同名同参数工具调用会被跳过并记录为失败工具结果。
+
 ### `knowledge_search`
 
-当前 MVP 唯一开放工具。
+检索 indexed 知识库并返回相关 chunk。
 
 输入 schema：
 
@@ -367,6 +369,14 @@ GET /internal/agent/runs/{run_id}/steps
 ```
 
 Agent 会把带有 `doc_id`、`chunk_id`、`chunk_index` 的结果转换为 citations；缺少这些字段的工具结果只进入 Trace，不写入引用表。
+
+### 其他只读工具
+
+| 工具 | 说明 |
+| --- | --- |
+| `get_document_detail` | 根据 `document_id` 查询文档元数据。 |
+| `list_ready_documents` | 列出当前可检索的 indexed 文档。 |
+| `list_message_citations` | 根据 assistant `message_id` 查询已保存 citations。 |
 
 ## 常见错误
 

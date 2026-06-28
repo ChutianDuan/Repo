@@ -542,3 +542,85 @@ def test_agent_orchestrator_records_tool_failure_and_continues(monkeypatch):
     assert len(recorder.failed_tool_calls) == 1
     assert recorder.failed_tool_calls[0]["error_message"] == "permission denied"
     assert recorder.finished_runs
+
+
+def test_agent_orchestrator_skips_duplicate_tool_calls(monkeypatch):
+    recorder = FakeTraceRecorder()
+    _patch_trace(monkeypatch, recorder)
+    knowledge_tool = FakeKnowledgeSearchTool()
+    registry = ToolRegistry([knowledge_tool])
+    llm_calls = []
+
+    def fake_generate_from_messages(messages, tools=None, tool_choice=None):
+        llm_calls.append(messages)
+        if len(llm_calls) == 1:
+            return {
+                "answer": "先检索。",
+                "message": {
+                    "content": "先检索。",
+                    "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
+                },
+                "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
+                "usage": {},
+            }
+
+        if len(llm_calls) == 2:
+            return {
+                "answer": "重复检索。",
+                "message": {
+                    "content": "重复检索。",
+                    "tool_calls": [
+                        _tool_call(
+                            {"query": "系统架构", "top_k": 5},
+                            call_id="call_duplicate",
+                        )
+                    ],
+                },
+                "tool_calls": [
+                    _tool_call(
+                        {"query": "系统架构", "top_k": 5},
+                        call_id="call_duplicate",
+                    )
+                ],
+                "usage": {},
+            }
+
+        tool_messages = [message for message in messages if message["role"] == "tool"]
+        assert len(tool_messages) == 2
+        assert "duplicate tool call skipped" in tool_messages[1]["content"]
+        return {
+            "answer": "已根据已有检索结果回答。",
+            "message": {
+                "content": "已根据已有检索结果回答。",
+                "tool_calls": [],
+            },
+            "tool_calls": [],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(
+        orchestrator.llm_service,
+        "generate_from_messages",
+        fake_generate_from_messages,
+    )
+
+    result = asyncio.run(
+        orchestrator.AgentOrchestrator(registry=registry, max_steps=3).run(
+            "根据项目文档总结系统架构"
+        )
+    )
+
+    assert result["answer"] == "已根据已有检索结果回答。"
+    assert result["termination_reason"] == "final_answer"
+    assert knowledge_tool.calls == [{"query": "系统架构", "top_k": 5}]
+    assert len(recorder.tool_calls) == 2
+    assert len(recorder.finished_tool_calls) == 1
+    assert len(recorder.failed_tool_calls) == 1
+    assert recorder.failed_tool_calls[0]["error_message"] == (
+        "duplicate tool call skipped: knowledge_search"
+    )
+    assert [step["decision"] for step in recorder.finished_steps] == [
+        "tool_call",
+        "tool_call",
+        "final_answer",
+    ]

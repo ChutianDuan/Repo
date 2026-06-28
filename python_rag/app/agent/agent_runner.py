@@ -87,6 +87,13 @@ def _tool_result_error(result: Any) -> Optional[str]:
     return error_message or None
 
 
+def _tool_call_signature(tool_name: str, arguments: Dict[str, Any]) -> str:
+    return "{0}:{1}".format(
+        tool_name,
+        json.dumps(arguments or {}, ensure_ascii=False, sort_keys=True),
+    )
+
+
 def _coerce_int(value: Any) -> Optional[int]:
     if isinstance(value, bool) or value is None:
         return None
@@ -213,6 +220,7 @@ class AgentRunExecutor:
         tool_call: Dict[str, Any],
         fallback_index: int,
         event_sink: Optional[config.AgentEventSink] = None,
+        seen_tool_calls: Optional[Set[str]] = None,
     ) -> Dict[str, Any]:
         external_tool_call_id = _tool_call_id(tool_call, fallback_index)
         tool_name = _tool_call_name(tool_call)
@@ -278,6 +286,16 @@ class AgentRunExecutor:
                 "error": str(exc),
             }
 
+        duplicate_error = None
+        if seen_tool_calls is not None:
+            signature = _tool_call_signature(tool_name, arguments)
+            if signature in seen_tool_calls:
+                duplicate_error = "duplicate tool call skipped: {0}".format(
+                    tool_name or "unknown"
+                )
+            else:
+                seen_tool_calls.add(signature)
+
         tool_row_id = self.trace_service.create_tool_call(
             run_id=run_id,
             step_id=step_id,
@@ -298,6 +316,46 @@ class AgentRunExecutor:
                 "status": AgentToolCallStatus.RUNNING,
             },
         )
+
+        if duplicate_error:
+            result = {
+                "skipped": True,
+                "reason": "duplicate_tool_call",
+                "error": duplicate_error,
+            }
+            self.trace_service.fail_tool_call(
+                tool_call_id=tool_row_id,
+                error_message=duplicate_error,
+                result=result,
+                result_preview=self.trace_service.build_tool_result_preview(
+                    tool_name or "unknown",
+                    result,
+                ),
+                latency_ms=0,
+            )
+            await _emit_agent_event(
+                event_sink,
+                "tool_result",
+                {
+                    "run_id": run_id,
+                    "step_id": step_id,
+                    "tool_call_row_id": tool_row_id,
+                    "tool_call_id": external_tool_call_id,
+                    "tool_name": tool_name or "unknown",
+                    "arguments": arguments,
+                    "result": result,
+                    "status": AgentToolCallStatus.FAILED,
+                    "error_message": duplicate_error,
+                    "latency_ms": 0,
+                },
+            )
+            return {
+                "tool_call_id": external_tool_call_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "result": result,
+                "error": duplicate_error,
+            }
 
         started_at = time.time()
         try:
@@ -471,13 +529,15 @@ class AgentRunExecutor:
         )
         tool_schemas = self.orchestrator._tool_schemas()
         observations: List[Dict[str, Any]] = []
+        seen_tool_calls: Set[str] = set()
         run_closed = False
 
         try:
-            for step_index in range(self.orchestrator.max_steps):
+            step_index = 0
+            while step_index < self.orchestrator.max_steps:
                 step_name = "agent_step_{0}".format(step_index)
                 step_type = "llm_decision"
-                effective_tool_schemas = tool_schemas
+                effective_tool_schemas = tool_schemas or None
                 effective_tool_choice = (
                     "auto" if effective_tool_schemas is not None else None
                 )
@@ -552,6 +612,7 @@ class AgentRunExecutor:
                             "observations": observations,
                             "citations": citations,
                             "retrieval": retrieval,
+                            "termination_reason": "final_answer",
                         },
                     )
                     run_closed = True
@@ -563,6 +624,7 @@ class AgentRunExecutor:
                         "citations": citations,
                         "retrieval": retrieval,
                         "steps_used": step_index + 1,
+                        "termination_reason": "final_answer",
                     }
 
                 assistant_message = {
@@ -580,6 +642,7 @@ class AgentRunExecutor:
                         tool_call=tool_call,
                         fallback_index=call_index,
                         event_sink=event_sink,
+                        seen_tool_calls=seen_tool_calls,
                     )
                     observations.append(observation)
                     step_observations.append(observation)
@@ -618,6 +681,7 @@ class AgentRunExecutor:
                         "tool_call_count": len(step_observations),
                     },
                 )
+                step_index += 1
 
             error_message = "agent reached max_steps without final answer"
             self.trace_service.fail_run(
@@ -625,6 +689,8 @@ class AgentRunExecutor:
                 error_message=error_message,
                 output_data={
                     "observations": observations,
+                    "steps_used": step_index,
+                    "termination_reason": "max_steps",
                 },
             )
             run_closed = True

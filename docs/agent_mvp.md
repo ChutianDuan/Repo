@@ -3,7 +3,7 @@
 本文档固化第一版 RAG Agent 的可演示范围、启动方式和验收路径。MVP 目标不是扩展工具平台，而是保证一条稳定链路可以完整展示：
 
 ```text
-上传文档 -> ingest 建库 -> Agent 问答 -> knowledge_search 工具调用
+上传文档 -> ingest 建库 -> Agent 问答 -> 只读工具循环调用
 -> Trace 展示 -> citations 展示
 ```
 
@@ -11,9 +11,9 @@
 
 ### 已纳入
 
-- 文档上传、解析、切片、embedding、FAISS/BM25 索引构建。
+- 文档上传、解析、切片、embedding、LanceDB 向量索引构建。
 - 旧 RAG 路径：直接检索全局 READY 文档并生成回答。
-- 新 Agent 路径：LLM 先决策是否调用工具，当前只开放只读 `knowledge_search`。
+- 新 Agent 路径：LLM 循环决策是否调用只读工具，工具结果返回后由 LLM 自主判断继续调用工具或输出最终答案。
 - Agent Trace：记录 `agent_runs`、`agent_steps`、`agent_tool_calls`，前端流式展示执行轨迹。
 - Citations：Agent 从 `knowledge_search` 结果生成 citations，并复用原有 `citations` 表和前端引用面板展示。
 - 前端工作台：上传文档、查看任务、问答、Trace、引用来源和监控概览。
@@ -21,7 +21,7 @@
 ### 暂不纳入
 
 - 多工具写操作、外部联网工具、代码执行工具。
-- 多轮 Agent 自主规划。当前 MVP 限制为一次工具轮次后生成最终答案。
+- 长程自主规划和跨请求任务执行。当前循环只在单次 Agent 请求内运行，并受 `max_steps` 安全上限保护。
 - 多租户隔离和生产级鉴权审计。网关已有 API Key/限流基础能力，但 MVP 演示默认按本地环境使用。
 
 ## 架构路径
@@ -38,10 +38,10 @@ C++ Drogon Gateway
 FastAPI Internal Service
   |
   +-- Celery Worker: ingest / old RAG async chat
-  +-- AgentOrchestrator: LLM decision + knowledge_search + Trace
+  +-- AgentOrchestrator: LLM decision loop + readonly tools + Trace
   +-- MySQL: docs, chunks, messages, citations, agent trace
   +-- Redis: Celery broker / backend
-  +-- BM25 + FAISS: knowledge_search retrieval
+  +-- LanceDB + MySQL chunks: knowledge_search retrieval
 ```
 
 ## 代码目录
@@ -75,6 +75,8 @@ LLM_MODEL=glm-4.7-flash
 RERANK_DOWNLOAD_IF_MISSING=false
 RERANK_FALLBACK_TO_FAISS=true
 ```
+
+`RERANK_FALLBACK_TO_FAISS` 是保留的历史配置名；当前默认 LanceDB 召回路径下，它表示 reranker 不可用时按向量召回顺序回退。
 
 修改 `.env` 后需要重启 FastAPI 和 Worker，运行中的进程不会自动加载新配置。
 
@@ -149,8 +151,10 @@ GET  /internal/agent/runs/{run_id}/steps
 
 特点：
 
-- Agent 先调用 LLM 判断是否需要工具。
-- 当前只暴露只读 `knowledge_search`。
+- Agent 每轮先调用 LLM 判断是否需要工具。
+- 当前只暴露只读工具：`knowledge_search`、`get_document_detail`、`list_ready_documents`、`list_message_citations`。
+- 如果 LLM 返回 `tool_calls`，后端执行工具并把结果写回上下文；如果 LLM 不再返回 `tool_calls`，该轮内容作为最终答案。
+- `max_steps` 是防止异常循环的安全上限，重复的同名同参数工具调用会被跳过并记录到 Trace。
 - 工具调用、工具结果、最终回答会写入 Trace。
 - `knowledge_search` 命中的 chunk 会转换成 citations，保存到原有 `citations` 表。
 
@@ -162,7 +166,7 @@ GET  /internal/agent/runs/{run_id}/steps
 4. 等待文档状态变为 `READY`，或在 `Tasks` 页面确认 ingest 任务成功。
 5. 开启流式问答与 RAG/Agent 开关。
 6. 提问：`根据知识库总结这个系统的架构和核心链路`。
-7. 观察右侧 `Agent Trace`：应出现决策步骤、`knowledge_search` 工具调用、工具结果和最终生成。
+7. 观察右侧 `Agent Trace`：应出现决策步骤、只读工具调用、工具结果和最终生成。
 8. 回答完成后刷新消息或等待前端自动刷新，引用面板应显示 citations。
 
 ## CLI 验收

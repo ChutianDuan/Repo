@@ -1,5 +1,7 @@
 # RAG Gateway Stack
 
+一个带循环工具调用编排、引用追踪和会话记忆的 RAG Agent 后端项目。
+
 面向全局文档知识库问答的工程化 RAG 后端项目。它不是单页问答 demo，而是一套把外部 API 网关、内部业务服务、异步任务、数据库、向量索引、LLM 调用和监控工作台拆开的可扩展系统骨架。
 
 项目当前由 `C++ Drogon Gateway`、`FastAPI Internal Service`、`Celery Worker`、`MySQL`、`Redis`、`LanceDB`、`Embedding Model`、`OpenAI-compatible LLM / vLLM` 和 `React Workbench` 组成。前端主要用于调试、演示和观测，核心能力集中在后端 RAG 链路。
@@ -25,7 +27,7 @@
 | 全局知识库 | 文档上传仍记录归属用户，但索引完成后进入全局 indexed 文档库；任意用户的会话默认都能检索这些文档。 |
 | 异步任务 | 文档解析和 embedding/index 构建拆成 Celery 任务执行，任务进度可查询。 |
 | 可追溯回答 | 每条 assistant 消息都会保存 citations，前端可展示引用片段、chunk、score 和来源文档。 |
-| Agent MVP | 只读 Agent 工具覆盖 `knowledge_search`、文档查询和 citation 查询，支持工具调用 Trace、Agent SSE 事件、用户/会话记忆和 citations 落库展示。 |
+| Agent MVP | Agent 以循环方式自主决定是否继续调用只读工具，工具覆盖 `knowledge_search`、文档查询和 citation 查询，支持工具调用 Trace、Agent SSE 事件、用户/会话记忆和 citations 落库展示。 |
 | 模型切换保护 | `document_indexes.embedding_model` 记录索引所用 embedding 模型，避免模型切换后误用旧向量空间。 |
 | 监控视图 | 提供 CPU、内存、磁盘、GPU、MySQL、Redis、Worker、队列和 RAG 数据概览。 |
 | 实验留档 | 包含 embedding LoRA 微调、RAG ingest/retrieval 容量和性能验证文档，方便继续迭代。 |
@@ -361,6 +363,8 @@ START_INIT_DB=true START_FRONTEND=true bash scripts/start_all.sh
 当前 Agent 记忆分为三层：`user_account.memory_summary` 保存跨 session 的用户长期记忆，`sessions.summary` 保存当前 session 中期摘要，最近 8 条 user/assistant 消息作为短期记忆直接进入 prompt。记忆更新由 Celery 异步触发，`python_rag.tasks.session_summary_update` 维护 session summary，`python_rag.tasks.user_memory_update` 维护用户长期记忆；两者都使用 message id 水位线避免重复处理和旧任务覆盖新结果。
 
 默认只读工具包括：`knowledge_search` 检索 indexed 知识库，`get_document_detail` 查询文档元数据，`list_ready_documents` 列出可检索文档，`list_message_citations` 根据 assistant `message_id` 查询已保存 citations。
+
+Agent 编排采用循环决策：每轮 LLM 先判断是否需要工具；如果返回 `tool_calls`，后端执行只读工具并把结果写回上下文；如果不再返回 `tool_calls`，该轮内容就是最终回答。`max_steps` 只作为安全上限，重复的同名同参数工具调用会被跳过并记录到 Trace，避免无意义循环。
 
 CLI 对照：
 
