@@ -58,6 +58,45 @@ curl -X POST http://127.0.0.1:8080/v1/documents \
 }
 ```
 
+### 从网页 URL 创建文档并提交 ingest
+
+```http
+POST /v1/documents/web
+Content-Type: application/json
+```
+
+请求：
+
+```json
+{
+  "user_id": 1,
+  "url": "https://example.com/page"
+}
+```
+
+说明：
+
+- `url` 必须是 `http://` 或 `https://`。
+- Gateway 会转发到 FastAPI 的 `/internal/documents/web/ingest`。
+- 服务会抓取网页正文，保存为 Markdown 文档，再提交同一条 ingest / embedding / LanceDB 索引流程。
+- 当前不处理网页登录、鉴权页面和复杂反爬场景。
+
+响应重点字段：
+
+```json
+{
+  "data": {
+    "doc_id": 13,
+    "filename": "example-page.md",
+    "task_id": "ingest-xxx",
+    "status_url": "/v1/tasks/ingest-xxx",
+    "source_url": "https://example.com/page",
+    "final_url": "https://example.com/page",
+    "title": "Example Page"
+  }
+}
+```
+
 ### 查询任务状态
 
 ```http
@@ -307,6 +346,7 @@ GET /internal/agent/runs/{run_id}
 - `output_json`: 最终答案、observations、citations。
 - `total_steps` / `total_tool_calls`: 执行统计。
 - `agent_version` 和 `meta_json.prompt_version`: Agent / Prompt 版本。
+- `meta_json.retrieval_router`: 是否触发强制首轮 `knowledge_search` 以及触发原因。
 - `prompt_tokens` / `completion_tokens` / `total_tokens`: run 级 token 汇总。
 - `error_message`: 失败原因。
 
@@ -319,13 +359,15 @@ GET /internal/agent/runs/{run_id}/steps
 响应中的 `data.steps[]` 包含：
 
 - `step_index`: 步骤序号。
-- `decision`: `tool_call`、`final_answer` 或 `max_steps_final_answer`。
+- `decision`: `forced_tool_call`、`tool_call`、`final_answer` 或 `max_steps_final_answer`。
 - `input_json` / `output_json`: LLM 输入输出摘要。
 - `tool_calls[]`: 当前步骤下的工具调用，包含 `arguments_json`、`result_json`、`latency_ms`、`error_message`。
 
 ## Agent 工具
 
-Agent 当前只允许只读工具。编排方式是循环决策：LLM 返回 `tool_calls` 时，后端先按工具 schema 做轻量参数校验，再用工具自身 `timeout_ms` 执行工具并把结果写回上下文；LLM 不再返回 `tool_calls` 时，该轮内容作为最终答案。重复的同名同参数工具调用会被跳过并记录为失败工具结果。
+Agent 当前只允许只读工具。入口会先做轻量检索意图判断：问题命中项目文档、代码、架构、能力、上传文档、网页导入、embedding、索引等意图时，后端会先执行一次 `knowledge_search`，Trace 决策记为 `forced_tool_call`，再让 LLM 基于工具结果总结。
+
+未命中强制检索路由，或强制检索后仍需要补充上下文时，Agent 继续按循环方式工作：LLM 返回 `tool_calls` 时，后端先按工具 schema 做轻量参数校验，再用工具自身 `timeout_ms` 执行工具并把结果写回上下文；LLM 不再返回 `tool_calls` 时，该轮内容作为最终答案。重复的同名同参数工具调用会被跳过并记录为失败工具结果。
 
 工具结果统一为：
 
@@ -405,6 +447,6 @@ Agent 会把带有 `doc_id`、`chunk_id`、`chunk_index` 的结果转换为 cita
 | --- | --- | --- |
 | `session not found` | `session_id` 不存在。 | 先调用 `/v1/sessions` 创建会话。 |
 | `no ready document index found` | 没有 READY 文档或 embedding 模型切换后旧索引不可用。 | 上传文档并等待 ingest 成功，必要时重新 ingest。 |
-| Agent 没有工具调用 | 问题被 LLM 判断为闲聊或不依赖文档。 | 提问中明确要求“根据知识库/项目文档”。 |
+| Agent 没有工具调用 | 问题未命中强制检索路由，且被 LLM 判断为闲聊或不依赖文档。 | 提问中明确要求“根据知识库/项目文档/代码/架构/上传文档”。 |
 | citations 为空 | 工具未检索到结果，或工具结果缺少 chunk 元数据。 | 检查 `tool_result.result.data.total` 和 `/internal/agent/runs/{run_id}/steps`。 |
 | Agent 返回“已达到工具调用上限” | 达到 `max_steps` 安全上限。 | 查看 Trace 中 `termination_reason=max_steps`，必要时缩小问题或提高 `max_steps`。 |

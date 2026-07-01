@@ -34,6 +34,16 @@ python -m pytest \
 python -m compileall python_rag/app/agent
 ```
 
+## 2026-07-01 增量同步
+
+Agent 的“是否检索”不再只依赖系统提示约束。`agent_runner.py` 增加轻量检索意图路由：问题命中项目文档、代码、架构、能力、上传文档、网页导入、embedding、索引等意图时，后端会在首轮 LLM 调用前强制执行一次 `knowledge_search`，Trace 决策记为 `forced_tool_call`，然后再让 LLM 基于工具结果总结。
+
+对应回归测试覆盖了以下行为：
+
+- `根据项目文档总结系统架构` 会先执行 `knowledge_search`，即使 fake LLM 本身没有主动返回 `tool_calls`。
+- 问候类问题仍不触发强制检索。
+- 原有工具调用、错误、超时、非法参数、重复调用和 `max_steps` 降级逻辑保持可用。
+
 ## 变更范围
 
 | 文件 | 变更 |
@@ -49,7 +59,7 @@ python -m compileall python_rag/app/agent
 
 | 场景 | 用户输入 | 预期 | 验证结果 |
 | --- | --- | --- | --- |
-| 1. 需要检索 | `根据项目文档总结系统架构` | 调用 `knowledge_search` 后回答 | 通过。测试确认 LLM 首轮输出工具调用，Agent 执行 `knowledge_search`，Trace 写入 run、step、tool_call，最终回答。 |
+| 1. 需要检索 | `根据项目文档总结系统架构` | 调用 `knowledge_search` 后回答 | 通过。测试确认后端检索路由先执行 `knowledge_search`，Trace 写入 `forced_tool_call` step 和 tool_call，随后 LLM 基于工具结果输出最终回答。 |
 | 2. 不需要检索 | `你好` | 不调用工具，直接回答 | 通过。测试确认 `knowledge_search` 未被调用，只有 final_answer step。 |
 | 3. 检索不到 | `文档里有没有区块链支付模块？` | 调用 `knowledge_search`，说明知识库证据不足 | 通过。测试确认工具调用成功但返回 `data.total=0`，最终回答包含“证据不足”。 |
 | 4. 工具失败 | `knowledge_search timeout` | 记录失败，并返回降级说明 | 通过。测试确认工具结果 `error=knowledge_search timeout` 被写为 FAILED tool_call，后续回答为降级说明。 |

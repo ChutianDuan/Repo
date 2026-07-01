@@ -1,16 +1,16 @@
 # RAG 文件上传、向量检索与系统负载评估
 
-本文说明当前系统从“上传文件”到“基于文档问答”的完整链路，并重点解释 chunk 切片、embedding 向量化、LanceDB 向量索引、Top-K 召回、重排序、上下文拼接和 LLM 调用之间的关系。
+本文说明当前系统从“文件或网页 URL 入库”到“基于文档问答”的完整链路，并重点解释 chunk 切片、embedding 向量化、LanceDB 向量索引、Top-K 召回、重排序、上下文拼接和 LLM 调用之间的关系。
 
 本文按目标设计说明时，假设 embedding 向量维度为 `512`，向量类型为 `float32`。当前默认向量存储来自 [python_rag/app/core/config.py](../python_rag/app/core/config.py)：`VECTOR_STORE_PROVIDER=lancedb`、`RETRIEVAL_RECALL_PROVIDER=lancedb`、`LANCEDB_PATH=./data/lancedb`、`LANCEDB_TABLE=chunk_vectors`。chunk 配置默认 `INGEST_CHUNK_SIZE=800`、`INGEST_CHUNK_OVERLAP=100`。
 
 ## 1. 总体链路
 
 ```text
-文件上传
+文件上传 / 网页 URL
   |
   v
-文件落盘 + documents 元数据入库
+文件落盘或网页正文保存 + documents 元数据入库
   |
   v
 Celery ingest 异步任务
@@ -52,20 +52,22 @@ LanceDB Top-K 或 Candidate-K 召回
 
 | 链路 | 触发时机 | 主要成本 | 主要产物 |
 | --- | --- | --- | --- |
-| Ingest 建库链路 | 文件上传后 | 文档解析、chunk、embedding、LanceDB 写入 | `doc_chunks`、LanceDB `chunk_vectors`、`document_indexes` |
+| Ingest 建库链路 | 文件上传或网页导入后 | 文档解析、chunk、embedding、LanceDB 写入 | `doc_chunks`、LanceDB `chunk_vectors`、`document_indexes` |
 | Query 问答链路 | 用户提问时 | query embedding、LanceDB 召回、rerank、LLM 推理 | answer、citations、messages |
 
 ## 2. 上传与 Ingest 过程
 
-### 2.1 文件上传
+### 2.1 文档入口
 
-用户通过前端或 API 上传文档后，外部入口会完成几件事：
+用户通过前端或 API 上传文件后，外部入口会完成几件事：
 
 1. 校验文件类型和基本请求参数。
 2. 计算文件 `sha256`，用于去重和追踪。
 3. 将原始文件保存到本地 `data/uploads`。
 4. 在 MySQL `documents` 表中写入文件元数据，包括文件名、MIME、大小、存储路径、状态等。
 5. 提交 Celery ingest 异步任务，避免上传接口被后续耗时处理阻塞。
+
+网页 URL 入口使用同一套后续流程。`POST /v1/documents/web` 接收 `http(s)` URL，Gateway 转发到 FastAPI 的 `/internal/documents/web/ingest`；服务抓取网页正文，保存为 Markdown 文档，写入 `documents` 记录，然后提交 Celery ingest 任务。当前默认不处理网页登录、鉴权页面和复杂反爬限制。
 
 ### 2.2 文本抽取
 

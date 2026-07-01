@@ -147,7 +147,7 @@ def _tool_call(arguments, call_id="call_knowledge_1"):
     }
 
 
-def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monkeypatch):
+def test_agent_orchestrator_forces_knowledge_search_for_document_intent(monkeypatch):
     recorder = FakeTraceRecorder()
     _patch_trace(monkeypatch, recorder)
     knowledge_tool = FakeKnowledgeSearchTool()
@@ -162,17 +162,6 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
                 "tool_choice": tool_choice,
             }
         )
-        if len(llm_calls) == 1:
-            return {
-                "answer": "I need to search.",
-                "message": {
-                    "content": "I need to search.",
-                    "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
-                },
-                "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
-                "latency_ms": 11,
-            }
         assert any(message["role"] == "tool" for message in messages)
         tool_message = [message for message in messages if message["role"] == "tool"][0]
         assert "项目架构包含" in tool_message["content"]
@@ -217,13 +206,9 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
         }
     ]
     assert result["steps_used"] == 2
-    assert knowledge_tool.calls == [{"query": "系统架构", "top_k": 5}]
-    assert len(llm_calls) == 2
+    assert knowledge_tool.calls == [{"query": "根据项目文档总结系统架构"}]
+    assert len(llm_calls) == 1
     assert llm_calls[0]["tool_choice"] == "auto"
-    assert [tool["function"]["name"] for tool in llm_calls[1]["tools"]] == [
-        "knowledge_search",
-    ]
-    assert llm_calls[1]["tool_choice"] == "auto"
     assert [tool["function"]["name"] for tool in llm_calls[0]["tools"]] == [
         "knowledge_search",
     ]
@@ -233,20 +218,24 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
     assert recorder.runs[0]["input_data"] == {"question": "根据项目文档总结系统架构"}
     assert recorder.runs[0]["meta"]["agent_version"] == "rag-agent-v1"
     assert recorder.runs[0]["meta"]["prompt_version"] == "rag-agent-prompt-v1"
+    assert recorder.runs[0]["meta"]["retrieval_router"] == {
+        "force_knowledge_search": True,
+        "reason": "project_document_code_intent",
+    }
     assert len(recorder.steps) == 2
     assert len(recorder.finished_steps) == 2
-    assert recorder.finished_steps[0]["decision"] == "tool_call"
+    assert recorder.finished_steps[0]["decision"] == "forced_tool_call"
     assert recorder.finished_steps[1]["decision"] == "final_answer"
     assert len(recorder.tool_calls) == 1
     assert recorder.tool_calls[0]["tool_name"] == "knowledge_search"
-    assert recorder.tool_calls[0]["tool_call_id"] == "call_knowledge_1"
+    assert recorder.tool_calls[0]["tool_call_id"] == "forced_knowledge_search_0"
     assert len(recorder.finished_tool_calls) == 1
     assert recorder.finished_tool_calls[0]["result"]["ok"] is True
     assert recorder.finished_tool_calls[0]["result"]["data"]["total"] == 1
     assert recorder.finished_runs[0]["run_id"] == 101
-    assert recorder.finished_runs[0]["prompt_tokens"] == 22
-    assert recorder.finished_runs[0]["completion_tokens"] == 11
-    assert recorder.finished_runs[0]["total_tokens"] == 33
+    assert recorder.finished_runs[0]["prompt_tokens"] == 12
+    assert recorder.finished_runs[0]["completion_tokens"] == 8
+    assert recorder.finished_runs[0]["total_tokens"] == 20
     assert recorder.finished_runs[0]["output_data"]["answer"] == result["answer"]
     assert recorder.finished_runs[0]["output_data"]["citations"] == result["citations"]
     assert recorder.failed_runs == []
@@ -328,7 +317,7 @@ def test_agent_orchestrator_allows_multiple_tool_rounds_before_final_answer(monk
 
     result = asyncio.run(
         orchestrator.AgentOrchestrator(registry=registry, max_steps=3).run(
-            "根据项目文档总结系统架构和 Celery Worker"
+            "multi round search fixture"
         )
     )
 
@@ -437,7 +426,7 @@ def test_agent_orchestrator_reports_insufficient_evidence_when_search_empty(monk
 
     result = asyncio.run(
         orchestrator.AgentOrchestrator(registry=registry, max_steps=3).run(
-            "文档里有没有区块链支付模块？"
+            "empty search fixture"
         )
     )
 
@@ -494,7 +483,7 @@ def test_agent_orchestrator_records_tool_error_result_as_failed_trace(monkeypatc
     events = []
     result = asyncio.run(
         orchestrator.AgentOrchestrator(registry=registry, max_steps=3).run(
-            "根据项目文档总结系统架构",
+            "timeout search fixture",
             event_sink=events.append,
         )
     )
@@ -615,7 +604,7 @@ def test_agent_orchestrator_enforces_tool_timeout(monkeypatch):
 
     result = asyncio.run(
         orchestrator.AgentOrchestrator(registry=registry, max_steps=2).run(
-            "根据项目文档总结系统架构"
+            "slow search fixture"
         )
     )
 
@@ -672,7 +661,7 @@ def test_agent_orchestrator_rejects_invalid_tool_arguments(monkeypatch):
 
     result = asyncio.run(
         orchestrator.AgentOrchestrator(registry=registry, max_steps=2).run(
-            "根据项目文档总结系统架构"
+            "invalid arguments fixture"
         )
     )
 
@@ -753,7 +742,7 @@ def test_agent_orchestrator_skips_duplicate_tool_calls(monkeypatch):
 
     result = asyncio.run(
         orchestrator.AgentOrchestrator(registry=registry, max_steps=3).run(
-            "根据项目文档总结系统架构"
+            "duplicate search fixture"
         )
     )
 
@@ -829,7 +818,7 @@ def test_agent_orchestrator_degrades_when_max_steps_reached(monkeypatch):
 
     result = asyncio.run(
         orchestrator.AgentOrchestrator(registry=registry, max_steps=1).run(
-            "根据项目文档总结系统架构"
+            "max steps search fixture"
         )
     )
 

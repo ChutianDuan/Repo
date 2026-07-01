@@ -25,10 +25,160 @@ MAX_STEPS_FALLBACK_ANSWER = (
     "建议缩小问题或提高 max_steps 后重试。"
 )
 STANDARD_TOOL_RESULT_KEYS = {"ok", "error", "data"}
+KNOWLEDGE_SEARCH_ROUTER_REASON = "project_document_code_intent"
+
+KNOWLEDGE_SEARCH_STRONG_INTENT_TERMS = (
+    "项目文档",
+    "项目资料",
+    "知识库",
+    "文档里",
+    "文档中",
+    "上传文档",
+    "上传网页",
+    "网页上传",
+    "导入网页",
+    "项目架构",
+    "系统架构",
+    "代码库",
+    "当前项目",
+    "这个项目",
+    "agent项目",
+    "embedding",
+    "向量化",
+    "向量库",
+    "project docs",
+    "project document",
+    "knowledge base",
+    "codebase",
+    "source code",
+    "web ingest",
+    "web page",
+    "webpage",
+    "url import",
+    "vector index",
+)
+KNOWLEDGE_SEARCH_TOPIC_TERMS = (
+    "项目",
+    "文档",
+    "资料",
+    "代码",
+    "源码",
+    "架构",
+    "模块",
+    "实现",
+    "能力",
+    "功能",
+    "上传",
+    "导入",
+    "网页",
+    "索引",
+    "分块",
+    "检索",
+    "召回",
+    "引用",
+    "project",
+    "document",
+    "docs",
+    "code",
+    "architecture",
+    "module",
+    "implementation",
+    "capability",
+    "feature",
+    "upload",
+    "import",
+    "ingest",
+    "retrieval",
+    "index",
+    "chunk",
+    "citation",
+)
+KNOWLEDGE_SEARCH_CONTEXT_TERMS = (
+    "项目",
+    "系统",
+    "agent",
+    "当前",
+    "这个",
+    "本地",
+    "project",
+    "system",
+    "this",
+    "current",
+    "local",
+)
+KNOWLEDGE_SEARCH_INTENT_TERMS = (
+    "怎么",
+    "如何",
+    "为什么",
+    "是否",
+    "有没有",
+    "能否",
+    "支持",
+    "总结",
+    "说明",
+    "解释",
+    "介绍",
+    "查询",
+    "查看",
+    "列出",
+    "有哪些",
+    "优化",
+    "实现",
+    "流程",
+    "设计",
+    "what",
+    "how",
+    "why",
+    "whether",
+    "does",
+    "do ",
+    "can ",
+    "support",
+    "explain",
+    "summarize",
+    "list",
+    "show",
+    "optimize",
+    "implement",
+    "design",
+)
 
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _normalize_intent_text(question: str) -> str:
+    return " ".join(str(question or "").strip().lower().split())
+
+
+def _should_force_knowledge_search(question: str) -> bool:
+    normalized = _normalize_intent_text(question)
+    if not normalized:
+        return False
+
+    if any(term in normalized for term in KNOWLEDGE_SEARCH_STRONG_INTENT_TERMS):
+        return True
+
+    has_topic = any(term in normalized for term in KNOWLEDGE_SEARCH_TOPIC_TERMS)
+    if not has_topic:
+        return False
+
+    return (
+        any(term in normalized for term in KNOWLEDGE_SEARCH_CONTEXT_TERMS)
+        or any(term in normalized for term in KNOWLEDGE_SEARCH_INTENT_TERMS)
+    )
+
+
+def _build_forced_knowledge_search_tool_call(question: str) -> Dict[str, Any]:
+    return {
+        "id": "forced_knowledge_search_0",
+        "type": "function",
+        "function": {
+            "name": KNOWLEDGE_SEARCH_TOOL_NAME,
+            "arguments": _json_dumps({"query": question}),
+        },
+    }
 
 
 async def _emit_agent_event(
@@ -714,6 +864,12 @@ class AgentRunExecutor:
                 memory_debug_context,
             )
 
+        readonly_tool_names = self.orchestrator._readonly_tool_names()
+        force_knowledge_search = (
+            KNOWLEDGE_SEARCH_TOOL_NAME in readonly_tool_names
+            and _should_force_knowledge_search(question)
+        )
+
         run_id = self.trace_service.create_run(
             agent_name=self.orchestrator.agent_name,
             agent_version=config.AGENT_VERSION,
@@ -725,8 +881,16 @@ class AgentRunExecutor:
                 "agent_version": config.AGENT_VERSION,
                 "prompt_version": config.PROMPT_VERSION,
                 "max_steps": self.orchestrator.max_steps,
-                "tools": self.orchestrator._readonly_tool_names(),
+                "tools": readonly_tool_names,
                 "permission_level": config.READONLY_PERMISSION_LEVEL,
+                "retrieval_router": {
+                    "force_knowledge_search": force_knowledge_search,
+                    "reason": (
+                        KNOWLEDGE_SEARCH_ROUTER_REASON
+                        if force_knowledge_search
+                        else None
+                    ),
+                },
                 "memory": {
                     "user_id": memory.user_id,
                     "message_count": memory.message_count,
@@ -758,6 +922,88 @@ class AgentRunExecutor:
 
         try:
             step_index = 0
+            if force_knowledge_search:
+                tool_call = _build_forced_knowledge_search_tool_call(question)
+                step_name = "forced_knowledge_search_{0}".format(step_index)
+                step_type = "forced_tool_call"
+                step_id = self.trace_service.create_step(
+                    run_id=run_id,
+                    step_index=step_index,
+                    step_type=step_type,
+                    name=step_name,
+                    input_data={
+                        "messages": messages,
+                        "tool_call": tool_call,
+                        "reason": KNOWLEDGE_SEARCH_ROUTER_REASON,
+                    },
+                )
+                await _emit_agent_event(
+                    event_sink,
+                    "agent_step",
+                    {
+                        "run_id": run_id,
+                        "step_id": step_id,
+                        "step_index": step_index,
+                        "step_type": step_type,
+                        "name": step_name,
+                        "status": AgentStepStatus.RUNNING,
+                        "reason": KNOWLEDGE_SEARCH_ROUTER_REASON,
+                    },
+                )
+
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [tool_call],
+                    }
+                )
+                observation = await self._execute_tool_call(
+                    run_id=run_id,
+                    step_id=step_id,
+                    tool_call=tool_call,
+                    fallback_index=0,
+                    event_sink=event_sink,
+                    seen_tool_calls=seen_tool_calls,
+                )
+                observations.append(observation)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": observation["tool_call_id"],
+                        "name": observation["tool_name"],
+                        "content": _json_dumps(observation["result"]),
+                    }
+                )
+
+                self.trace_service.finish_step(
+                    step_id=step_id,
+                    output_data={
+                        "observations": [observation],
+                        "reason": KNOWLEDGE_SEARCH_ROUTER_REASON,
+                    },
+                    decision="forced_tool_call",
+                    prompt_tokens=None,
+                    completion_tokens=None,
+                    total_tokens=None,
+                    latency_ms=None,
+                )
+                await _emit_agent_event(
+                    event_sink,
+                    "agent_step",
+                    {
+                        "run_id": run_id,
+                        "step_id": step_id,
+                        "step_index": step_index,
+                        "step_type": step_type,
+                        "name": step_name,
+                        "status": AgentStepStatus.SUCCESS,
+                        "decision": "forced_tool_call",
+                        "tool_call_count": 1,
+                    },
+                )
+                step_index += 1
+
             while step_index < self.orchestrator.max_steps:
                 step_name = "agent_step_{0}".format(step_index)
                 step_type = "llm_decision"

@@ -3,7 +3,7 @@
 本文档固化第一版 RAG Agent 的可演示范围、启动方式和验收路径。MVP 目标不是扩展工具平台，而是保证一条稳定链路可以完整展示：
 
 ```text
-上传文档 -> ingest 建库 -> Agent 问答 -> 只读工具循环调用
+上传文件或网页 URL -> ingest 建库 -> Agent 问答 -> 只读工具循环调用
 -> Trace 展示 -> citations 展示
 ```
 
@@ -11,9 +11,9 @@
 
 ### 已纳入
 
-- 文档上传、解析、切片、embedding、LanceDB 向量索引构建。
+- 文件上传、网页 URL 导入、解析、切片、embedding、LanceDB 向量索引构建。
 - 旧 RAG 路径：直接检索全局 READY 文档并生成回答。
-- 新 Agent 路径：LLM 循环决策是否调用只读工具，工具结果返回后由 LLM 自主判断继续调用工具或输出最终答案。
+- 新 Agent 路径：后端先做轻量检索意图路由，必要时强制首轮 `knowledge_search`；后续由 LLM 循环决策是否继续调用只读工具或输出最终答案。
 - Agent Trace：记录 `agent_runs`、`agent_steps`、`agent_tool_calls`，前端流式展示执行轨迹。
 - Citations：Agent 从 `knowledge_search` 结果生成 citations，并复用原有 `citations` 表和前端引用面板展示。
 - 前端工作台：上传文档、查看任务、问答、Trace、引用来源和监控概览。
@@ -29,11 +29,11 @@
 ```text
 Browser / React Workbench
   |
-  | /v1/documents, /v1/sessions, /v1/chat/stream, /v1/agent/chat/stream
+  | /v1/documents, /v1/documents/web, /v1/sessions, /v1/chat/stream, /v1/agent/chat/stream
   v
 C++ Drogon Gateway
   |
-  | /internal/* and /api/agent/chat/stream
+  | /internal/* and /api/agent/*
   v
 FastAPI Internal Service
   |
@@ -151,9 +151,11 @@ GET  /internal/agent/runs/{run_id}/steps
 
 特点：
 
-- Agent 每轮先调用 LLM 判断是否需要工具。
+- Agent 入口会先做轻量检索意图路由；命中项目文档、代码、架构、能力、上传文档、网页导入、embedding、索引等意图时，会先执行一次 `knowledge_search`，再让 LLM 基于工具结果总结。
+- 未命中强制检索路由时，Agent 每轮由 LLM 判断是否需要继续调用工具。
 - 当前只暴露只读工具：`knowledge_search`、`get_document_detail`、`list_ready_documents`、`list_message_citations`。
 - 如果 LLM 返回 `tool_calls`，后端先按工具 schema 做轻量参数校验，再用工具自身 `timeout_ms` 执行工具并把结果写回上下文；如果 LLM 不再返回 `tool_calls`，该轮内容作为最终答案。
+- 强制检索会在 Trace 中记录为 `forced_tool_call` step；后续 LLM 仍可继续调用其他只读工具。
 - 工具结果统一为 `{"ok": bool, "error": string | null, "data": object}`。`ok=true` 时 Agent 只使用 `data` 作为证据；`ok=false` 或 `error` 非空时会记录失败并基于已有信息降级回答。
 - `max_steps` 是防止异常循环的安全上限；达到上限时不会直接失败，而是进入一次无工具最终回答阶段，说明已达到工具调用上限并基于已有观察给出当前结论。重复的同名同参数工具调用会被跳过并记录到 Trace。
 - 工具调用、工具结果、最终回答会写入 Trace。Run 级 Trace 还会记录 `AGENT_VERSION`、`PROMPT_VERSION` 和 `prompt_tokens` / `completion_tokens` / `total_tokens` 汇总。
@@ -163,11 +165,11 @@ GET  /internal/agent/runs/{run_id}/steps
 
 1. 打开 `http://127.0.0.1:5173`。
 2. 在 `Workspace` 创建或选择用户会话。
-3. 上传 `day7_demo.md` 或任意 `.md/.txt/.pdf/.docx/.xlsx/.csv/.json` 文档。
+3. 上传 `day7_demo.md` 或任意 `.md/.txt/.pdf/.docx/.xlsx/.csv/.json` 文档；也可以输入网页 URL 导入网页正文。
 4. 等待文档状态变为 `READY`，或在 `Tasks` 页面确认 ingest 任务成功。
 5. 开启流式问答与 RAG/Agent 开关。
 6. 提问：`根据知识库总结这个系统的架构和核心链路`。
-7. 观察右侧 `Agent Trace`：应出现决策步骤、只读工具调用、工具结果和最终生成。
+7. 观察右侧 `Agent Trace`：项目文档类问题通常会先出现 `forced_tool_call` / `knowledge_search`，随后出现 LLM 决策步骤、工具结果和最终生成。
 8. 回答完成后刷新消息或等待前端自动刷新，引用面板应显示 citations。
 
 ## CLI 验收

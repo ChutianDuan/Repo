@@ -28,7 +28,7 @@ ls ./day7_demo.md
 
 1. 打开前端：`http://127.0.0.1:5173`。
 2. 在 `Workspace` 创建会话。
-3. 上传 `day7_demo.md`。
+3. 上传 `day7_demo.md`，或在网页导入输入框提交一个可直接访问的 `http(s)` URL。
 4. 在 `Tasks` 或文档列表等待 ingest 成功，文档状态为 `READY`。
 5. 保持流式问答开启，并使用 Agent/RAG 开关进入 Agent 路径。
 6. 提问：
@@ -40,7 +40,7 @@ ls ./day7_demo.md
 ### 预期
 
 - 上传后出现 ingest 任务，最终 `SUCCESS`。
-- Agent Trace 面板出现决策步骤。
+- Agent Trace 面板出现执行步骤。项目文档类问题通常会先出现一次 `forced_tool_call`。
 - Trace 中出现 `knowledge_search` 的 `tool_call` 和 `tool_result`，工具结果为 `ok/error/data` 结构。
 - 回答内容基于上传文档。
 - 回答完成后消息刷新，引用面板展示至少 1 条 citation，包含 `doc_id`、`chunk_index`、score 和 snippet。
@@ -88,6 +88,8 @@ curl -N -X POST http://127.0.0.1:8080/v1/agent/chat/stream \
 ```text
 agent_step -> tool_call -> tool_result -> agent_step -> delta -> final -> done
 ```
+
+其中第一个 `agent_step` 可能是后端强制首轮检索产生的 `forced_tool_call`，随后才是 LLM 决策步骤。
 
 记录 `done.meta.agent_run_id` 或 `final.run_id`，查询 Trace：
 
@@ -179,6 +181,6 @@ curl http://127.0.0.1:8000/openapi.json
 ## 演示口径
 
 - 旧 RAG 是稳定基线：用户问题直接进入检索、Prompt 组装和回答生成。
-- 新 Agent 在旧检索能力上增加“是否需要工具”的决策层，并把工具调用过程结构化记录为 Trace。
+- 新 Agent 在旧检索能力上增加工具决策层；项目文档、代码、架构、能力、上传文档、网页导入等意图会先由后端轻量路由强制执行一次 `knowledge_search`，再交给 LLM 总结。
 - 当前工具只读，避免演示环境中出现写操作风险。
 - Citations 统一复用原有消息引用能力，因此旧 RAG 和新 Agent 在前端引用面板的展示方式一致。
