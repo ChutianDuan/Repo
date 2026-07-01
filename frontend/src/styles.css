@@ -560,6 +560,20 @@ h3 {
   white-space: nowrap;
 }
 
+.upload-document-button__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.web-url-control {
+  flex: 1 1 220px;
+  width: min(360px, 42vw);
+  min-width: 220px;
+}
+
 .toggle-control {
   display: inline-flex;
   align-items: center;
@@ -1750,5 +1764,17 @@ h3 {
   .message-bubble--assistant,
   .message-bubble--user {
     max-width: 100%;
+  }
+
+  .upload-document-button,
+  .upload-document-button__group {
+    width: 100%;
+  }
+
+  .file-control,
+  .web-url-control {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
   }
 }

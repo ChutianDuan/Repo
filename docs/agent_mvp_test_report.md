@@ -8,6 +8,32 @@ Agent MVP 的代码级联调已完成，四个目标场景均有自动化覆盖�
 
 本轮还将 LLM 默认运行方式改为远端 OpenAI-compatible API：`scripts/start_vllm.sh` 默认只检查 API 连通性，不再因为存在 `VLLM_MODEL_PATH` 自动启动本地 vLLM；本地 vLLM 仅在显式设置 `LLM_RUNTIME=local_vllm` 时使用。
 
+## 2026-06-28 增量同步
+
+Agent hardening 已补充以下行为，并由自动化测试覆盖：
+
+- 工具执行使用 `asyncio.wait_for` 强制应用工具自身 `timeout_ms`，超时会写入 FAILED tool call。
+- 工具入参在执行前按当前 schema 做轻量校验；缺必填字段、类型不匹配、越界或额外字段会记录为失败工具结果。
+- 工具返回统一为 `{"ok": bool, "error": string | null, "data": object}`，Trace、SSE `tool_result` 和 LLM 工具消息均使用该结构。
+- Agent Run Trace 写入 `AGENT_VERSION`、`PROMPT_VERSION`，并汇总 run 级 `prompt_tokens`、`completion_tokens`、`total_tokens`。
+- `max_steps` 达到上限时不再直接抛出 Agent 失败，而是进入一次无工具最终回答阶段，基于已有观察返回降级结论。
+
+最新聚焦验证命令：
+
+```bash
+python -m pytest \
+  tests/test_agent_orchestrator.py \
+  tests/test_agent_trace_service.py \
+  tests/test_knowledge_search_tool.py \
+  tests/test_get_document_detail_tool.py \
+  tests/test_list_ready_documents_tool.py \
+  tests/test_citation_tools.py \
+  tests/test_agent_api.py \
+  tests/test_agent_streaming_service.py
+
+python -m compileall python_rag/app/agent
+```
+
 ## 变更范围
 
 | 文件 | 变更 |
@@ -25,14 +51,14 @@ Agent MVP 的代码级联调已完成，四个目标场景均有自动化覆盖�
 | --- | --- | --- | --- |
 | 1. 需要检索 | `根据项目文档总结系统架构` | 调用 `knowledge_search` 后回答 | 通过。测试确认 LLM 首轮输出工具调用，Agent 执行 `knowledge_search`，Trace 写入 run、step、tool_call，最终回答。 |
 | 2. 不需要检索 | `你好` | 不调用工具，直接回答 | 通过。测试确认 `knowledge_search` 未被调用，只有 final_answer step。 |
-| 3. 检索不到 | `文档里有没有区块链支付模块？` | 调用 `knowledge_search`，说明知识库证据不足 | 通过。测试确认工具调用成功但返回 `total=0`，最终回答包含“证据不足”。 |
+| 3. 检索不到 | `文档里有没有区块链支付模块？` | 调用 `knowledge_search`，说明知识库证据不足 | 通过。测试确认工具调用成功但返回 `data.total=0`，最终回答包含“证据不足”。 |
 | 4. 工具失败 | `knowledge_search timeout` | 记录失败，并返回降级说明 | 通过。测试确认工具结果 `error=knowledge_search timeout` 被写为 FAILED tool_call，后续回答为降级说明。 |
 
 ## Trace 与数据库记录
 
 - Agent Run：`trace_service.create_run()` 创建 `agent_runs`，结束时 `finish_run()` / `fail_run()` 写终态、输出、错误和 finished_at。
 - Agent Step：每轮 LLM 决策写入 `agent_steps`，包括 step_index、input_json、output_json、decision、token 和 latency。
-- Tool Call：每次工具调用写入 `agent_tool_calls`，成功用 SUCCESS，工具异常或工具结果含 `error` 用 FAILED，并写入 `error_message`、`result_json`、`result_preview`。
+- Tool Call：每次工具调用写入 `agent_tool_calls`，成功用 SUCCESS；工具异常、超时、参数校验失败或工具结果 `ok=false` / `error` 非空用 FAILED，并写入 `error_message`、`result_json`、`result_preview`。
 - 查询入口：`GET /api/agent/runs/{run_id}` 和 `GET /api/agent/runs/{run_id}/steps` 可展示完整 Trace，steps 响应包含对应 tool_calls。
 - 表结构：`db/004_create_agent_tables.sql` 提供 `agent_runs`、`agent_steps`、`agent_tool_calls`。
 
@@ -86,7 +112,7 @@ pytest
 - `GET http://127.0.0.1:8000/internal/health` 返回 `ok=true`。
 - `GET http://127.0.0.1:8080/health` 返回 `ok=true`。
 - 当前库中存在 READY 文档，可用于真实检索。
-- 为避免 live 验收被 reranker 缺失权重下载阻塞，`.env` 设置 `RERANK_DOWNLOAD_IF_MISSING=false`，并保留 `RERANK_FALLBACK_TO_FAISS=true`。
+- 为避免 live 验收被 reranker 缺失权重下载阻塞，`.env` 设置 `RERANK_DOWNLOAD_IF_MISSING=false`，并保留 `RERANK_FALLBACK_TO_FAISS=true`（历史配置名；当前默认 LanceDB 召回路径下表示按召回顺序回退）。
 
 ## Live 验收结果
 

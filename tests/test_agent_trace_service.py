@@ -166,3 +166,28 @@ def test_tool_call_create_finish_and_fail(monkeypatch):
     assert updates[1]["result"] is trace_service.models._UNSET
     assert updates[1]["error_message"] == "permission denied"
     assert updates[1]["finished"] is True
+
+
+def test_build_tool_result_preview_unwraps_standard_knowledge_result():
+    result = {
+        "ok": True,
+        "error": None,
+        "data": {
+            "results": [],
+            "total": 3,
+            "retrieval": {
+                "provider": "lancedb",
+                "dense_top_k": 50,
+                "rerank_top_k": 5,
+                "candidate_count": 12,
+                "vector_search_latency_ms": 7,
+                "rerank_latency_ms": 11,
+                "retrieval_latency_ms": 25,
+            },
+        },
+    }
+
+    assert trace_service.build_tool_result_preview("knowledge_search", result) == (
+        "total=3; provider=lancedb; dense_top_k=50; rerank_top_k=5; "
+        "candidates=12; vector_ms=7; rerank_ms=11; retrieval_ms=25"
+    )

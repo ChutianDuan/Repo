@@ -135,7 +135,7 @@ bash scripts/e2e_chat.sh ./day7_demo.md
 建议先跑 5 到 10 次低并发请求，预热以下组件：
 
 - embedding 模型加载
-- FAISS 索引读取
+- LanceDB 向量表查询
 - LLM 首次响应
 - 流式 SSE 链路
 
@@ -256,7 +256,7 @@ python3 scripts/metrics_benchmark.py \
 
 - `error rate`：整体失败比例
 - `timeout rate`：超时比例，通常早于完全失败出现
-- `retrieval_ms`：检索耗时，若异常升高，优先看 embedding/FAISS 路径
+- `retrieval_ms`：检索耗时，若异常升高，优先看 query embedding、LanceDB 召回、MySQL chunk 回表和 rerank 路径
 - `citation_count`：回答平均引用数量
 - `no_context ratio`：检索结果为空或被裁剪为无上下文的比例
 

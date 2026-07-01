@@ -3,8 +3,16 @@ from pathlib import Path
 import sys
 import tempfile
 
-import faiss
-import numpy as np
+import pytest
+
+try:
+    import faiss
+    import numpy as np
+except ModuleNotFoundError:
+    pytest.skip(
+        "chunking recall tests require numpy and faiss",
+        allow_module_level=True,
+    )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

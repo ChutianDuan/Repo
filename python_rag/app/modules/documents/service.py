@@ -18,6 +18,7 @@ from python_rag.app.modules.documents.repo import (
     list_documents,
 )
 from python_rag.app.modules.ingest.chunking_service import validate_supported_document_filename
+from python_rag.app.modules.ingest.web_page_service import fetch_web_page_document
 from python_rag.app.shared.hash_utils import sha256_bytes
 from python_rag.app.retrieval.indexing_service import delete_document_vectors
 
@@ -70,6 +71,58 @@ def save_uploaded_document(user_id, upload_file):
     except Exception as e:
         logger.exception("save_uploaded_document failed")
         raise AppError(ERR_DB_ERROR, "save_uploaded_document failed: {0}".format(e))
+
+
+def save_web_document(user_id: int, url: str):
+    file_path = None
+    try:
+        web_document = fetch_web_page_document(url)
+        content = web_document.content_bytes
+        if not content:
+            raise AppError(ERR_INVALID_REQUEST, "empty web page content")
+        if len(content) > MAX_DOCUMENT_SIZE_BYTES:
+            raise AppError(
+                ERR_INVALID_REQUEST,
+                "web page content is too large; max supported size is {0} bytes".format(
+                    MAX_DOCUMENT_SIZE_BYTES,
+                ),
+            )
+
+        file_path = build_upload_path(web_document.filename)
+        save_bytes_to_path(content, file_path)
+
+        try:
+            doc_id = create_document_record(
+                user_id=user_id,
+                filename=web_document.filename,
+                mime=web_document.mime,
+                sha256=sha256_bytes(content),
+                size_bytes=len(content),
+                storage_path=file_path,
+                status=DocumentState.UPLOADED,
+            )
+        except Exception:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    logger.exception("failed to cleanup web document after insert failure")
+            raise
+
+        return {
+            "doc_id": doc_id,
+            "filename": web_document.filename,
+            "status": DocumentState.UPLOADED,
+            "index_status": DocumentIndexStatus.NOT_INDEXED,
+            "source_url": web_document.url,
+            "final_url": web_document.final_url,
+            "title": web_document.title,
+        }
+    except AppError:
+        raise
+    except Exception as e:
+        logger.exception("save_web_document failed")
+        raise AppError(ERR_DB_ERROR, "save_web_document failed: {0}".format(e))
 
 
 def _remove_file_if_exists(path):

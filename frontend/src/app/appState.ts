@@ -10,6 +10,7 @@ export type PendingAction =
   | "health"
   | "user"
   | "upload"
+  | "web-upload"
   | "session"
   | "chat"
   | "messages"

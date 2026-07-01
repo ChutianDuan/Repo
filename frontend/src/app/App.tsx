@@ -38,13 +38,13 @@ import {
   type StreamChatCallbacks,
   type StreamChatDoneMeta,
 } from "../services/chatService";
-import { deleteDocument, listDocuments, uploadDocument } from "../services/documentService";
+import { deleteDocument, listDocuments, uploadDocument, uploadWebDocument } from "../services/documentService";
 import { getHealth, getMonitorOverview } from "../services/monitorService";
 import { getTaskStatus, listTasks } from "../services/taskService";
 import { createUser, listLatestUsers } from "../services/userService";
 import { usePolling } from "../hooks/usePolling";
 import type { HealthSnapshot } from "../types/api";
-import type { DocumentListItem } from "../types/document";
+import type { DocumentListItem, UploadDocumentResponse } from "../types/document";
 import type { Citation } from "../types/citation";
 import type { ChatMessage } from "../types/message";
 import type { MetricPoint, MonitorOverview } from "../types/monitor";
@@ -192,6 +192,7 @@ export default function App() {
   const [modelName, setModelName] = useState("local-llm");
   const [question, setQuestion] = useState("这份文档讲了什么？");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [webUrl, setWebUrl] = useState("");
 
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   const [apiLatencyMs, setApiLatencyMs] = useState<number | null>(null);
@@ -675,50 +676,93 @@ export default function App() {
     try {
       const parsedUserId = parsePositiveInteger(userId, "User ID");
       const uploadResult = await uploadDocument(apiBaseUrl, parsedUserId, selectedFile);
-      const createdAt = nowIso();
-      const documentItem: DocumentListItem = {
-        doc_id: uploadResult.doc_id,
-        filename: uploadResult.filename,
-        status: "uploaded",
-        index_status: "not_indexed",
-        chunks: null,
-        vectorized: false,
-        created_at: createdAt,
-        updated_at: createdAt,
-        task_id: uploadResult.task_id,
-        progress: 0,
-      };
-      const taskDefaults: Partial<TaskRecord> = {
-        type: "parse_document",
-        entity_type: "document",
-        entity_id: uploadResult.doc_id,
-        db_task_id: uploadResult.db_task_id,
-        created_at: createdAt,
-      };
-
-      setDocuments((current) => [documentItem, ...current.filter((document) => document.doc_id !== uploadResult.doc_id)]);
-      setCurrentDocumentId(uploadResult.doc_id);
-      upsertTaskRecord(
-        {
-          task_id: uploadResult.task_id,
-          state: uploadResult.state || "PENDING",
-          progress: 0,
-          meta: { stage: "queued", doc_id: uploadResult.doc_id, filename: uploadResult.filename },
-          error: null,
-        },
-        taskDefaults,
-      );
-      setSelectedTaskId(uploadResult.task_id);
-
-      const finalTask = await pollTask(uploadResult.task_id, taskDefaults, (task) => {
-        setIngestTask(task);
-        updateDocumentFromTask(uploadResult.doc_id, task);
-      });
-      updateDocumentFromTask(uploadResult.doc_id, finalTask);
-      await refreshDocuments(true);
+      const taskDefaults = registerPendingDocument(uploadResult);
+      await waitForDocumentIngest(uploadResult, taskDefaults);
       setSelectedFile(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "上传失败");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  function registerPendingDocument(uploadResult: UploadDocumentResponse): Partial<TaskRecord> {
+    const createdAt = nowIso();
+    const documentItem: DocumentListItem = {
+      doc_id: uploadResult.doc_id,
+      filename: uploadResult.filename,
+      status: "uploaded",
+      index_status: "not_indexed",
+      chunks: null,
+      vectorized: false,
+      created_at: createdAt,
+      updated_at: createdAt,
+      task_id: uploadResult.task_id,
+      progress: 0,
+    };
+    const taskDefaults: Partial<TaskRecord> = {
+      type: "parse_document",
+      entity_type: "document",
+      entity_id: uploadResult.doc_id,
+      db_task_id: uploadResult.db_task_id,
+      created_at: createdAt,
+    };
+
+    setDocuments((current) => [documentItem, ...current.filter((document) => document.doc_id !== uploadResult.doc_id)]);
+    setCurrentDocumentId(uploadResult.doc_id);
+    upsertTaskRecord(
+      {
+        task_id: uploadResult.task_id,
+        state: uploadResult.state || "PENDING",
+        progress: 0,
+        meta: { stage: "queued", doc_id: uploadResult.doc_id, filename: uploadResult.filename },
+        error: null,
+      },
+      taskDefaults,
+    );
+    setSelectedTaskId(uploadResult.task_id);
+    return taskDefaults;
+  }
+
+  async function waitForDocumentIngest(uploadResult: UploadDocumentResponse, taskDefaults: Partial<TaskRecord>) {
+    const finalTask = await pollTask(uploadResult.task_id, taskDefaults, (task) => {
+      setIngestTask(task);
+      updateDocumentFromTask(uploadResult.doc_id, task);
+    });
+    updateDocumentFromTask(uploadResult.doc_id, finalTask);
+    await refreshDocuments(true);
+  }
+
+  async function handleUploadWebDocument() {
+    const trimmedUrl = webUrl.trim();
+    if (!trimmedUrl) {
+      setError("请输入网页 URL");
+      return;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(trimmedUrl);
+    } catch {
+      setError("网页 URL 格式不正确");
+      return;
+    }
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      setError("网页 URL 必须以 http:// 或 https:// 开头");
+      return;
+    }
+
+    setPending("web-upload");
+    setError(null);
+    setIngestTask(null);
+    try {
+      const parsedUserId = parsePositiveInteger(userId, "User ID");
+      const uploadResult = await uploadWebDocument(apiBaseUrl, parsedUserId, trimmedUrl);
+      const taskDefaults = registerPendingDocument(uploadResult);
+      await waitForDocumentIngest(uploadResult, taskDefaults);
+      setWebUrl("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "网页导入失败");
     } finally {
       setPending(null);
     }
@@ -1086,10 +1130,13 @@ export default function App() {
           selectedDocId={currentDocumentId}
           tasks={taskRecords}
           selectedFileName={selectedFileName}
+          webUrl={webUrl}
           pending={pending}
           onSelectDocument={setCurrentDocumentId}
           onFileChange={setSelectedFile}
+          onWebUrlChange={setWebUrl}
           onUpload={handleUploadDocument}
+          onUploadWebDocument={handleUploadWebDocument}
           onDeleteDocument={handleDeleteDocument}
         />
       );

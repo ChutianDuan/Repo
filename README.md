@@ -362,9 +362,11 @@ START_INIT_DB=true START_FRONTEND=true bash scripts/start_all.sh
 
 当前 Agent 记忆分为三层：`user_account.memory_summary` 保存跨 session 的用户长期记忆，`sessions.summary` 保存当前 session 中期摘要，最近 8 条 user/assistant 消息作为短期记忆直接进入 prompt。记忆更新由 Celery 异步触发，`python_rag.tasks.session_summary_update` 维护 session summary，`python_rag.tasks.user_memory_update` 维护用户长期记忆；两者都使用 message id 水位线避免重复处理和旧任务覆盖新结果。
 
-默认只读工具包括：`knowledge_search` 检索 indexed 知识库，`get_document_detail` 查询文档元数据，`list_ready_documents` 列出可检索文档，`list_message_citations` 根据 assistant `message_id` 查询已保存 citations。
+默认只读工具包括：`knowledge_search` 检索 indexed 知识库，`get_document_detail` 查询文档元数据，`list_ready_documents` 列出可检索文档，`list_message_citations` 根据 assistant `message_id` 查询已保存 citations。工具返回统一为 `{"ok": bool, "error": string | null, "data": object}`，Agent 只在 `ok=true` 时使用 `data` 作为证据；`ok=false` 或 `error` 非空时会记录失败并基于已有信息降级回答。
 
-Agent 编排采用循环决策：每轮 LLM 先判断是否需要工具；如果返回 `tool_calls`，后端执行只读工具并把结果写回上下文；如果不再返回 `tool_calls`，该轮内容就是最终回答。`max_steps` 只作为安全上限，重复的同名同参数工具调用会被跳过并记录到 Trace，避免无意义循环。
+Agent 编排采用循环决策：每轮 LLM 先判断是否需要工具；如果返回 `tool_calls`，后端会先按工具 schema 做轻量参数校验，再用工具自身 `timeout_ms` 执行只读工具并把结果写回上下文；如果不再返回 `tool_calls`，该轮内容就是最终回答。重复的同名同参数工具调用会被跳过并记录到 Trace，避免无意义循环。
+
+Trace 会记录 `AGENT_VERSION`、`PROMPT_VERSION`、每步 token usage 和 run 级 `prompt_tokens` / `completion_tokens` / `total_tokens` 汇总，便于排查 prompt、工具策略和成本变化。`max_steps` 是防止异常循环的安全上限；达到上限时不会直接报错，而是进入一次无工具最终回答阶段，说明已达到工具调用上限，并基于已有观察给出当前结论。
 
 CLI 对照：
 
@@ -408,7 +410,7 @@ curl -N -X POST http://127.0.0.1:8080/v1/agent/chat/stream \
 | `GET` | `/v1/tasks` | 查询任务列表。 |
 | `GET` | `/v1/tasks/{task_id}` | 查询单个任务状态。 |
 | `POST` | `/v1/chat/stream` | SSE 流式回答代理。 |
-| `POST` | `/v1/agent/chat/stream` | Agent SSE 流式回答代理，包含 `agent_step`、`tool_call`、`tool_result`、`final` 和 `done` 事件。 |
+| `POST` | `/v1/agent/chat/stream` | Agent SSE 流式回答代理，包含 `agent_step`、`tool_call`、`tool_result`、`final` 和 `done` 事件；工具结果使用 `ok/error/data` 结构。 |
 | `GET` | `/v1/monitor/overview` | 系统与 RAG 监控概览。 |
 
 FastAPI 内部接口以 `/internal/*` 为前缀，不建议浏览器直接访问。Agent Trace 调试入口包括 `GET /internal/agent/runs/{run_id}` 和 `GET /internal/agent/runs/{run_id}/steps`。

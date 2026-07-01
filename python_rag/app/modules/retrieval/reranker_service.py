@@ -171,9 +171,9 @@ def _build_cross_encoder_kwargs(model_path: str, device: str) -> Dict[str, Any]:
     kwargs: Dict[str, Any] = {
         "device": device,
         "local_files_only": RERANK_LOCAL_FILES_ONLY,
-        "config_args": {
+        "config_kwargs": {
             # Some cached reranker configs contain null in `architectures`.
-            # sentence-transformers CrossEncoder calls `.endswith()` on each item.
+            # Older CrossEncoder paths call `.endswith()` on each item.
             "architectures": ["AutoModelForSequenceClassification"],
         },
     }

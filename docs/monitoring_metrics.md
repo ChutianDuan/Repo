@@ -8,7 +8,9 @@
 | --- | --- | --- |
 | 文档解析耗时 | `ingest.document_parse_ms` / `latency.document_parse_ms` | ingest 阶段 `extract_text_from_document` 计时 |
 | chunk 数量 | `ingest.chunk_count` / `rag.total_chunks` | ingest 产物与 `doc_chunks` 统计 |
-| FAISS 检索耗时 | `quality.faiss_ms` / `latency.faiss_ms` | `search_doc_faiss_index` 计时 |
+| 检索总耗时 | `quality.retrieval_ms` / `latency.retrieval_ms` | `search_in_documents` 端到端计时 |
+| LanceDB 召回耗时 | `request_metrics.extra_json.lancedb_ms` / retrieval `metrics.lancedb_ms` | `search_lancedb_index` 计时，当前主要用于单请求诊断 |
+| 兼容 FAISS 耗时 | `quality.faiss_ms` / `latency.faiss_ms` | 旧 FAISS 路径兼容字段；默认 LanceDB 路径下通常为空 |
 | 首 token 延迟 | `experience.ttft_ms` / `latency.ttft_ms` | SSE 第一个 delta 产生时间 |
 | 总响应耗时 | `experience.e2e_latency_ms` / `latency.response_ms` | chat async / stream 端到端计时 |
 | 支持最大文档大小 | `rag.max_document_size_bytes` | `MAX_DOCUMENT_SIZE_BYTES` 配置 |

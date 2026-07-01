@@ -272,6 +272,46 @@ int main() {
     );
 
     app().registerHandler(
+        "/v1/documents/web",
+        [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) {
+            runSecured(
+                gatewaySecurity,
+                req,
+                std::move(callback),
+                [pythonClient, req](GatewaySecurity::ResponseCallback&& secureCallback) {
+                    auto jsonPtr = req->getJsonObject();
+                    if (!jsonPtr || !jsonPtr->isObject()) {
+                        Json::Value json;
+                        json["code"] = 400;
+                        json["message"] = "json body is required";
+                        auto resp = HttpResponse::newHttpJsonResponse(json);
+                        resp->setStatusCode(k400BadRequest);
+                        secureCallback(resp);
+                        return;
+                    }
+
+                    pythonClient->forwardJsonPost(
+                        "/internal/documents/web/ingest",
+                        *jsonPtr,
+                        std::move(secureCallback)
+                    );
+                }
+            );
+        },
+        {Post}
+    );
+
+    app().registerHandler(
+        "/v1/documents/web",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            callback(makeOptionsResponse(req));
+        },
+        {Options}
+    );
+
+    app().registerHandler(
         "/v1/documents/{1}",
         [gatewaySecurity, pythonClient](const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback,

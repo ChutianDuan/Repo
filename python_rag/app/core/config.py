@@ -91,7 +91,7 @@ STREAM_MOCK_DELAY_MS = int(os.getenv("STREAM_MOCK_DELAY_MS", "30"))
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "sentence_transformers")
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL",
-    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "Qwen/Qwen3-Embedding-0.6B",
 ).strip()
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "").rstrip("/")
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "").strip()
@@ -102,7 +102,10 @@ EMBEDDING_NORMALIZE = os.getenv(
     "EMBEDDING_NORMALIZE",
     "true",
 ).lower() in ("1", "true", "yes", "on")
-EMBEDDING_QUERY_PREFIX = os.getenv("EMBEDDING_QUERY_PREFIX", "")
+EMBEDDING_QUERY_PREFIX = os.getenv(
+    "EMBEDDING_QUERY_PREFIX",
+    "Instruct: Given a web search query, retrieve relevant passages that answer the query\\nQuery: ",
+)
 EMBEDDING_DOCUMENT_PREFIX = os.getenv("EMBEDDING_DOCUMENT_PREFIX", "")
 
 RERANK_ENABLE = os.getenv("RERANK_ENABLE", "true").lower() in (
@@ -114,7 +117,7 @@ RERANK_ENABLE = os.getenv("RERANK_ENABLE", "true").lower() in (
 RERANK_PROVIDER = os.getenv("RERANK_PROVIDER", "cross_encoder").strip().lower()
 RERANK_MODEL = os.getenv(
     "RERANK_MODEL",
-    "BAAI/bge-reranker-base",
+    "Qwen/Qwen3-Reranker-0.6B",
 ).strip()
 RERANK_DEVICE = os.getenv("RERANK_DEVICE", EMBEDDING_DEVICE).strip()
 RERANK_BATCH_SIZE = int(os.getenv("RERANK_BATCH_SIZE", "16"))

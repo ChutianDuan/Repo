@@ -200,39 +200,30 @@ def _extract_text_from_json(path: str) -> str:
 
 def _extract_text_from_pdf(path: str) -> str:
     try:
-        from pypdf import PdfReader
+        import pymupdf4llm
     except Exception as exc:
         raise AppError(
             ERR_CELERY_ERROR,
-            f"pdf parser dependencies are not available: {exc}",
+            f"pdf-to-markdown dependencies are not available: {exc}",
         ) from exc
 
+    if not os.path.exists(path):
+        raise AppError(ERR_CELERY_ERROR, "document file does not exist")
+
     try:
-        reader = PdfReader(path)
+        markdown = pymupdf4llm.to_markdown(path, show_progress=False)
     except Exception as exc:
-        raise AppError(ERR_CELERY_ERROR, f"failed to open pdf: {exc}") from exc
+        raise AppError(ERR_CELERY_ERROR, f"failed to convert pdf to markdown: {exc}") from exc
 
-    page_texts: List[str] = []
-    for page_index, page in enumerate(reader.pages, start=1):
-        try:
-            text = (page.extract_text(extraction_mode="layout") or "").strip()
-        except TypeError:
-            try:
-                text = (page.extract_text() or "").strip()
-            except Exception:
-                text = ""
-        except Exception:
-            text = ""
-        if text:
-            page_texts.append(f"<!-- Page {page_index} -->\n{text}")
-
-    if not page_texts:
+    markdown = normalize_text(markdown if isinstance(markdown, str) else "")
+    if not markdown:
         raise AppError(
             ERR_CELERY_ERROR,
-            "pdf text extraction produced empty content; scanned pdf OCR is not supported yet",
+            "pdf-to-markdown conversion produced empty content; "
+            "scanned pdf OCR requires a separately configured OCR engine and language data",
         )
 
-    return "\n\n".join(page_texts)
+    return markdown
 
 
 def _iter_docx_table_texts(document) -> Iterable[str]:

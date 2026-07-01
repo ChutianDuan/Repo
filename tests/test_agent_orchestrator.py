@@ -62,6 +62,18 @@ class TimeoutKnowledgeSearchTool(FakeKnowledgeSearchTool):
         }
 
 
+class SlowKnowledgeSearchTool(FakeKnowledgeSearchTool):
+    timeout_ms = 1
+
+    async def run(self, arguments: dict) -> dict:
+        self.calls.append(arguments)
+        await asyncio.sleep(0.05)
+        return {
+            "results": [],
+            "total": 0,
+        }
+
+
 class FakeTraceRecorder:
     def __init__(self):
         self.runs = []
@@ -217,7 +229,10 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
     ]
 
     assert len(recorder.runs) == 1
+    assert recorder.runs[0]["agent_version"] == "rag-agent-v1"
     assert recorder.runs[0]["input_data"] == {"question": "根据项目文档总结系统架构"}
+    assert recorder.runs[0]["meta"]["agent_version"] == "rag-agent-v1"
+    assert recorder.runs[0]["meta"]["prompt_version"] == "rag-agent-prompt-v1"
     assert len(recorder.steps) == 2
     assert len(recorder.finished_steps) == 2
     assert recorder.finished_steps[0]["decision"] == "tool_call"
@@ -226,7 +241,12 @@ def test_agent_orchestrator_calls_knowledge_search_and_returns_final_answer(monk
     assert recorder.tool_calls[0]["tool_name"] == "knowledge_search"
     assert recorder.tool_calls[0]["tool_call_id"] == "call_knowledge_1"
     assert len(recorder.finished_tool_calls) == 1
+    assert recorder.finished_tool_calls[0]["result"]["ok"] is True
+    assert recorder.finished_tool_calls[0]["result"]["data"]["total"] == 1
     assert recorder.finished_runs[0]["run_id"] == 101
+    assert recorder.finished_runs[0]["prompt_tokens"] == 22
+    assert recorder.finished_runs[0]["completion_tokens"] == 11
+    assert recorder.finished_runs[0]["total_tokens"] == 33
     assert recorder.finished_runs[0]["output_data"]["answer"] == result["answer"]
     assert recorder.finished_runs[0]["output_data"]["citations"] == result["citations"]
     assert recorder.failed_runs == []
@@ -423,7 +443,11 @@ def test_agent_orchestrator_reports_insufficient_evidence_when_search_empty(monk
 
     assert "证据不足" in result["answer"]
     assert knowledge_tool.calls == [{"query": "区块链支付模块", "top_k": 5}]
-    assert recorder.finished_tool_calls[0]["result"] == {"results": [], "total": 0}
+    assert recorder.finished_tool_calls[0]["result"] == {
+        "ok": True,
+        "error": None,
+        "data": {"results": [], "total": 0},
+    }
     assert recorder.failed_tool_calls == []
     assert recorder.finished_steps[0]["decision"] == "tool_call"
     assert recorder.finished_steps[1]["decision"] == "final_answer"
@@ -480,7 +504,9 @@ def test_agent_orchestrator_records_tool_error_result_as_failed_trace(monkeypatc
     assert recorder.finished_tool_calls == []
     assert len(recorder.failed_tool_calls) == 1
     assert recorder.failed_tool_calls[0]["error_message"] == "knowledge_search timeout"
+    assert recorder.failed_tool_calls[0]["result"]["ok"] is False
     assert recorder.failed_tool_calls[0]["result"]["error"] == "knowledge_search timeout"
+    assert recorder.failed_tool_calls[0]["result"]["data"] == {"results": [], "total": 0}
     failed_events = [
         event
         for event in events
@@ -541,6 +567,127 @@ def test_agent_orchestrator_records_tool_failure_and_continues(monkeypatch):
     assert result["answer"] == "I could not access the tool, so no answer is available."
     assert len(recorder.failed_tool_calls) == 1
     assert recorder.failed_tool_calls[0]["error_message"] == "permission denied"
+    assert recorder.failed_tool_calls[0]["result"] == {
+        "ok": False,
+        "error": "permission denied",
+        "data": {},
+    }
+    assert recorder.finished_runs
+
+
+def test_agent_orchestrator_enforces_tool_timeout(monkeypatch):
+    recorder = FakeTraceRecorder()
+    _patch_trace(monkeypatch, recorder)
+    knowledge_tool = SlowKnowledgeSearchTool()
+    registry = ToolRegistry([knowledge_tool])
+    llm_calls = []
+
+    def fake_generate_from_messages(messages, tools=None, tool_choice=None):
+        llm_calls.append(messages)
+        if len(llm_calls) == 1:
+            return {
+                "answer": "",
+                "message": {
+                    "content": "",
+                    "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
+                },
+                "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
+                "usage": {},
+            }
+
+        tool_message = [message for message in messages if message["role"] == "tool"][0]
+        assert "tool timeout after 1ms" in tool_message["content"]
+        return {
+            "answer": "工具超时，无法继续检索。",
+            "message": {
+                "content": "工具超时，无法继续检索。",
+                "tool_calls": [],
+            },
+            "tool_calls": [],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(
+        orchestrator.llm_service,
+        "generate_from_messages",
+        fake_generate_from_messages,
+    )
+
+    result = asyncio.run(
+        orchestrator.AgentOrchestrator(registry=registry, max_steps=2).run(
+            "根据项目文档总结系统架构"
+        )
+    )
+
+    assert result["answer"] == "工具超时，无法继续检索。"
+    assert knowledge_tool.calls == [{"query": "系统架构", "top_k": 5}]
+    assert len(recorder.failed_tool_calls) == 1
+    assert recorder.failed_tool_calls[0]["error_message"] == "tool timeout after 1ms"
+    assert recorder.failed_tool_calls[0]["result"] == {
+        "ok": False,
+        "error": "tool timeout after 1ms",
+        "data": {},
+    }
+    assert recorder.finished_tool_calls == []
+    assert recorder.finished_runs
+
+
+def test_agent_orchestrator_rejects_invalid_tool_arguments(monkeypatch):
+    recorder = FakeTraceRecorder()
+    _patch_trace(monkeypatch, recorder)
+    knowledge_tool = FakeKnowledgeSearchTool()
+    registry = ToolRegistry([knowledge_tool])
+    llm_calls = []
+
+    def fake_generate_from_messages(messages, tools=None, tool_choice=None):
+        llm_calls.append(messages)
+        if len(llm_calls) == 1:
+            return {
+                "answer": "",
+                "message": {
+                    "content": "",
+                    "tool_calls": [_tool_call({"query": "系统架构", "top_k": "5"})],
+                },
+                "tool_calls": [_tool_call({"query": "系统架构", "top_k": "5"})],
+                "usage": {},
+            }
+
+        tool_message = [message for message in messages if message["role"] == "tool"][0]
+        assert "tool argument 'top_k' must be integer" in tool_message["content"]
+        return {
+            "answer": "工具参数不合法，无法检索。",
+            "message": {
+                "content": "工具参数不合法，无法检索。",
+                "tool_calls": [],
+            },
+            "tool_calls": [],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(
+        orchestrator.llm_service,
+        "generate_from_messages",
+        fake_generate_from_messages,
+    )
+
+    result = asyncio.run(
+        orchestrator.AgentOrchestrator(registry=registry, max_steps=2).run(
+            "根据项目文档总结系统架构"
+        )
+    )
+
+    assert result["answer"] == "工具参数不合法，无法检索。"
+    assert knowledge_tool.calls == []
+    assert len(recorder.failed_tool_calls) == 1
+    assert recorder.failed_tool_calls[0]["error_message"] == (
+        "tool argument 'top_k' must be integer"
+    )
+    assert recorder.failed_tool_calls[0]["result"] == {
+        "ok": False,
+        "error": "tool argument 'top_k' must be integer",
+        "data": {},
+    }
+    assert recorder.finished_tool_calls == []
     assert recorder.finished_runs
 
 
@@ -619,8 +766,84 @@ def test_agent_orchestrator_skips_duplicate_tool_calls(monkeypatch):
     assert recorder.failed_tool_calls[0]["error_message"] == (
         "duplicate tool call skipped: knowledge_search"
     )
+    assert recorder.failed_tool_calls[0]["result"] == {
+        "ok": False,
+        "error": "duplicate tool call skipped: knowledge_search",
+        "data": {
+            "skipped": True,
+            "reason": "duplicate_tool_call",
+        },
+    }
     assert [step["decision"] for step in recorder.finished_steps] == [
         "tool_call",
         "tool_call",
         "final_answer",
     ]
+
+
+def test_agent_orchestrator_degrades_when_max_steps_reached(monkeypatch):
+    recorder = FakeTraceRecorder()
+    _patch_trace(monkeypatch, recorder)
+    knowledge_tool = FakeKnowledgeSearchTool()
+    registry = ToolRegistry([knowledge_tool])
+    llm_calls = []
+
+    def fake_generate_from_messages(messages, tools=None, tool_choice=None):
+        llm_calls.append(
+            {
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice,
+            }
+        )
+        if len(llm_calls) == 1:
+            return {
+                "answer": "先检索。",
+                "message": {
+                    "content": "先检索。",
+                    "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
+                },
+                "tool_calls": [_tool_call({"query": "系统架构", "top_k": 5})],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
+            }
+
+        assert tools is None
+        assert tool_choice is None
+        assert messages[-1]["role"] == "system"
+        assert "已达到工具调用上限" in messages[-1]["content"]
+        return {
+            "answer": "",
+            "message": {
+                "content": "",
+                "tool_calls": [],
+            },
+            "tool_calls": [],
+            "usage": {"prompt_tokens": 6, "completion_tokens": 7, "total_tokens": 13},
+        }
+
+    monkeypatch.setattr(
+        orchestrator.llm_service,
+        "generate_from_messages",
+        fake_generate_from_messages,
+    )
+
+    result = asyncio.run(
+        orchestrator.AgentOrchestrator(registry=registry, max_steps=1).run(
+            "根据项目文档总结系统架构"
+        )
+    )
+
+    assert "已达到工具调用上限" in result["answer"]
+    assert result["termination_reason"] == "max_steps"
+    assert result["steps_used"] == 2
+    assert knowledge_tool.calls == [{"query": "系统架构", "top_k": 5}]
+    assert len(llm_calls) == 2
+    assert [step["decision"] for step in recorder.finished_steps] == [
+        "tool_call",
+        "max_steps_final_answer",
+    ]
+    assert recorder.failed_runs == []
+    assert recorder.finished_runs[0]["output_data"]["termination_reason"] == "max_steps"
+    assert recorder.finished_runs[0]["prompt_tokens"] == 10
+    assert recorder.finished_runs[0]["completion_tokens"] == 12
+    assert recorder.finished_runs[0]["total_tokens"] == 22

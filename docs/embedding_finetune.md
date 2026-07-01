@@ -125,7 +125,7 @@ EMBEDDING_NORMALIZE=true
 bash scripts/e2e_ingest.sh ./day7_demo.md
 ```
 
-原因是旧 FAISS 索引使用的是旧向量空间。项目会把模型名写入 `document_indexes.embedding_model`，查询时如果发现当前模型和索引模型不一致，会返回冲突错误，提醒重新 ingest。
+原因是旧向量索引使用的是旧向量空间。项目会把模型名写入 `document_indexes.embedding_model`，查询时如果发现当前模型和索引模型不一致，会返回冲突错误，提醒重新 ingest。
 
 ## 面试可讲点
 

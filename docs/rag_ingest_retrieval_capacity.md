@@ -1,8 +1,8 @@
 # RAG 文件上传、向量检索与系统负载评估
 
-本文说明当前系统从“上传文件”到“基于文档问答”的完整链路，并重点解释 chunk 切片、embedding 向量化、FAISS 本地索引、Top-K 召回、重排序、上下文拼接和 vLLM 调用之间的关系。
+本文说明当前系统从“上传文件”到“基于文档问答”的完整链路，并重点解释 chunk 切片、embedding 向量化、LanceDB 向量索引、Top-K 召回、重排序、上下文拼接和 LLM 调用之间的关系。
 
-本文按目标设计说明时，假设 embedding 向量维度为 `512`，向量类型为 `float32`，索引类型为 FAISS `IndexFlatIP`。当前代码的 chunk 配置来自 [python_rag/app/core/config.py](../python_rag/app/core/config.py)，默认 `INGEST_CHUNK_SIZE=800`、`INGEST_CHUNK_OVERLAP=100`。
+本文按目标设计说明时，假设 embedding 向量维度为 `512`，向量类型为 `float32`。当前默认向量存储来自 [python_rag/app/core/config.py](../python_rag/app/core/config.py)：`VECTOR_STORE_PROVIDER=lancedb`、`RETRIEVAL_RECALL_PROVIDER=lancedb`、`LANCEDB_PATH=./data/lancedb`、`LANCEDB_TABLE=chunk_vectors`。chunk 配置默认 `INGEST_CHUNK_SIZE=800`、`INGEST_CHUNK_OVERLAP=100`。
 
 ## 1. 总体链路
 
@@ -19,7 +19,7 @@ Celery ingest 异步任务
   |-- chunk 切片
   |-- doc_chunks 入库
   |-- chunk embedding 向量化
-  |-- FAISS 本地索引构建
+  |-- LanceDB 向量写入
   |-- document_indexes 写入索引元数据
   v
 文档 READY
@@ -30,7 +30,7 @@ Celery ingest 异步任务
 问题 embedding 向量化
   |
   v
-FAISS Top-K 或 Candidate-K 召回
+LanceDB Top-K 或 Candidate-K 召回
   |
   v
 重排序 rerank
@@ -42,7 +42,7 @@ FAISS Top-K 或 Candidate-K 召回
 拼接 prompt
   |
   v
-发送给 vLLM / OpenAI-compatible LLM
+发送给 OpenAI-compatible LLM / vLLM
   |
   v
 回答 + citations 落库
@@ -52,8 +52,8 @@ FAISS Top-K 或 Candidate-K 召回
 
 | 链路 | 触发时机 | 主要成本 | 主要产物 |
 | --- | --- | --- | --- |
-| Ingest 建库链路 | 文件上传后 | 文档解析、chunk、embedding、FAISS 写索引 | `doc_chunks`、`.faiss`、mapping JSON、`document_indexes` |
-| Query 问答链路 | 用户提问时 | query embedding、FAISS 检索、rerank、vLLM 推理 | answer、citations、messages |
+| Ingest 建库链路 | 文件上传后 | 文档解析、chunk、embedding、LanceDB 写入 | `doc_chunks`、LanceDB `chunk_vectors`、`document_indexes` |
+| Query 问答链路 | 用户提问时 | query embedding、LanceDB 召回、rerank、LLM 推理 | answer、citations、messages |
 
 ## 2. 上传与 Ingest 过程
 
@@ -134,7 +134,7 @@ chunk_text -> embedding_model -> float32[512]
 512 * 4 bytes = 2048 bytes ≈ 2 KB / chunk
 ```
 
-所以仅 FAISS 向量部分的存储规模为：
+所以仅向量原始数据部分的存储规模为：
 
 | chunk 数 | 向量原始大小 |
 | ---: | ---: |
@@ -143,29 +143,32 @@ chunk_text -> embedding_model -> float32[512]
 | 1,000,000 | 约 1.91 GB |
 | 10,000,000 | 约 19.1 GB |
 
-注意：这是纯向量大小，不包含 MySQL 中的 chunk 文本、mapping JSON、索引文件额外结构、日志和任务元数据。
+注意：这是纯向量大小，不包含 MySQL 中的 chunk 文本、LanceDB 表结构、索引元数据、日志和任务元数据。
 
-### 2.5 FAISS 本地索引
+### 2.5 LanceDB 向量索引
 
-当前项目使用 FAISS `IndexFlatIP`：
+当前默认配置使用 LanceDB 作为向量存储：
 
 ```text
-index = faiss.IndexFlatIP(dim)
-index.add(vectors)
+VECTOR_STORE_PROVIDER=lancedb
+RETRIEVAL_RECALL_PROVIDER=lancedb
+LANCEDB_PATH=./data/lancedb
+LANCEDB_TABLE=chunk_vectors
 ```
 
 含义：
 
-- `Flat`：精确检索，不做近似聚类或图索引。
-- `IP`：inner product，内积相似度。
-- 当 embedding 已 L2 normalize 时，内积排序基本等价于 cosine similarity 排序。
+- ingest 阶段把每个 chunk 的向量、`doc_id`、`chunk_id`、`chunk_index` 和必要元数据写入 LanceDB。
+- `doc_chunks` 仍然是 chunk 文本的主存储；查询时 LanceDB 先返回 chunk 标识，再按 `chunk_id` 回 MySQL 补齐文本。
+- 当 embedding 已 L2 normalize 时，向量相似度排序可按 cosine / inner product 语义理解，具体取决于 LanceDB 查询实现和当前版本。
 
-系统会为每个文档写两个本地文件：
+系统会在本地维护一个 LanceDB 数据目录：
 
 | 文件 | 作用 |
 | --- | --- |
-| `data/indexes/doc_{doc_id}.faiss` | FAISS 向量索引文件 |
-| `data/indexes/doc_{doc_id}_mapping.json` | FAISS 行号到 `chunk_id`、`doc_id`、`chunk_index`、文本内容的映射 |
+| `data/lancedb/chunk_vectors` | LanceDB 向量表，保存 chunk 向量和检索元数据 |
+| MySQL `doc_chunks` | 保存 chunk 文本、token 估算和索引状态 |
+| MySQL `document_indexes` | 保存每个文档的索引状态、模型、维度和 chunk 数 |
 
 同时，`document_indexes` 表会记录：
 
@@ -173,12 +176,13 @@ index.add(vectors)
 - `index_type`
 - `embedding_model`
 - `dimension`
-- `index_path`
-- `mapping_path`
+- `index_path` / `mapping_path`（LanceDB 路径下通常为空，保留兼容旧 FAISS 字段）
 - `chunk_count`
 - `status`
 
-这里保存 `embedding_model` 很重要。查询时系统会检查当前 embedding 模型是否和建索引时一致。如果不一致，应拒绝查询并提示重新 ingest。
+这里保存 `embedding_model` 很重要。查询时系统会检查当前 embedding 模型是否和建索引时一致。如果不一致，会拒绝查询并提示重新 ingest。
+
+FAISS 相关代码仍保留在项目中，可作为历史实现或回退参考；但当前默认召回路径已经是 LanceDB。
 
 ## 3. 提问与检索过程
 
@@ -190,38 +194,41 @@ index.add(vectors)
 question -> embedding_model -> float32[512]
 ```
 
-这一步必须和文档 chunk 使用同一个模型、同一个归一化策略。否则 FAISS 找到的最近邻没有稳定语义意义。
+这一步必须和文档 chunk 使用同一个模型、同一个归一化策略。否则 LanceDB 返回的最近邻没有稳定语义意义。
 
 问题 embedding 的成本通常远小于文档 ingest，因为一次请求只需要编码一个 query；但在高并发下，query embedding 仍然会成为共享模型服务的 QPS 压力来源。
 
-### 3.2 FAISS Top-K 召回
+### 3.2 LanceDB Top-K 召回
 
-FAISS 根据 query vector 在目标文档索引中搜索相似 chunk：
+LanceDB 根据 query vector 在 READY 文档范围内搜索相似 chunk：
 
 ```text
-scores, indices = index.search(query_vector, top_k)
+query_vector -> LanceDB chunk_vectors -> candidate chunks
 ```
 
 返回内容包括：
 
 - `chunk_id`
+- `doc_id`
 - `chunk_index`
-- `score`
-- `content`
+- `lancedb_score`
+- `lancedb_distance`
 
-如果直接把 FAISS 的 `top_k` 结果送给 vLLM，链路简单、延迟低，但排序质量完全依赖 embedding 模型。embedding 检索擅长“粗召回”，但不一定擅长精细排序，尤其在以下场景容易出错：
+LanceDB 召回后，系统会用返回的 `chunk_id` 回 MySQL 读取 chunk 文本，再交给 reranker 或按召回顺序截断。也就是说，向量库负责“找候选”，MySQL 负责“存正文”。
+
+如果直接把 LanceDB 的 `top_k` 结果送给 LLM，链路简单、延迟低，但排序质量完全依赖 embedding 模型。embedding 检索擅长“粗召回”，但不一定擅长精细排序，尤其在以下场景容易出错：
 
 - 问题很短，但文档中相似表述很多。
 - chunk 语义接近，但只有少数片段真正回答问题。
 - 领域术语、数字、否定句、条件约束较多。
 - top-1 相似度高，但实际是背景信息，不是答案依据。
 
-因此建议把 FAISS 的返回数量分成两层：
+因此建议把向量召回数量分成两层：
 
 | 参数 | 建议含义 | 常见范围 |
 | --- | --- | --- |
-| `candidate_top_k` | FAISS 粗召回候选数 | 20 到 50 |
-| `final_top_k` | rerank 后送入 vLLM 的 chunk 数 | 3 到 5 |
+| `candidate_top_k` / `RETRIEVAL_DENSE_TOP_K` | LanceDB 粗召回候选数 | 20 到 50 |
+| `final_top_k` | rerank 后送入 LLM 的 chunk 数 | 3 到 5 |
 
 也就是说，不建议只检索 3 个再重排 3 个。更合理的是先召回 20 到 50 个候选，再用 reranker 选出最值得进入 prompt 的 3 到 5 个。
 
@@ -243,37 +250,37 @@ reranker 通常使用 cross-encoder 或专门的排序模型，对每个候选 p
 rerank_score = reranker(question, chunk)
 ```
 
-它的优点是排序质量更高，因为模型能同时看到问题和候选 chunk；缺点是每次查询都要对多个候选重新计算，成本明显高于 FAISS。
+它的优点是排序质量更高，因为模型能同时看到问题和候选 chunk；缺点是每次查询都要对多个候选重新计算，成本明显高于单纯向量召回。
 
 推荐流程：
 
 ```text
-1. FAISS 召回 candidate_top_k = 30
+1. LanceDB 召回 candidate_top_k = 30
 2. 对 30 个候选构造 pair: (question, chunk)
 3. reranker 批量打分
 4. 按 rerank_score 从高到低排序
 5. 去重、过滤低分片段
 6. 取 final_top_k = 3 到 5
-7. 拼接给 vLLM
+7. 拼接给 LLM
 ```
 
 可以采用三类重排序策略：
 
 | 策略 | 质量 | 延迟 | 适用场景 |
 | --- | --- | --- | --- |
-| 仅 FAISS score 排序 | 中 | 最低 | demo、小文档、低成本优先 |
+| 仅向量召回分数排序 | 中 | 最低 | demo、小文档、低成本优先 |
 | Cross-encoder reranker | 高 | 中高 | 正式 RAG 问答、准确率优先 |
 | LLM rerank | 高但成本大 | 高 | 少量高价值请求、复杂推理场景 |
 
-如果引入 cross-encoder reranker，建议保留 FAISS 分数用于观测，但最终排序以 reranker 分数为主。也可以做混合分数：
+如果引入 cross-encoder reranker，建议保留 LanceDB 召回分数用于观测，但最终排序以 reranker 分数为主。也可以做混合分数：
 
 ```text
-final_score = alpha * normalized_faiss_score + beta * rerank_score
+final_score = alpha * normalized_vector_score + beta * rerank_score
 ```
 
 在业务上更推荐先简单使用 reranker 分数排序，只有当 reranker 对某些场景不稳定时再引入融合分数。
 
-当前实现已经新增 cross-encoder reranker：`top_k` 表示最终送入 prompt 的 chunk 数，`CHAT_CANDIDATE_TOP_K` 表示 FAISS 粗召回候选数。系统会保留 `faiss_score`、`rerank_score` 和 `original_rank`，便于分析 rerank 前后的排序变化。
+当前实现已经新增 cross-encoder reranker：`top_k` / `RETRIEVAL_RERANK_TOP_K` 表示最终送入 prompt 的 chunk 数，`candidate_top_k` / `RETRIEVAL_DENSE_TOP_K` 表示 LanceDB 粗召回候选数。系统会保留 `lancedb_score`、`lancedb_rank`、`rerank_score` 和 `original_rank`，便于分析 rerank 前后的排序变化。
 
 ### 3.4 上下文拼接
 
@@ -292,24 +299,24 @@ final_score = alpha * normalized_faiss_score + beta * rerank_score
 - chunk 元数据，例如 `doc_id`、`chunk_index`、`score`
 - 用户问题
 
-控制 `final_top_k` 的意义很大：它直接影响 vLLM 的 prompt tokens、TTFT、显存占用和吞吐。
+控制 `final_top_k` 的意义很大：它直接影响 LLM 的 prompt tokens、TTFT、显存占用和吞吐。
 
-### 3.5 发送给 vLLM
+### 3.5 发送给 LLM / vLLM
 
-vLLM 承担最终回答生成。对 vLLM 来说，主要负载来自：
+当前默认配置走 OpenAI-compatible 远端 LLM；显式配置 `LLM_RUNTIME=local_vllm` 时可以使用本地 vLLM。对生成模型来说，主要负载来自：
 
 - prompt tokens：上下文越长，prefill 越慢。
 - completion tokens：回答越长，decode 越慢。
-- 并发流式请求数：影响排队、TTFT 和显存 KV cache。
+- 并发流式请求数：影响排队、TTFT；本地 vLLM 还会占用显存 KV cache。
 - 模型大小和量化方式：模型越大，吞吐越低，显存需求越高。
 
 RAG 系统里，检索阶段通常不是最大瓶颈。真正的线上瓶颈常常是：
 
 ```text
-vLLM 推理 > reranker > embedding > FAISS
+LLM / vLLM 推理 > reranker > embedding > LanceDB 召回
 ```
 
-前提是 FAISS 索引已经缓存或索引规模不大。如果每次查询都从磁盘读取大型 FAISS 文件，FAISS I/O 会成为额外瓶颈。
+如果 LanceDB 表很大、过滤范围很宽，或回 MySQL 补齐 chunk 文本很慢，检索阶段也可能成为瓶颈。此时优先看 `retrieval_ms`、`lancedb_ms`、`rerank_ms`、候选数和 MySQL 查询耗时。
 
 ## 4. 512 维向量下的容量估算
 
@@ -325,10 +332,9 @@ vector_bytes_per_chunk = 512 * 4 = 2048 bytes ≈ 2 KB
 
 | 存储项 | 估算 |
 | --- | ---: |
-| FAISS 向量 | 约 2 KB / chunk |
-| mapping JSON | 约 1 到 4 KB / chunk，取决于文本长度和语言 |
+| LanceDB 向量 | 约 2 KB / chunk |
 | MySQL `doc_chunks.text` | 约 1 到 4 KB / chunk，取决于文本长度和编码 |
-| 元数据、索引、JSON 结构开销 | 数百 bytes 到数 KB / chunk |
+| LanceDB / MySQL 元数据、索引结构开销 | 数百 bytes 到数 KB / chunk |
 
 因此，比较务实的总磁盘估算是：
 
@@ -336,18 +342,18 @@ vector_bytes_per_chunk = 512 * 4 = 2048 bytes ≈ 2 KB
 每个 chunk 约 4 到 10 KB
 ```
 
-如果中文文本较多，UTF-8 下单字符可能占 3 bytes，mapping JSON 又重复保存了一份 chunk 内容，实际更接近上限。
+如果中文文本较多，UTF-8 下单字符可能占 3 bytes；再加上数据库行开销和向量表元数据，实际值会更接近上限。
 
 ### 4.2 按 chunk 数估算磁盘
 
-| chunk 总数 | 纯 FAISS 向量 | 估算总磁盘 |
+| chunk 总数 | 纯向量大小 | 估算总磁盘 |
 | ---: | ---: | ---: |
 | 10,000 | 约 19.5 MB | 约 40 到 100 MB |
 | 100,000 | 约 195 MB | 约 0.4 到 1 GB |
 | 1,000,000 | 约 1.91 GB | 约 4 到 10 GB |
 | 10,000,000 | 约 19.1 GB | 约 40 到 100 GB |
 
-这些数字只用于容量规划。真实值要以 `data/indexes`、MySQL 表大小和上传原文大小为准。
+这些数字只用于容量规划。真实值要以 `data/lancedb`、MySQL 表大小和上传原文大小为准。
 
 ### 4.3 按文档规模估算
 
@@ -357,7 +363,7 @@ vector_bytes_per_chunk = 512 * 4 = 2048 bytes ≈ 2 KB
 chunk_count ≈ 文档字符数 / 700
 ```
 
-| 单文档纯文本字符数 | chunk 数 | FAISS 向量大小 | 估算总存储 |
+| 单文档纯文本字符数 | chunk 数 | 向量大小 | 估算总存储 |
 | ---: | ---: | ---: | ---: |
 | 10,000 | 约 15 | 约 30 KB | 小于 1 MB |
 | 100,000 | 约 143 | 约 286 KB | 约 1 MB 级别 |
@@ -366,14 +372,14 @@ chunk_count ≈ 文档字符数 / 700
 
 因此，512 维本身并不会让存储爆炸。真正需要关注的是：
 
-- mapping JSON 和 MySQL 是否重复保存大段文本。
-- 是否每个文档一个 FAISS 文件，文件数量是否过多。
-- 查询时是否反复从磁盘加载 FAISS 文件。
-- 是否需要跨文档全局检索。
+- MySQL 中 chunk 文本是否过大。
+- LanceDB 表是否持续增长且缺少清理、备份和恢复流程。
+- 查询是否需要跨所有 READY 文档检索。
+- 是否需要按用户、租户或知识库做过滤和分片。
 
 ## 5. 检索计算量估算
 
-FAISS `IndexFlatIP` 是精确暴力检索，单次 query 的主要计算量近似为：
+向量召回的底层计算量可以按“候选向量数乘以维度”粗略理解：
 
 ```text
 计算量 ≈ chunk_count * 512 次乘加
@@ -381,22 +387,22 @@ FAISS `IndexFlatIP` 是精确暴力检索，单次 query 的主要计算量近�
 
 示例：
 
-| 单次搜索 chunk 数 | 近似乘加次数 | 评价 |
+| 搜索范围 chunk 数 | 近似乘加次数 | 评价 |
 | ---: | ---: | --- |
 | 10,000 | 512 万 | 很轻 |
 | 100,000 | 5120 万 | CPU 可接受，热缓存下通常不是主瓶颈 |
-| 1,000,000 | 5.12 亿 | 开始明显，需要关注延迟和内存带宽 |
-| 10,000,000 | 51.2 亿 | 不适合继续用纯 Flat 精确搜索做在线查询 |
+| 1,000,000 | 5.12 亿 | 开始明显，需要关注 LanceDB 查询、过滤和内存带宽 |
+| 10,000,000 | 51.2 亿 | 需要更明确的分片、过滤、索引和容量设计 |
 
-对当前“按文档检索”的设计来说，如果一次只查一个文档，即使系统总文档很多，只要单文档 chunk 数不大，FAISS 搜索压力仍然可控。
+当前实现会先解析 READY 文档范围，再把 `doc_ids` 作为 LanceDB 查询过滤条件。如果一次只查少量文档，即使系统总文档很多，只要过滤后的 chunk 数不大，向量召回压力仍然可控。
 
-如果未来要“跨所有文档检索”，总 chunk 数会直接进入搜索复杂度，此时需要考虑：
+如果未来要频繁“跨所有文档检索”，总 chunk 数会直接影响搜索复杂度，此时需要考虑：
 
-- 全局 FAISS 索引。
-- IVF / HNSW / PQ 等近似索引。
+- LanceDB 表规模、索引类型和 compaction / cleanup 策略。
+- IVF / HNSW / PQ 等近似索引或专门向量数据库。
 - 按用户、租户、知识库分片。
 - 热索引常驻内存。
-- GPU FAISS 或专门向量数据库。
+- 高并发下的 MySQL 回表压力。
 
 ## 6. 系统负载规模评估
 
@@ -406,28 +412,28 @@ FAISS `IndexFlatIP` 是精确暴力检索，单次 query 的主要计算量近�
 
 当前 ingest 建索引时已经显式读取该文档的全部 chunks，不再受到 `list_chunks_by_doc_id` 默认 `limit=200` 的限制。
 
-在单文档本地 FAISS Flat 索引设计下：
+在当前 LanceDB + MySQL chunk 存储设计下：
 
 | 项 | 规模判断 |
 | --- | --- |
-| 单文档索引 chunk 数 | 主要受文档大小、内存和磁盘限制 |
-| 单文档 FAISS 向量大小 | 约 `chunk_count * 2 KB` |
-| FAISS 检索压力 | 中小文档较低，大文档取决于 chunk 数和索引加载方式 |
-| 主要瓶颈 | embedding、reranker、vLLM、任务队列和 FAISS 文件 I/O |
+| 单文档索引 chunk 数 | 主要受文档大小、embedding 吞吐、LanceDB 写入和磁盘限制 |
+| 单文档向量大小 | 约 `chunk_count * 2 KB`，不含文本和表结构开销 |
+| LanceDB 召回压力 | 中小文档较低，大文档取决于过滤后的 chunk 数和查询方式 |
+| 主要瓶颈 | embedding、reranker、LLM / vLLM、任务队列、LanceDB 查询和 MySQL 回表 |
 
-这意味着项目已经能完整索引大文档，但如果单文档 chunk 很多，后续仍应增加 FAISS index cache，避免每次查询都从磁盘加载索引。
+这意味着项目已经能完整索引大文档，但如果单文档 chunk 很多，后续仍应关注 LanceDB 表维护、查询过滤、MySQL 回表和 reranker 候选数。
 
 ### 6.2 推荐规模
 
-保持 `512` 维、`IndexFlatIP`、本地文件索引时，建议按以下规模理解：
+保持 `512` 维、LanceDB 本地向量表和 MySQL chunk 文本存储时，建议按以下规模理解：
 
 | 规模 | chunk 总量 | 适合程度 | 建议 |
 | --- | ---: | --- | --- |
-| 小规模 | 1 万以内 | 很适合 | 当前架构足够，重点优化 vLLM。 |
-| 中小规模 | 1 万到 10 万 | 适合 | 建议缓存热点 FAISS index，增加 rerank。 |
-| 中规模 | 10 万到 100 万 | 可做但要优化 | 避免每次磁盘读索引，考虑全局索引、分片或 ANN。 |
-| 大规模 | 100 万到 1000 万 | 当前 Flat 架构压力较大 | 推荐 IVF/HNSW、向量库、索引常驻内存、分布式切分。 |
-| 超大规模 | 1000 万以上 | 不建议用当前单机 Flat 方案 | 需要专门检索架构和容量设计。 |
+| 小规模 | 1 万以内 | 很适合 | 当前架构足够，重点优化 LLM / vLLM。 |
+| 中小规模 | 1 万到 10 万 | 适合 | 保持 `candidate_top_k` 可控，重点看 rerank 和 LLM。 |
+| 中规模 | 10 万到 100 万 | 可做但要优化 | 关注 LanceDB 查询、过滤、备份恢复和 MySQL 回表。 |
+| 大规模 | 100 万到 1000 万 | 需要专项优化 | 推荐分片、ANN、冷热数据分层和更严格的租户/知识库过滤。 |
+| 超大规模 | 1000 万以上 | 不建议只靠当前单机默认配置 | 需要专门检索架构和容量设计。 |
 
 ### 6.3 在线问答负载
 
@@ -435,53 +441,56 @@ FAISS `IndexFlatIP` 是精确暴力检索，单次 query 的主要计算量近�
 
 ```text
 总延迟 ≈ query_embedding_ms
-       + faiss_search_ms
+       + lancedb_ms
+       + mysql_hydration_ms
        + rerank_ms
        + prompt_build_ms
-       + vLLM_prefill_ms
-       + vLLM_decode_ms
+       + llm_prefill_ms
+       + llm_decode_ms
 ```
 
 通常：
 
 - `prompt_build_ms` 很小。
-- `faiss_search_ms` 在中小规模下较小。
+- `lancedb_ms` 在中小规模下通常较小。
+- `mysql_hydration_ms` 取决于候选数和 chunk 行读取效率。
 - `query_embedding_ms` 取决于 embedding 模型和部署方式。
 - `rerank_ms` 取决于 candidate 数量和 reranker 模型。
-- `vLLM_prefill_ms` 与 prompt 长度强相关。
-- `vLLM_decode_ms` 与输出长度强相关。
+- `llm_prefill_ms` 与 prompt 长度强相关。
+- `llm_decode_ms` 与输出长度强相关。
 
 如果 `candidate_top_k=30`、`final_top_k=5`，负载特征是：
 
 | 阶段 | 输入规模 | 压力 |
 | --- | --- | --- |
 | query embedding | 1 个问题 | 低到中 |
-| FAISS | N 个 chunk 向量 | 中小规模下低 |
+| LanceDB | N 个候选 chunk 向量 | 中小规模下低 |
+| MySQL 回表 | 约 candidate_top_k 个 chunk_id | 低到中 |
 | rerank | 30 个 question/chunk pair | 中到高 |
-| vLLM | 约 5 个 chunk 的上下文 + 问题 | 高 |
+| LLM / vLLM | 约 5 个 chunk 的上下文 + 问题 | 高 |
 
-因此，实际并发能力一般由 vLLM 和 reranker 决定，而不是 512 维 FAISS 本身决定。
+因此，实际并发能力一般由 LLM / vLLM 和 reranker 决定，而不是 512 维向量本身决定。
 
-在单机部署、单个 vLLM 实例、普通 7B 到 14B 级模型的前提下，可以粗略按以下方式规划：
+在单机部署、单个本地 vLLM 实例、普通 7B 到 14B 级模型的前提下，可以粗略按以下方式规划：
 
 | 场景 | 粗略能力判断 |
 | --- | --- |
 | 演示 / 个人使用 | 1 到 5 个并发会话通常可承受。 |
-| 小团队内部使用 | 5 到 20 个活跃并发需要关注 vLLM 显存、TTFT 和队列。 |
-| 更高并发 | 需要多 vLLM 实例、请求排队、限流、缓存、缩短上下文和输出长度。 |
+| 小团队内部使用 | 5 到 20 个活跃并发需要关注 vLLM 显存、TTFT 和队列。远端 API 还要关注 provider 限流。 |
+| 更高并发 | 需要多 LLM / vLLM 实例、请求排队、限流、缓存、缩短上下文和输出长度。 |
 
 这个并发估算不能替代压测，因为模型大小、GPU、量化方式、上下文长度和输出长度都会显著改变结果。项目已有 [performance_test_guide.md](./performance_test_guide.md)，建议用固定文档、固定问题集和固定 `top_k` 做压测留档。
 
 ### 6.4 Ingest 负载
 
-Ingest 的主要压力来自文档 embedding，而不是 FAISS 写索引。
+Ingest 的主要压力来自文档 embedding，而不是 LanceDB 写入。
 
 单个文档的 ingest 时间大致为：
 
 ```text
 ingest_time ≈ text_extract
             + chunk_count / embedding_throughput
-            + faiss_build
+            + lancedb_write
             + mysql_write
 ```
 
@@ -507,8 +516,8 @@ ingest_time ≈ text_extract
 ### 7.1 向量化建议
 
 1. 固定 embedding 模型版本，并写入索引元数据。
-2. 固定 `512` 维后，查询前校验 query vector 维度和 index 维度一致。
-3. 开启 normalize 后使用 `IndexFlatIP`，让分数更接近 cosine similarity。
+2. 固定 `512` 维后，查询前校验 query vector 维度和索引元数据维度一致。
+3. 开启 normalize，让向量相似度更接近 cosine similarity 语义。
 4. 文档和问题使用一致的 query/document prefix 策略。
 5. 对 embedding 质量做离线评估：Recall@K、MRR、NDCG、Top-1 命中率。
 6. 建立真实业务 QA 验证集，不只看向量相似度。
@@ -518,7 +527,7 @@ ingest_time ≈ text_extract
 1. 将 `candidate_top_k` 和 `final_top_k` 拆开。
 2. 建议初始配置：`candidate_top_k=30`，`final_top_k=5`。
 3. reranker 使用 batch 推理，避免 30 个候选逐条串行请求。
-4. reranker 输出分数和 FAISS 分数都写入日志或 metrics，方便分析误召回。
+4. reranker 输出分数和 LanceDB 召回分数都写入日志或 metrics，方便分析误召回。
 5. 对低 rerank 分数结果设置阈值，必要时进入 low-confidence prompt。
 6. 对相同内容、相邻 chunk、重复 chunk 做去重或合并。
 7. 保留 citations，最终回答必须能追溯到具体 chunk。
@@ -535,18 +544,18 @@ ingest_time ≈ text_extract
 
 | 优先级 | 建议 | 原因 |
 | --- | --- | --- |
-| 已完成 | 修正 ingest 建索引只取 200 chunks 的限制 | 大文档可以完整进入 FAISS。 |
+| 已完成 | 修正 ingest 建索引只取 200 chunks 的限制 | 大文档可以完整进入向量索引。 |
 | 已完成 | 增加 cross-encoder reranker | 支持基于 question/chunk pair 的语义重排序。 |
 | 已完成 | 拆分 `candidate_top_k` 和 `final_top_k` | 粗召回和最终上下文使用不同数量。 |
-| P1 | 缓存热点 FAISS index | 避免每次查询都从磁盘读 `.faiss` 文件。 |
+| P1 | 持续验证 LanceDB 查询和 MySQL 回表耗时 | 大文档和跨文档检索时更容易暴露瓶颈。 |
 | 已完成 | 记录 rerank_ms、candidate_top_k、final_top_k | 便于定位延迟和质量问题。 |
-| P2 | mapping JSON 不重复保存全文或改为按 chunk_id 回表 | 可降低磁盘占用。 |
-| P2 | 大规模时引入 ANN 索引或向量数据库 | Flat 精确检索不适合千万级在线检索。 |
+| P2 | 定期清理 orphan vectors 并建立 LanceDB 备份恢复流程 | 防止文档删除或重建后向量表膨胀。 |
+| P2 | 大规模时引入 ANN、分片或专门向量检索架构 | 单机默认配置不适合千万级在线检索。 |
 
 ## 9. 结论
 
-在 `512` 维 embedding 下，向量本身的存储成本并不高，约 `2 KB / chunk`。如果按默认 `800` 字符切片、`100` overlap，一个百万字符文档大约会产生 `1429` 个 chunk，纯向量只有约 `2.8 MB`。因此，中小规模 RAG 系统的主要瓶颈不是向量存储，而是 embedding 模型吞吐、reranker 延迟、vLLM 上下文长度和生成吞吐。
+在 `512` 维 embedding 下，向量本身的存储成本并不高，约 `2 KB / chunk`。如果按默认 `800` 字符切片、`100` overlap，一个百万字符文档大约会产生 `1429` 个 chunk，纯向量只有约 `2.8 MB`。因此，中小规模 RAG 系统的主要瓶颈不是向量存储，而是 embedding 模型吞吐、reranker 延迟、LLM / vLLM 上下文长度和生成吞吐。
 
-当前本地 FAISS Flat 架构可以较稳地支撑 1 万到 10 万 chunk 级别的检索；到 10 万到 100 万 chunk 时，需要做索引缓存、分片或 ANN 优化；超过百万级后，应认真考虑全局向量检索架构，而不是继续依赖每次读取本地 Flat 索引文件。
+当前 LanceDB 默认架构可以较稳地支撑中小规模本地检索；到 10 万到 100 万 chunk 时，需要重点验证 LanceDB 查询、MySQL 回表、reranker 候选数和备份恢复流程；超过百万级后，应认真考虑分片、ANN、冷热数据分层或专门向量检索架构。
 
-质量上，最关键的是两点：第一，embedding 必须稳定、一致、可评估；第二，rerank 必须是真正基于 question/chunk pair 的语义重排序，而不是简单按 FAISS 分数或原顺序截断。一个更合理的生产配置是：FAISS 先召回 `20` 到 `50` 个候选，reranker 重排后取 `3` 到 `5` 个 chunk 拼接给 vLLM。
+质量上，最关键的是两点：第一，embedding 必须稳定、一致、可评估；第二，rerank 必须是真正基于 question/chunk pair 的语义重排序，而不是简单按向量召回分数或原顺序截断。一个更合理的生产配置是：LanceDB 先召回 `20` 到 `50` 个候选，reranker 重排后取 `3` 到 `5` 个 chunk 拼接给 LLM。

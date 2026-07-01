@@ -11,6 +11,8 @@ from python_rag.app.agent.tools.local.knowledge_tools import KNOWLEDGE_SEARCH_TO
 
 
 DEFAULT_AGENT_NAME = "rag-agent"
+AGENT_VERSION = "rag-agent-v1"
+PROMPT_VERSION = "rag-agent-prompt-v1"
 DEFAULT_MAX_STEPS = 3
 READONLY_PERMISSION_LEVEL = "readonly"
 READONLY_TOOL_NAMES = [
@@ -31,6 +33,7 @@ SYSTEM_PROMPT = (
     "如果用户要求根据 document_id 查询文档详情，必须调用 get_document_detail。"
     "如果用户询问当前知识库有哪些文档、能问哪些资料或哪些文档已经建好索引，必须调用 list_ready_documents。"
     "如果用户要求按 message_id 查看某条 assistant 消息的已保存引用或 citations，必须调用 list_message_citations。"
+    "工具结果统一为 ok/error/data：ok=true 时只基于 data 判断和回答；ok=false 或 error 非空时视为工具失败。"
     "如果 knowledge_search 没有返回结果，应明确说明当前知识库证据不足，不要编造。"
     "如果 knowledge_search 返回 error，应说明检索工具失败并给出降级说明，不要编造文档结论。"
     "获取工具结果后，应判断证据是否足够；足够时回答用户问题，不足时可继续调用只读工具补充上下文。"
@@ -49,8 +52,10 @@ class AgentOrchestratorError(Exception):
 __all__ = [
     "AgentEventSink",
     "AgentOrchestratorError",
+    "AGENT_VERSION",
     "DEFAULT_AGENT_NAME",
     "DEFAULT_MAX_STEPS",
+    "PROMPT_VERSION",
     "READONLY_PERMISSION_LEVEL",
     "READONLY_TOOL_NAMES",
     "SYSTEM_PROMPT",

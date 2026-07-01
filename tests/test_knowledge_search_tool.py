@@ -1,7 +1,10 @@
 import asyncio
 
 from python_rag.app.agent.tools import KNOWLEDGE_SEARCH_TOOL_NAME, default_registry
-from python_rag.app.agent.tools.local.knowledge_tools import KnowledgeSearchTool
+from python_rag.app.agent.tools.local.knowledge_tools import (
+    KnowledgeSearchTool,
+    build_rewritten_queries,
+)
 
 
 def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
@@ -66,25 +69,127 @@ def test_knowledge_search_tool_returns_retrieval_results(monkeypatch):
         )
     )
 
-    assert calls == [
-        {
-            "query": "how does retrieval work?",
-            "top_k": 2,
-            "track_metric": True,
+    assert calls[0] == {
+        "query": "how does retrieval work?",
+        "top_k": 2,
+        "track_metric": True,
+    }
+    assert len(calls) > 1
+    assert all(call["track_metric"] is (index == 0) for index, call in enumerate(calls))
+    assert result["ok"] is True
+    assert result["error"] is None
+    data = result["data"]
+    assert data["total"] == 2
+    assert [item["chunk_id"] for item in data["results"]] == [1, 2]
+    assert data["results"][0]["title"] == "guide.md"
+    assert data["results"][0]["score"] == 0.891235
+    assert data["results"][0]["lancedb_score"] == 0.0
+    assert data["results"][0]["rerank_score"] == 0.0
+    assert data["retrieval"]["provider"] == "lancedb"
+    assert data["retrieval"]["vector_search_latency_ms"] == 7
+    assert data["retrieval"]["rerank_latency_ms"] == 11
+    assert data["retrieval"]["retrieval_latency_ms"] == 25
+    assert data["retrieval"]["dense_top_k"] == 50
+    assert data["retrieval"]["rerank_top_k"] == 2
+    assert data["retrieval"]["query_rewrite"]["enabled"] is True
+    assert data["retrieval"]["query_rewrite"]["queries"][0] == "how does retrieval work?"
+
+
+def test_build_rewritten_queries_expands_domain_terms():
+    queries = build_rewritten_queries("网页上传后怎么进行 embedding 检索？")
+
+    assert queries[0] == "网页上传后怎么进行 embedding 检索？"
+    assert len(queries) > 1
+    assert any("URL HTML" in query for query in queries)
+    assert any("embedding 向量" in query for query in queries)
+
+
+def test_knowledge_search_tool_merges_multi_route_results(monkeypatch):
+    calls = []
+
+    def fake_search_in_documents(query, top_k, track_metric=True):
+        calls.append(
+            {
+                "query": query,
+                "top_k": top_k,
+                "track_metric": track_metric,
+            }
+        )
+        if "URL HTML" in query:
+            return {
+                "hits": [
+                    {
+                        "chunk_id": 20,
+                        "chunk_index": 2,
+                        "doc_id": 8,
+                        "content": "web page extraction flow",
+                        "snippet": "web page extraction flow",
+                        "score": 0.92,
+                    },
+                ],
+                "metrics": {"recall_provider": "lancedb"},
+            }
+        if "embedding 向量" in query:
+            return {
+                "hits": [
+                    {
+                        "chunk_id": 30,
+                        "chunk_index": 3,
+                        "doc_id": 8,
+                        "content": "embedding index flow",
+                        "snippet": "embedding index flow",
+                        "score": 0.95,
+                    },
+                    {
+                        "chunk_id": 10,
+                        "chunk_index": 1,
+                        "doc_id": 8,
+                        "content": "original retrieval flow duplicate",
+                        "snippet": "original retrieval flow duplicate",
+                        "score": 0.7,
+                    },
+                ],
+                "metrics": {"recall_provider": "lancedb"},
+            }
+        return {
+            "hits": [
+                {
+                    "chunk_id": 10,
+                    "chunk_index": 1,
+                    "doc_id": 8,
+                    "content": "original retrieval flow",
+                    "snippet": "original retrieval flow",
+                    "score": 0.6,
+                },
+            ],
+            "metrics": {"recall_provider": "lancedb"},
         }
-    ]
-    assert result["total"] == 2
-    assert [item["chunk_id"] for item in result["results"]] == [1, 2]
-    assert result["results"][0]["title"] == "guide.md"
-    assert result["results"][0]["score"] == 0.891235
-    assert result["results"][0]["lancedb_score"] == 0.0
-    assert result["results"][0]["rerank_score"] == 0.0
-    assert result["retrieval"]["provider"] == "lancedb"
-    assert result["retrieval"]["vector_search_latency_ms"] == 7
-    assert result["retrieval"]["rerank_latency_ms"] == 11
-    assert result["retrieval"]["retrieval_latency_ms"] == 25
-    assert result["retrieval"]["dense_top_k"] == 50
-    assert result["retrieval"]["rerank_top_k"] == 2
+
+    monkeypatch.setattr(
+        "python_rag.app.agent.tools.local.knowledge_tools.search_in_documents",
+        fake_search_in_documents,
+    )
+    monkeypatch.setattr(
+        "python_rag.app.agent.tools.local.knowledge_tools.get_document_by_id",
+        lambda doc_id: {"id": doc_id, "filename": "web.md"},
+    )
+
+    result = asyncio.run(
+        KnowledgeSearchTool().run(
+            {
+                "query": "网页上传后怎么进行 embedding 检索？",
+                "top_k": 3,
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    assert [item["chunk_id"] for item in result["data"]["results"]] == [30, 20, 10]
+    assert len(calls) > 1
+    assert calls[0]["track_metric"] is True
+    assert all(call["track_metric"] is False for call in calls[1:])
+    assert result["data"]["results"][0]["matched_queries"]
+    assert result["data"]["retrieval"]["query_rewrite"]["successful_route_count"] == len(calls)
 
 
 def test_knowledge_search_tool_truncates_content(monkeypatch):
@@ -116,8 +221,9 @@ def test_knowledge_search_tool_truncates_content(monkeypatch):
         )
     )
 
-    assert result["total"] == 1
-    assert result["results"][0]["content"] == "abcdefghij\n...[truncated]"
+    assert result["ok"] is True
+    assert result["data"]["total"] == 1
+    assert result["data"]["results"][0]["content"] == "abcdefghij\n...[truncated]"
 
 
 def test_knowledge_search_tool_returns_error_on_failure(monkeypatch):
@@ -139,9 +245,12 @@ def test_knowledge_search_tool_returns_error_on_failure(monkeypatch):
     )
 
     assert result == {
-        "results": [],
-        "total": 0,
+        "ok": False,
         "error": "retrieval backend unavailable",
+        "data": {
+            "results": [],
+            "total": 0,
+        },
     }
 
 
@@ -149,9 +258,12 @@ def test_knowledge_search_tool_returns_error_for_empty_query():
     result = asyncio.run(KnowledgeSearchTool().run({"query": "   "}))
 
     assert result == {
-        "results": [],
-        "total": 0,
+        "ok": False,
         "error": "query is required",
+        "data": {
+            "results": [],
+            "total": 0,
+        },
     }
 
 

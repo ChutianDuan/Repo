@@ -1,7 +1,11 @@
 from datetime import date, datetime
 from typing import Any, Optional
 
-from python_rag.app.agent.tools.base import BaseTool
+from python_rag.app.agent.tools.base import (
+    BaseTool,
+    tool_error_result,
+    tool_success_result,
+)
 from python_rag.app.agent.tools.registry import ToolRegistry, default_registry
 
 
@@ -110,31 +114,28 @@ class GetDocumentDetailTool(BaseTool):
         arguments = arguments or {}
         document_id = _normalize_document_id(arguments.get("document_id"))
         if document_id is None:
-            return {
-                "error": "document_id is required",
-            }
+            return tool_error_result("document_id is required")
 
         try:
             document = get_document_by_id(document_id)
             if not document:
-                return {
-                    "document_id": document_id,
-                    "error": "document not found",
-                }
+                return tool_error_result(
+                    "document not found",
+                    {"document_id": document_id},
+                )
 
             index = get_document_index_by_doc_id(document_id) or {}
-            return {
-                "document_id": int(document.get("id") or document_id),
-                "title": document.get("filename") or "",
-                "status": _normalize_status(document.get("status")),
-                "chunk_count": _normalize_chunk_count(index.get("chunk_count")),
-                "created_at": _format_datetime(document.get("created_at")),
-            }
+            return tool_success_result(
+                {
+                    "document_id": int(document.get("id") or document_id),
+                    "title": document.get("filename") or "",
+                    "status": _normalize_status(document.get("status")),
+                    "chunk_count": _normalize_chunk_count(index.get("chunk_count")),
+                    "created_at": _format_datetime(document.get("created_at")),
+                }
+            )
         except Exception as exc:
-            return {
-                "document_id": document_id,
-                "error": str(exc),
-            }
+            return tool_error_result(str(exc), {"document_id": document_id})
 
 
 class ListReadyDocumentsTool(BaseTool):
@@ -167,16 +168,20 @@ class ListReadyDocumentsTool(BaseTool):
                 for row in rows
                 if _is_ready_indexed_document(row)
             ]
-            return {
-                "documents": documents,
-                "total": len(documents),
-            }
+            return tool_success_result(
+                {
+                    "documents": documents,
+                    "total": len(documents),
+                }
+            )
         except Exception as exc:
-            return {
-                "documents": [],
-                "total": 0,
-                "error": str(exc),
-            }
+            return tool_error_result(
+                str(exc),
+                {
+                    "documents": [],
+                    "total": 0,
+                },
+            )
 
 
 def register_document_tools(registry: ToolRegistry = default_registry) -> ToolRegistry:

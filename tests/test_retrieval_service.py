@@ -49,7 +49,7 @@ DOC_ID = 1
 def test_search_in_documents_lancedb_hydrates_chunks_and_metrics(monkeypatch):
     monkeypatch.setattr(retrieval_service, "RETRIEVAL_RECALL_PROVIDER", "lancedb")
     monkeypatch.setattr(retrieval_service, "RERANK_ENABLE", True)
-    monkeypatch.setattr(retrieval_service, "CHAT_CANDIDATE_TOP_K", 50)
+    monkeypatch.setattr(retrieval_service, "RETRIEVAL_DENSE_TOP_K", 50)
     monkeypatch.setattr(
         retrieval_service,
         "list_ready_document_ids",

@@ -15,10 +15,13 @@ interface DocumentsPageProps {
   selectedDocId: number | null;
   tasks: TaskRecord[];
   selectedFileName: string | null;
+  webUrl: string;
   pending: string | null;
   onSelectDocument: (docId: number) => void;
   onFileChange: (file: File | null) => void;
+  onWebUrlChange: (url: string) => void;
   onUpload: () => void;
+  onUploadWebDocument: () => void;
   onDeleteDocument: (docId: number) => void;
 }
 
@@ -29,10 +32,13 @@ export function DocumentsPage({
   selectedDocId,
   tasks,
   selectedFileName,
+  webUrl,
   pending,
   onSelectDocument,
   onFileChange,
+  onWebUrlChange,
   onUpload,
+  onUploadWebDocument,
   onDeleteDocument,
 }: DocumentsPageProps) {
   const [filter, setFilter] = useState<DocumentFilter>("all");
@@ -66,9 +72,12 @@ export function DocumentsPage({
         action={
           <UploadDocumentButton
             selectedFileName={selectedFileName}
+            webUrl={webUrl}
             pending={pending}
             onFileChange={onFileChange}
+            onWebUrlChange={onWebUrlChange}
             onUpload={onUpload}
+            onUploadWebDocument={onUploadWebDocument}
           />
         }
       />

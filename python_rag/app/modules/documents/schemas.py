@@ -1,3 +1,6 @@
+from pydantic import BaseModel, Field
+
+
 class DocumentState(object):
     UPLOADED = "uploaded"
     PARSING = "parsing"
@@ -27,3 +30,8 @@ class ChunkVectorIndexStatus(object):
     PENDING = "pending"
     INDEXED = "indexed"
     FAILED = "failed"
+
+
+class CreateWebDocumentRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    user_id: int = Field(default=1, gt=0)

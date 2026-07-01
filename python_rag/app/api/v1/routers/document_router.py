@@ -1,11 +1,15 @@
 from fastapi import APIRouter, File, Form, Query, UploadFile
 
+from python_rag.app.core.logger import logger
 from python_rag.app.modules.documents.service import (
     delete_document,
     save_uploaded_document,
+    save_web_document,
     get_document_detail,
     list_document_items,
 )
+from python_rag.app.modules.documents.schemas import CreateWebDocumentRequest
+from python_rag.app.modules.tasks.service import submit_ingest_job
 from python_rag.app.shared.common import api_response
 from python_rag.app.shared.schemas import ApiResponse
 
@@ -18,6 +22,30 @@ def upload_document(
     user_id: int = Form(1),
 ):
     return api_response(save_uploaded_document(user_id=user_id, upload_file=file))
+
+
+def _with_ingest_job(document_result: dict):
+    doc_id = int(document_result["doc_id"])
+    try:
+        ingest_job = submit_ingest_job(doc_id)
+    except Exception:
+        try:
+            delete_document(doc_id)
+        except Exception:
+            logger.exception("failed to rollback document after ingest queue failure")
+        raise
+    return {**document_result, **ingest_job}
+
+
+@router.post("/documents/web", response_model=ApiResponse)
+def create_web_document(req: CreateWebDocumentRequest):
+    return api_response(save_web_document(user_id=req.user_id, url=req.url))
+
+
+@router.post("/documents/web/ingest", response_model=ApiResponse)
+def create_web_document_ingest(req: CreateWebDocumentRequest):
+    document = save_web_document(user_id=req.user_id, url=req.url)
+    return api_response(_with_ingest_job(document))
 
 
 @router.get("/documents", response_model=ApiResponse)

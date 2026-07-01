@@ -57,10 +57,16 @@ def build_tool_result_preview(tool_name: str, result: Any) -> Optional[str]:
     if not isinstance(result, dict):
         return _preview(result)
 
+    preview_value = result
+    if {"ok", "error", "data"}.issubset(set(result.keys())):
+        data = result.get("data")
+        if result.get("ok") is True and isinstance(data, dict):
+            preview_value = data
+
     if tool_name == "knowledge_search":
-        retrieval = result.get("retrieval") or {}
+        retrieval = preview_value.get("retrieval") or {}
         parts = []
-        total = result.get("total")
+        total = preview_value.get("total")
         if total is not None:
             parts.append("total={0}".format(total))
         provider = retrieval.get("provider")
@@ -87,7 +93,7 @@ def build_tool_result_preview(tool_name: str, result: Any) -> Optional[str]:
         if parts:
             return "; ".join(parts)[:_PREVIEW_MAX_CHARS]
 
-    return _preview(result)
+    return _preview(preview_value)
 
 
 def create_run(

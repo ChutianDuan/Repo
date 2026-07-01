@@ -7,7 +7,7 @@ PyMySQL>=1.1,<2
 redis>=5,<6
 celery>=5.4,<6
 requests>=2.32,<3
-pypdf>=4,<6
+pymupdf4llm>=0.3.4,<0.4
 python-docx>=1.1,<2
 openpyxl>=3.1,<4
 psutil>=5.9,<7
@@ -16,8 +16,8 @@ scipy==1.13.1
 scikit-learn==1.5.1
 faiss-cpu>=1.8,<2
 lancedb>=0.13,<1
-# Keep the HF stack aligned; newer mixed versions have broken startup on torch 2.3.x.
-sentence-transformers==3.0.1
-transformers==4.41.2
-huggingface-hub==0.23.4
+# Keep the HF stack aligned; Qwen3 embedding/reranker requires transformers>=4.51.0.
+sentence-transformers==5.6.0
+transformers==4.57.6
+huggingface-hub==0.36.2
 torch>=2.3,<3

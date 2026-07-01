@@ -153,9 +153,10 @@ GET  /internal/agent/runs/{run_id}/steps
 
 - Agent 每轮先调用 LLM 判断是否需要工具。
 - 当前只暴露只读工具：`knowledge_search`、`get_document_detail`、`list_ready_documents`、`list_message_citations`。
-- 如果 LLM 返回 `tool_calls`，后端执行工具并把结果写回上下文；如果 LLM 不再返回 `tool_calls`，该轮内容作为最终答案。
-- `max_steps` 是防止异常循环的安全上限，重复的同名同参数工具调用会被跳过并记录到 Trace。
-- 工具调用、工具结果、最终回答会写入 Trace。
+- 如果 LLM 返回 `tool_calls`，后端先按工具 schema 做轻量参数校验，再用工具自身 `timeout_ms` 执行工具并把结果写回上下文；如果 LLM 不再返回 `tool_calls`，该轮内容作为最终答案。
+- 工具结果统一为 `{"ok": bool, "error": string | null, "data": object}`。`ok=true` 时 Agent 只使用 `data` 作为证据；`ok=false` 或 `error` 非空时会记录失败并基于已有信息降级回答。
+- `max_steps` 是防止异常循环的安全上限；达到上限时不会直接失败，而是进入一次无工具最终回答阶段，说明已达到工具调用上限并基于已有观察给出当前结论。重复的同名同参数工具调用会被跳过并记录到 Trace。
+- 工具调用、工具结果、最终回答会写入 Trace。Run 级 Trace 还会记录 `AGENT_VERSION`、`PROMPT_VERSION` 和 `prompt_tokens` / `completion_tokens` / `total_tokens` 汇总。
 - `knowledge_search` 命中的 chunk 会转换成 citations，保存到原有 `citations` 表。
 
 ## 前端验收流程
@@ -203,11 +204,13 @@ curl http://127.0.0.1:8080/v1/sessions/1/messages
 ```bash
 python3 -m pytest \
   tests/test_agent_orchestrator.py \
+  tests/test_agent_trace_service.py \
   tests/test_agent_api.py \
   tests/test_agent_streaming_service.py \
   tests/test_knowledge_search_tool.py \
-  tests/test_chat_validation.py \
-  tests/test_streaming_service.py
+  tests/test_get_document_detail_tool.py \
+  tests/test_list_ready_documents_tool.py \
+  tests/test_citation_tools.py
 ```
 
 更完整的本地检查：

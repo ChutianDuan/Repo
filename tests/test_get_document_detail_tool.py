@@ -37,11 +37,15 @@ def test_get_document_detail_tool_returns_document_metadata(monkeypatch):
 
     assert calls == [("document", 1), ("index", 1)]
     assert result == {
-        "document_id": 1,
-        "title": "xxx.pdf",
-        "status": "ready",
-        "chunk_count": 128,
-        "created_at": "2026-01-02T03:04:05",
+        "ok": True,
+        "error": None,
+        "data": {
+            "document_id": 1,
+            "title": "xxx.pdf",
+            "status": "ready",
+            "chunk_count": 128,
+            "created_at": "2026-01-02T03:04:05",
+        },
     }
 
 
@@ -63,18 +67,26 @@ def test_get_document_detail_tool_defaults_missing_index_chunk_count(monkeypatch
     result = asyncio.run(GetDocumentDetailTool().run({"document_id": "2"}))
 
     assert result == {
-        "document_id": 2,
-        "title": "draft.md",
-        "status": "uploaded",
-        "chunk_count": 0,
-        "created_at": "2026-01-02T03:04:05",
+        "ok": True,
+        "error": None,
+        "data": {
+            "document_id": 2,
+            "title": "draft.md",
+            "status": "uploaded",
+            "chunk_count": 0,
+            "created_at": "2026-01-02T03:04:05",
+        },
     }
 
 
 def test_get_document_detail_tool_returns_error_for_invalid_document_id():
     result = asyncio.run(GetDocumentDetailTool().run({"document_id": 0}))
 
-    assert result == {"error": "document_id is required"}
+    assert result == {
+        "ok": False,
+        "error": "document_id is required",
+        "data": {},
+    }
 
 
 def test_get_document_detail_tool_returns_error_when_document_missing(monkeypatch):
@@ -94,8 +106,11 @@ def test_get_document_detail_tool_returns_error_when_document_missing(monkeypatc
     result = asyncio.run(GetDocumentDetailTool().run({"document_id": 404}))
 
     assert result == {
-        "document_id": 404,
+        "ok": False,
         "error": "document not found",
+        "data": {
+            "document_id": 404,
+        },
     }
 
 

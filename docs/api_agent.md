@@ -229,7 +229,7 @@ SSE 事件：
 | --- | --- |
 | `agent_step` | Agent 决策步骤状态。 |
 | `tool_call` | 工具开始调用，工具名来自当前可用只读工具列表。 |
-| `tool_result` | 工具返回结果或失败信息。 |
+| `tool_result` | 工具返回结果或失败信息，`result` 使用 `ok/error/data` 结构。 |
 | `delta` | 最终答案文本。MVP 当前在 Agent 完成后一次性输出。 |
 | `final` | 最终回答，包含 `run_id`、`message_id`、`citations`。 |
 | `done` | 流结束，`meta` 包含 `agent_run_id`、`steps_used`、`citation_count`。 |
@@ -242,7 +242,7 @@ event: tool_call
 data: {"type":"tool_call","tool_name":"knowledge_search","status":"RUNNING"}
 
 event: tool_result
-data: {"type":"tool_result","tool_name":"knowledge_search","status":"SUCCESS","result":{"total":5}}
+data: {"type":"tool_result","tool_name":"knowledge_search","status":"SUCCESS","result":{"ok":true,"error":null,"data":{"total":5}}}
 
 event: done
 data: {"type":"done","meta":{"agent_run_id":8,"citation_count":5}}
@@ -306,6 +306,8 @@ GET /internal/agent/runs/{run_id}
 - `input_json`: 用户问题。
 - `output_json`: 最终答案、observations、citations。
 - `total_steps` / `total_tool_calls`: 执行统计。
+- `agent_version` 和 `meta_json.prompt_version`: Agent / Prompt 版本。
+- `prompt_tokens` / `completion_tokens` / `total_tokens`: run 级 token 汇总。
 - `error_message`: 失败原因。
 
 ### 查询 Agent Steps 与工具调用
@@ -317,13 +319,25 @@ GET /internal/agent/runs/{run_id}/steps
 响应中的 `data.steps[]` 包含：
 
 - `step_index`: 步骤序号。
-- `decision`: `tool_call` 或 `final_answer`。
+- `decision`: `tool_call`、`final_answer` 或 `max_steps_final_answer`。
 - `input_json` / `output_json`: LLM 输入输出摘要。
 - `tool_calls[]`: 当前步骤下的工具调用，包含 `arguments_json`、`result_json`、`latency_ms`、`error_message`。
 
 ## Agent 工具
 
-Agent 当前只允许只读工具。编排方式是循环决策：LLM 返回 `tool_calls` 时后端执行工具并把结果写回上下文；LLM 不再返回 `tool_calls` 时，该轮内容作为最终答案。重复的同名同参数工具调用会被跳过并记录为失败工具结果。
+Agent 当前只允许只读工具。编排方式是循环决策：LLM 返回 `tool_calls` 时，后端先按工具 schema 做轻量参数校验，再用工具自身 `timeout_ms` 执行工具并把结果写回上下文；LLM 不再返回 `tool_calls` 时，该轮内容作为最终答案。重复的同名同参数工具调用会被跳过并记录为失败工具结果。
+
+工具结果统一为：
+
+```json
+{
+  "ok": true,
+  "error": null,
+  "data": {}
+}
+```
+
+`ok=true` 时 Agent 只使用 `data` 作为证据；`ok=false` 或 `error` 非空时视为工具失败。达到 `max_steps` 时，Agent 会追加一次无工具最终回答阶段，基于已有观察返回降级结论，不再把该情况作为 API 失败。
 
 ### `knowledge_search`
 
@@ -342,19 +356,23 @@ Agent 当前只允许只读工具。编排方式是循环决策：LLM 返回 `to
 
 ```json
 {
-  "results": [
-    {
-      "doc_id": 12,
-      "document_id": 12,
-      "chunk_id": 45,
-      "chunk_index": 3,
-      "title": "day7_demo.md",
-      "content": "截断后的 chunk 内容",
-      "snippet": "引用片段",
-      "score": 0.91
-    }
-  ],
-  "total": 1
+  "ok": true,
+  "error": null,
+  "data": {
+    "results": [
+      {
+        "doc_id": 12,
+        "document_id": 12,
+        "chunk_id": 45,
+        "chunk_index": 3,
+        "title": "day7_demo.md",
+        "content": "截断后的 chunk 内容",
+        "snippet": "引用片段",
+        "score": 0.91
+      }
+    ],
+    "total": 1
+  }
 }
 ```
 
@@ -362,9 +380,12 @@ Agent 当前只允许只读工具。编排方式是循环决策：LLM 返回 `to
 
 ```json
 {
-  "results": [],
-  "total": 0,
-  "error": "retrieval backend unavailable"
+  "ok": false,
+  "error": "retrieval backend unavailable",
+  "data": {
+    "results": [],
+    "total": 0
+  }
 }
 ```
 
@@ -385,4 +406,5 @@ Agent 会把带有 `doc_id`、`chunk_id`、`chunk_index` 的结果转换为 cita
 | `session not found` | `session_id` 不存在。 | 先调用 `/v1/sessions` 创建会话。 |
 | `no ready document index found` | 没有 READY 文档或 embedding 模型切换后旧索引不可用。 | 上传文档并等待 ingest 成功，必要时重新 ingest。 |
 | Agent 没有工具调用 | 问题被 LLM 判断为闲聊或不依赖文档。 | 提问中明确要求“根据知识库/项目文档”。 |
-| citations 为空 | 工具未检索到结果，或工具结果缺少 chunk 元数据。 | 检查 `tool_result.result.total` 和 `/internal/agent/runs/{run_id}/steps`。 |
+| citations 为空 | 工具未检索到结果，或工具结果缺少 chunk 元数据。 | 检查 `tool_result.result.data.total` 和 `/internal/agent/runs/{run_id}/steps`。 |
+| Agent 返回“已达到工具调用上限” | 达到 `max_steps` 安全上限。 | 查看 Trace 中 `termination_reason=max_steps`，必要时缩小问题或提高 `max_steps`。 |

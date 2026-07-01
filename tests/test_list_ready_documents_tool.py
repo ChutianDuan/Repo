@@ -53,16 +53,20 @@ def test_list_ready_documents_tool_returns_ready_indexed_documents(monkeypatch):
 
     assert calls == [{"status": "indexed", "limit": 2}]
     assert result == {
-        "documents": [
-            {
-                "document_id": 1,
-                "title": "xxx.pdf",
-                "status": "uploaded",
-                "chunk_count": 128,
-                "created_at": "2026-01-02T03:04:05",
-            }
-        ],
-        "total": 1,
+        "ok": True,
+        "error": None,
+        "data": {
+            "documents": [
+                {
+                    "document_id": 1,
+                    "title": "xxx.pdf",
+                    "status": "uploaded",
+                    "chunk_count": 128,
+                    "created_at": "2026-01-02T03:04:05",
+                }
+            ],
+            "total": 1,
+        },
     }
 
 
@@ -74,7 +78,14 @@ def test_list_ready_documents_tool_returns_empty_list(monkeypatch):
 
     result = asyncio.run(ListReadyDocumentsTool().run({}))
 
-    assert result == {"documents": [], "total": 0}
+    assert result == {
+        "ok": True,
+        "error": None,
+        "data": {
+            "documents": [],
+            "total": 0,
+        },
+    }
 
 
 def test_list_ready_documents_tool_returns_error_on_failure(monkeypatch):
@@ -89,9 +100,12 @@ def test_list_ready_documents_tool_returns_error_on_failure(monkeypatch):
     result = asyncio.run(ListReadyDocumentsTool().run({}))
 
     assert result == {
-        "documents": [],
-        "total": 0,
+        "ok": False,
         "error": "database unavailable",
+        "data": {
+            "documents": [],
+            "total": 0,
+        },
     }
 
 

@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import json
 import logging
@@ -13,6 +14,17 @@ from python_rag.app.modules.llm import service as default_llm_service
 
 
 logger = logging.getLogger("python_rag.app.agent.orchestrator")
+
+
+MAX_STEPS_FINALIZATION_PROMPT = (
+    "已达到工具调用上限。请不要再调用任何工具，只能基于已有工具观察给出当前结论。"
+    "如果已有证据不足，请明确说明证据不足和无法继续补充的原因。"
+)
+MAX_STEPS_FALLBACK_ANSWER = (
+    "已达到工具调用上限，以下结论仅基于已有观察；当前证据不足以继续补充，"
+    "建议缩小问题或提高 max_steps 后重试。"
+)
+STANDARD_TOOL_RESULT_KEYS = {"ok", "error", "data"}
 
 
 def _json_dumps(value: Any) -> str:
@@ -36,20 +48,53 @@ async def _emit_agent_event(
 
 def _extract_usage(result: Dict[str, Any]) -> Dict[str, Optional[int]]:
     usage = result.get("usage") or {}
-    prompt_tokens = usage.get("prompt_tokens")
+    prompt_tokens = _coerce_usage_int(usage.get("prompt_tokens"))
     if prompt_tokens is None:
-        prompt_tokens = usage.get("input_tokens")
+        prompt_tokens = _coerce_usage_int(usage.get("input_tokens"))
 
-    completion_tokens = usage.get("completion_tokens")
+    completion_tokens = _coerce_usage_int(usage.get("completion_tokens"))
     if completion_tokens is None:
-        completion_tokens = usage.get("output_tokens")
+        completion_tokens = _coerce_usage_int(usage.get("output_tokens"))
 
-    total_tokens = usage.get("total_tokens")
+    total_tokens = _coerce_usage_int(usage.get("total_tokens"))
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
     }
+
+
+def _coerce_usage_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return None
+    return number
+
+
+def _add_usage(
+    total_usage: Dict[str, Optional[int]],
+    usage: Dict[str, Optional[int]],
+) -> None:
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        if value is None:
+            continue
+        total_usage[key] = (total_usage.get(key) or 0) + value
+
+    if usage.get("total_tokens") is None:
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        if prompt_tokens is not None and completion_tokens is not None:
+            total_usage["total_tokens"] = (
+                (total_usage.get("total_tokens") or 0)
+                + prompt_tokens
+                + completion_tokens
+            )
 
 
 def _parse_tool_arguments(tool_call: Dict[str, Any]) -> Dict[str, Any]:
@@ -79,12 +124,164 @@ def _tool_call_id(tool_call: Dict[str, Any], fallback_index: int) -> str:
 
 def _tool_result_error(result: Any) -> Optional[str]:
     if not isinstance(result, dict):
+        return "tool result must be a JSON object"
+    if _is_standard_tool_result(result) and result.get("ok") is True:
         return None
     error = result.get("error")
     if error is None:
         return None
     error_message = str(error).strip()
     return error_message or None
+
+
+def _is_standard_tool_result(result: Any) -> bool:
+    return (
+        isinstance(result, dict)
+        and STANDARD_TOOL_RESULT_KEYS.issubset(set(result.keys()))
+    )
+
+
+def _tool_success_result(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "error": None,
+        "data": data if isinstance(data, dict) else {},
+    }
+
+
+def _tool_error_result(
+    error: Any,
+    data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    error_message = str(error or "tool failed").strip() or "tool failed"
+    return {
+        "ok": False,
+        "error": error_message,
+        "data": data if isinstance(data, dict) else {},
+    }
+
+
+def _normalize_tool_result(result: Any) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return _tool_error_result("tool result must be a JSON object")
+
+    if _is_standard_tool_result(result):
+        data = result.get("data")
+        ok = bool(result.get("ok"))
+        if not isinstance(data, dict):
+            data = {}
+        error_message = None
+        if not ok:
+            error_message = str(result.get("error") or "tool failed").strip()
+            if not error_message:
+                error_message = "tool failed"
+        return {
+            "ok": ok,
+            "error": error_message,
+            "data": data,
+        }
+
+    data = dict(result)
+    error_message = data.pop("error", None)
+    if error_message is not None:
+        return _tool_error_result(error_message, data)
+    return _tool_success_result(data)
+
+
+def _tool_result_data(result: Any) -> Dict[str, Any]:
+    if _is_standard_tool_result(result):
+        data = result.get("data")
+        return data if isinstance(data, dict) else {}
+    if isinstance(result, dict):
+        return result
+    return {}
+
+
+def _format_validation_type(expected_types: List[str]) -> str:
+    return " or ".join(expected_types)
+
+
+def _matches_schema_type(value: Any, schema_type: str) -> bool:
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "null":
+        return value is None
+    return True
+
+
+def _validate_tool_arguments(arguments: Dict[str, Any], schema: Any) -> Optional[str]:
+    if not isinstance(arguments, dict):
+        return "tool arguments must be a JSON object"
+    if not isinstance(schema, dict):
+        return None
+
+    if schema.get("type") not in (None, "object"):
+        return "tool input_schema type must be object"
+
+    properties = schema.get("properties") or {}
+    if not isinstance(properties, dict):
+        properties = {}
+
+    required = schema.get("required") or []
+    if not isinstance(required, list):
+        required = []
+    for field in required:
+        if field not in arguments or arguments.get(field) is None:
+            return "tool argument '{0}' is required".format(field)
+
+    if schema.get("additionalProperties") is False:
+        for field in arguments:
+            if field not in properties:
+                return "unexpected tool argument '{0}'".format(field)
+
+    for field, value in arguments.items():
+        field_schema = properties.get(field)
+        if not isinstance(field_schema, dict):
+            continue
+
+        expected_type = field_schema.get("type")
+        if isinstance(expected_type, str):
+            expected_types = [expected_type]
+        elif isinstance(expected_type, list):
+            expected_types = [
+                item
+                for item in expected_type
+                if isinstance(item, str)
+            ]
+        else:
+            expected_types = []
+
+        if expected_types and not any(
+            _matches_schema_type(value, item)
+            for item in expected_types
+        ):
+            return "tool argument '{0}' must be {1}".format(
+                field,
+                _format_validation_type(expected_types),
+            )
+
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+
+        minimum = field_schema.get("minimum")
+        if minimum is not None and value < minimum:
+            return "tool argument '{0}' must be >= {1}".format(field, minimum)
+
+        maximum = field_schema.get("maximum")
+        if maximum is not None and value > maximum:
+            return "tool argument '{0}' must be <= {1}".format(field, maximum)
+
+    return None
 
 
 def _tool_call_signature(tool_name: str, arguments: Dict[str, Any]) -> str:
@@ -120,9 +317,7 @@ def _extract_observation_citations(
         if observation.get("tool_name") != KNOWLEDGE_SEARCH_TOOL_NAME:
             continue
 
-        result = observation.get("result")
-        if not isinstance(result, dict):
-            continue
+        result = _tool_result_data(observation.get("result"))
 
         results = result.get("results") or []
         if not isinstance(results, list):
@@ -175,9 +370,7 @@ def _extract_observation_retrieval_summary(
         if observation.get("tool_name") != KNOWLEDGE_SEARCH_TOOL_NAME:
             continue
 
-        result = observation.get("result")
-        if not isinstance(result, dict):
-            continue
+        result = _tool_result_data(observation.get("result"))
 
         retrieval = result.get("retrieval")
         if isinstance(retrieval, dict):
@@ -212,6 +405,94 @@ class AgentRunExecutor:
         self.orchestrator = orchestrator
         self.trace_service = trace_service_module
         self.llm_service = llm_service_module
+
+    async def _finish_failed_tool_call(
+        self,
+        run_id: int,
+        step_id: int,
+        tool_row_id: int,
+        external_tool_call_id: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        result: Dict[str, Any],
+        error_message: str,
+        event_sink: Optional[config.AgentEventSink],
+        latency_ms: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        self.trace_service.fail_tool_call(
+            tool_call_id=tool_row_id,
+            error_message=error_message,
+            result=result,
+            result_preview=self.trace_service.build_tool_result_preview(
+                tool_name or "unknown",
+                result,
+            ),
+            latency_ms=latency_ms,
+        )
+        event = {
+            "run_id": run_id,
+            "step_id": step_id,
+            "tool_call_row_id": tool_row_id,
+            "tool_call_id": external_tool_call_id,
+            "tool_name": tool_name or "unknown",
+            "arguments": arguments,
+            "result": result,
+            "status": AgentToolCallStatus.FAILED,
+            "error_message": error_message,
+        }
+        if latency_ms is not None:
+            event["latency_ms"] = latency_ms
+        await _emit_agent_event(event_sink, "tool_result", event)
+        return {
+            "tool_call_id": external_tool_call_id,
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "result": result,
+            "error": error_message,
+        }
+
+    async def _finish_successful_tool_call(
+        self,
+        run_id: int,
+        step_id: int,
+        tool_row_id: int,
+        external_tool_call_id: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        result: Dict[str, Any],
+        event_sink: Optional[config.AgentEventSink],
+        latency_ms: int,
+    ) -> Dict[str, Any]:
+        self.trace_service.finish_tool_call(
+            tool_call_id=tool_row_id,
+            result=result,
+            result_preview=self.trace_service.build_tool_result_preview(
+                tool_name,
+                result,
+            ),
+            latency_ms=latency_ms,
+        )
+        await _emit_agent_event(
+            event_sink,
+            "tool_result",
+            {
+                "run_id": run_id,
+                "step_id": step_id,
+                "tool_call_row_id": tool_row_id,
+                "tool_call_id": external_tool_call_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "result": result,
+                "status": AgentToolCallStatus.SUCCESS,
+                "latency_ms": latency_ms,
+            },
+        )
+        return {
+            "tool_call_id": external_tool_call_id,
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "result": result,
+        }
 
     async def _execute_tool_call(
         self,
@@ -249,42 +530,19 @@ class AgentRunExecutor:
                     "status": AgentToolCallStatus.RUNNING,
                 },
             )
-            result = {
-                "results": [],
-                "total": 0,
-                "error": str(exc),
-            }
-            self.trace_service.fail_tool_call(
-                tool_call_id=tool_row_id,
-                error_message=str(exc),
+            error_message = str(exc)
+            result = _tool_error_result(error_message)
+            return await self._finish_failed_tool_call(
+                run_id=run_id,
+                step_id=step_id,
+                tool_row_id=tool_row_id,
+                external_tool_call_id=external_tool_call_id,
+                tool_name=tool_name or "unknown",
+                arguments=arguments,
                 result=result,
-                result_preview=self.trace_service.build_tool_result_preview(
-                    tool_name or "unknown",
-                    result,
-                ),
+                error_message=error_message,
+                event_sink=event_sink,
             )
-            await _emit_agent_event(
-                event_sink,
-                "tool_result",
-                {
-                    "run_id": run_id,
-                    "step_id": step_id,
-                    "tool_call_row_id": tool_row_id,
-                    "tool_call_id": external_tool_call_id,
-                    "tool_name": tool_name or "unknown",
-                    "arguments": arguments,
-                    "result": result,
-                    "status": AgentToolCallStatus.FAILED,
-                    "error_message": str(exc),
-                },
-            )
-            return {
-                "tool_call_id": external_tool_call_id,
-                "tool_name": tool_name,
-                "arguments": arguments,
-                "result": result,
-                "error": str(exc),
-            }
 
         duplicate_error = None
         if seen_tool_calls is not None:
@@ -318,154 +576,112 @@ class AgentRunExecutor:
         )
 
         if duplicate_error:
-            result = {
-                "skipped": True,
-                "reason": "duplicate_tool_call",
-                "error": duplicate_error,
-            }
-            self.trace_service.fail_tool_call(
-                tool_call_id=tool_row_id,
-                error_message=duplicate_error,
-                result=result,
-                result_preview=self.trace_service.build_tool_result_preview(
-                    tool_name or "unknown",
-                    result,
-                ),
-                latency_ms=0,
-            )
-            await _emit_agent_event(
-                event_sink,
-                "tool_result",
+            result = _tool_error_result(
+                duplicate_error,
                 {
-                    "run_id": run_id,
-                    "step_id": step_id,
-                    "tool_call_row_id": tool_row_id,
-                    "tool_call_id": external_tool_call_id,
-                    "tool_name": tool_name or "unknown",
-                    "arguments": arguments,
-                    "result": result,
-                    "status": AgentToolCallStatus.FAILED,
-                    "error_message": duplicate_error,
-                    "latency_ms": 0,
+                    "skipped": True,
+                    "reason": "duplicate_tool_call",
                 },
             )
-            return {
-                "tool_call_id": external_tool_call_id,
-                "tool_name": tool_name,
-                "arguments": arguments,
-                "result": result,
-                "error": duplicate_error,
-            }
+            return await self._finish_failed_tool_call(
+                run_id=run_id,
+                step_id=step_id,
+                tool_row_id=tool_row_id,
+                external_tool_call_id=external_tool_call_id,
+                tool_name=tool_name or "unknown",
+                arguments=arguments,
+                result=result,
+                error_message=duplicate_error,
+                event_sink=event_sink,
+                latency_ms=0,
+            )
 
         started_at = time.time()
         try:
             tool = self.orchestrator._get_readonly_tool(tool_name)
-            result = await tool.run(arguments)
+            validation_error = _validate_tool_arguments(
+                arguments,
+                getattr(tool, "input_schema", None),
+            )
+            if validation_error:
+                result = _tool_error_result(validation_error)
+                return await self._finish_failed_tool_call(
+                    run_id=run_id,
+                    step_id=step_id,
+                    tool_row_id=tool_row_id,
+                    external_tool_call_id=external_tool_call_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result=result,
+                    error_message=validation_error,
+                    event_sink=event_sink,
+                    latency_ms=int((time.time() - started_at) * 1000),
+                )
+
+            timeout_ms = int(getattr(tool, "timeout_ms", 30000) or 30000)
+            result = await asyncio.wait_for(
+                tool.run(arguments),
+                timeout=timeout_ms / 1000,
+            )
             latency_ms = int((time.time() - started_at) * 1000)
+            result = _normalize_tool_result(result)
             error_message = _tool_result_error(result)
             if error_message:
-                self.trace_service.fail_tool_call(
-                    tool_call_id=tool_row_id,
-                    error_message=error_message,
+                return await self._finish_failed_tool_call(
+                    run_id=run_id,
+                    step_id=step_id,
+                    tool_row_id=tool_row_id,
+                    external_tool_call_id=external_tool_call_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
                     result=result,
-                    result_preview=self.trace_service.build_tool_result_preview(
-                        tool_name,
-                        result,
-                    ),
+                    error_message=error_message,
+                    event_sink=event_sink,
                     latency_ms=latency_ms,
                 )
-                await _emit_agent_event(
-                    event_sink,
-                    "tool_result",
-                    {
-                        "run_id": run_id,
-                        "step_id": step_id,
-                        "tool_call_row_id": tool_row_id,
-                        "tool_call_id": external_tool_call_id,
-                        "tool_name": tool_name,
-                        "arguments": arguments,
-                        "result": result,
-                        "status": AgentToolCallStatus.FAILED,
-                        "error_message": error_message,
-                        "latency_ms": latency_ms,
-                    },
-                )
-                return {
-                    "tool_call_id": external_tool_call_id,
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                    "result": result,
-                    "error": error_message,
-                }
 
-            self.trace_service.finish_tool_call(
-                tool_call_id=tool_row_id,
+            return await self._finish_successful_tool_call(
+                run_id=run_id,
+                step_id=step_id,
+                tool_row_id=tool_row_id,
+                external_tool_call_id=external_tool_call_id,
+                tool_name=tool_name,
+                arguments=arguments,
                 result=result,
-                result_preview=self.trace_service.build_tool_result_preview(
-                    tool_name,
-                    result,
-                ),
+                event_sink=event_sink,
                 latency_ms=latency_ms,
             )
-            await _emit_agent_event(
-                event_sink,
-                "tool_result",
-                {
-                    "run_id": run_id,
-                    "step_id": step_id,
-                    "tool_call_row_id": tool_row_id,
-                    "tool_call_id": external_tool_call_id,
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                    "result": result,
-                    "status": AgentToolCallStatus.SUCCESS,
-                    "latency_ms": latency_ms,
-                },
-            )
-            return {
-                "tool_call_id": external_tool_call_id,
-                "tool_name": tool_name,
-                "arguments": arguments,
-                "result": result,
-            }
-        except Exception as exc:
-            result = {
-                "results": [],
-                "total": 0,
-                "error": str(exc),
-            }
-            self.trace_service.fail_tool_call(
-                tool_call_id=tool_row_id,
-                error_message=str(exc),
+        except asyncio.TimeoutError:
+            timeout_ms = int(getattr(tool, "timeout_ms", 30000) or 30000)
+            error_message = "tool timeout after {0}ms".format(timeout_ms)
+            result = _tool_error_result(error_message)
+            return await self._finish_failed_tool_call(
+                run_id=run_id,
+                step_id=step_id,
+                tool_row_id=tool_row_id,
+                external_tool_call_id=external_tool_call_id,
+                tool_name=tool_name,
+                arguments=arguments,
                 result=result,
-                result_preview=self.trace_service.build_tool_result_preview(
-                    tool_name,
-                    result,
-                ),
+                error_message=error_message,
+                event_sink=event_sink,
                 latency_ms=int((time.time() - started_at) * 1000),
             )
-            await _emit_agent_event(
-                event_sink,
-                "tool_result",
-                {
-                    "run_id": run_id,
-                    "step_id": step_id,
-                    "tool_call_row_id": tool_row_id,
-                    "tool_call_id": external_tool_call_id,
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                    "result": result,
-                    "status": AgentToolCallStatus.FAILED,
-                    "error_message": str(exc),
-                },
+        except Exception as exc:
+            error_message = str(exc)
+            result = _tool_error_result(error_message)
+            return await self._finish_failed_tool_call(
+                run_id=run_id,
+                step_id=step_id,
+                tool_row_id=tool_row_id,
+                external_tool_call_id=external_tool_call_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                result=result,
+                error_message=error_message,
+                event_sink=event_sink,
+                latency_ms=int((time.time() - started_at) * 1000),
             )
-            return {
-                "tool_call_id": external_tool_call_id,
-                "tool_name": tool_name,
-                "arguments": arguments,
-                "result": result,
-                "error": str(exc),
-            }
 
     async def run(
         self,
@@ -500,11 +716,14 @@ class AgentRunExecutor:
 
         run_id = self.trace_service.create_run(
             agent_name=self.orchestrator.agent_name,
+            agent_version=config.AGENT_VERSION,
             trace_id=trace_id,
             session_id=session_id,
             user_message_id=user_message_id,
             input_data={"question": question},
             meta={
+                "agent_version": config.AGENT_VERSION,
+                "prompt_version": config.PROMPT_VERSION,
                 "max_steps": self.orchestrator.max_steps,
                 "tools": self.orchestrator._readonly_tool_names(),
                 "permission_level": config.READONLY_PERMISSION_LEVEL,
@@ -530,6 +749,11 @@ class AgentRunExecutor:
         tool_schemas = self.orchestrator._tool_schemas()
         observations: List[Dict[str, Any]] = []
         seen_tool_calls: Set[str] = set()
+        total_usage: Dict[str, Optional[int]] = {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+        }
         run_closed = False
 
         try:
@@ -569,6 +793,7 @@ class AgentRunExecutor:
                     tool_choice=effective_tool_choice,
                 )
                 usage = _extract_usage(llm_result)
+                _add_usage(total_usage, usage)
                 tool_calls = llm_result.get("tool_calls") or []
 
                 if not tool_calls:
@@ -614,6 +839,9 @@ class AgentRunExecutor:
                             "retrieval": retrieval,
                             "termination_reason": "final_answer",
                         },
+                        prompt_tokens=total_usage["prompt_tokens"],
+                        completion_tokens=total_usage["completion_tokens"],
+                        total_tokens=total_usage["total_tokens"],
                     )
                     run_closed = True
                     return {
@@ -683,18 +911,104 @@ class AgentRunExecutor:
                 )
                 step_index += 1
 
-            error_message = "agent reached max_steps without final answer"
-            self.trace_service.fail_run(
+            finalization_messages = messages + [
+                {
+                    "role": "system",
+                    "content": MAX_STEPS_FINALIZATION_PROMPT,
+                }
+            ]
+            final_step_id = self.trace_service.create_step(
                 run_id=run_id,
-                error_message=error_message,
-                output_data={
-                    "observations": observations,
-                    "steps_used": step_index,
-                    "termination_reason": "max_steps",
+                step_index=step_index,
+                step_type="llm_finalization",
+                name="agent_finalization_{0}".format(step_index),
+                input_data={
+                    "messages": finalization_messages,
+                    "tools": None,
+                    "reason": "max_steps",
                 },
             )
+            await _emit_agent_event(
+                event_sink,
+                "agent_step",
+                {
+                    "run_id": run_id,
+                    "step_id": final_step_id,
+                    "step_index": step_index,
+                    "step_type": "llm_finalization",
+                    "name": "agent_finalization_{0}".format(step_index),
+                    "status": AgentStepStatus.RUNNING,
+                },
+            )
+            llm_result = self.llm_service.generate_from_messages(
+                finalization_messages,
+                tools=None,
+                tool_choice=None,
+            )
+            usage = _extract_usage(llm_result)
+            _add_usage(total_usage, usage)
+            final_answer = str(
+                llm_result.get("answer")
+                or (llm_result.get("message") or {}).get("content")
+                or ""
+            ).strip()
+            if not final_answer:
+                final_answer = MAX_STEPS_FALLBACK_ANSWER
+
+            self.trace_service.finish_step(
+                step_id=final_step_id,
+                output_data={
+                    "answer": final_answer,
+                    "llm": llm_result,
+                    "termination_reason": "max_steps",
+                },
+                decision="max_steps_final_answer",
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+                total_tokens=usage["total_tokens"],
+                latency_ms=llm_result.get("latency_ms"),
+            )
+            await _emit_agent_event(
+                event_sink,
+                "agent_step",
+                {
+                    "run_id": run_id,
+                    "step_id": final_step_id,
+                    "step_index": step_index,
+                    "step_type": "llm_finalization",
+                    "name": "agent_finalization_{0}".format(step_index),
+                    "status": AgentStepStatus.SUCCESS,
+                    "decision": "max_steps_final_answer",
+                    "answer": final_answer,
+                },
+            )
+            citations = _extract_observation_citations(observations)
+            retrieval = _extract_observation_retrieval_summary(observations)
+            self.trace_service.finish_run(
+                run_id=run_id,
+                output_data={
+                    "answer": final_answer,
+                    "observations": observations,
+                    "citations": citations,
+                    "retrieval": retrieval,
+                    "steps_used": step_index + 1,
+                    "termination_reason": "max_steps",
+                },
+                prompt_tokens=total_usage["prompt_tokens"],
+                completion_tokens=total_usage["completion_tokens"],
+                total_tokens=total_usage["total_tokens"],
+            )
             run_closed = True
-            raise config.AgentOrchestratorError(error_message)
+            return {
+                "run_id": run_id,
+                "answer": final_answer,
+                "messages": finalization_messages,
+                "observations": observations,
+                "citations": citations,
+                "retrieval": retrieval,
+                "steps_used": step_index + 1,
+                "termination_reason": "max_steps",
+            }
         except Exception as exc:
             if not run_closed:
                 self.trace_service.fail_run(
@@ -703,6 +1017,9 @@ class AgentRunExecutor:
                     output_data={
                         "observations": observations,
                     },
+                    prompt_tokens=total_usage["prompt_tokens"],
+                    completion_tokens=total_usage["completion_tokens"],
+                    total_tokens=total_usage["total_tokens"],
                 )
             raise
 

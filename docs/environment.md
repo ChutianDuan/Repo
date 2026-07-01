@@ -104,6 +104,8 @@ RERANK_LOCAL_FILES_ONLY=false
 RERANK_FALLBACK_TO_FAISS=true
 ```
 
+`RERANK_FALLBACK_TO_FAISS` 是保留的历史配置名；在当前默认 LanceDB 召回路径下，它表示 reranker 不可用时按向量召回顺序回退。
+
 如果机器无法稳定访问 HuggingFace，或 reranker 模型未完整缓存，建议临时设置：
 
 ```bash

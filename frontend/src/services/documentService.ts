@@ -16,6 +16,18 @@ export function uploadDocument(
   });
 }
 
+export function uploadWebDocument(
+  baseUrl: string,
+  userId: number,
+  url: string,
+): Promise<UploadDocumentResponse> {
+  return requestEnvelope<UploadDocumentResponse>(baseUrl, "/v1/documents/web", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, url }),
+  });
+}
+
 export function deleteDocument(
   baseUrl: string,
   docId: number,

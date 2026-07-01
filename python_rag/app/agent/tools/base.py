@@ -7,7 +7,29 @@ from python_rag.app.agent.tools.schemas import DEFAULT_INPUT_SCHEMA
 __all__ = [
     "BaseTool",
     "DEFAULT_INPUT_SCHEMA",
+    "tool_error_result",
+    "tool_success_result",
 ]
+
+
+def tool_success_result(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "error": None,
+        "data": data if isinstance(data, dict) else {},
+    }
+
+
+def tool_error_result(
+    error: Any,
+    data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    error_message = str(error or "tool failed").strip() or "tool failed"
+    return {
+        "ok": False,
+        "error": error_message,
+        "data": data if isinstance(data, dict) else {},
+    }
 
 
 class BaseTool(ABC):

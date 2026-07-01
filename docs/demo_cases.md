@@ -41,7 +41,7 @@ ls ./day7_demo.md
 
 - 上传后出现 ingest 任务，最终 `SUCCESS`。
 - Agent Trace 面板出现决策步骤。
-- Trace 中出现 `knowledge_search` 的 `tool_call` 和 `tool_result`。
+- Trace 中出现 `knowledge_search` 的 `tool_call` 和 `tool_result`，工具结果为 `ok/error/data` 结构。
 - 回答内容基于上传文档。
 - 回答完成后消息刷新，引用面板展示至少 1 条 citation，包含 `doc_id`、`chunk_index`、score 和 snippet。
 
@@ -115,7 +115,7 @@ curl http://127.0.0.1:8080/v1/sessions/1/messages
 预期：
 
 - Agent 仍会调用 `knowledge_search`。
-- 如果知识库没有相关片段，`tool_result.result.total` 为 `0`。
+- 如果知识库没有相关片段，`tool_result.result.ok=true` 且 `tool_result.result.data.total` 为 `0`。
 - 最终回答应说明当前知识库证据不足。
 - citations 为空是合理结果。
 

@@ -1,5 +1,7 @@
 import pytest
 
+pytest.importorskip("numpy")
+
 from python_rag.app.modules.retrieval import reranker_service
 
 
@@ -130,6 +132,6 @@ def test_build_cross_encoder_kwargs_sanitizes_architectures(monkeypatch):
 
     assert kwargs["device"] == "cuda"
     assert kwargs["local_files_only"] is True
-    assert kwargs["config_args"]["architectures"] == [
+    assert kwargs["config_kwargs"]["architectures"] == [
         "AutoModelForSequenceClassification"
     ]

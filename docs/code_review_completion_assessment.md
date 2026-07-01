@@ -6,7 +6,7 @@
 
 ## 1. 总体结论
 
-当前项目已经超过普通 RAG demo：上传、异步 ingest、全局 READY 知识库、BM25 + FAISS + RRF + CrossEncoder rerank、异步/流式问答、citations、任务状态、监控、前端工作台、鉴权和限流都已经形成闭环。
+当前项目已经超过普通 RAG demo：上传、异步 ingest、全局 READY 知识库、LanceDB 向量召回、CrossEncoder rerank、异步/流式问答、citations、任务状态、监控、前端工作台、鉴权和限流都已经形成闭环。
 
 按不同目标评估：
 
@@ -21,7 +21,7 @@
 | 优先级 | 发现 | 影响 | 建议 |
 | --- | --- | --- | --- |
 | 已修复 | 流式 chat 对 `user_message_id` 的校验弱于异步 chat。现在已新增 `python_rag/app/modules/chat/validation.py`，异步提交、Celery 运行时和 SSE 运行时复用 `validate_chat_user_message()`。 | 已避免 assistant/system 消息被直接当作用户问题再次生成，也避免错误改写非 user 消息状态。 | 后续可以继续扩展状态机约束，例如只允许 `PENDING` / `PROCESSING` 的 user message 进入生成链路。 |
-| P1 | 检索按文档 fan-out，并且每次请求从磁盘读取 FAISS 和 mapping。全局检索最多取 1000 个 READY 文档，见 `python_rag/app/modules/retrieval/service.py:320` 到 `python_rag/app/modules/retrieval/service.py:324`；每个文档都会调用检索，见 `python_rag/app/modules/retrieval/service.py` 的每个文档索引检索分支；底层每次 `faiss.read_index` 和 `json.load`，见 `python_rag/app/modules/retrieval/faiss_service.py:57` 到 `python_rag/app/modules/retrieval/faiss_service.py:60`。 | 文档数量或单文档 chunk 数上来后，磁盘 I/O、JSON 解析和 fan-out 延迟会快速放大。 | 短期加 LRU/TTL index cache；中期做知识库级或分片 FAISS；长期评估 ANN / 向量数据库。 |
+| 已缓解 | 默认检索路径已从按文档 FAISS fan-out 切换为 LanceDB 召回，并按 `chunk_id` 回 MySQL 补齐正文。 | 已避免每次请求读取 `.faiss` 和 mapping JSON 的主要 I/O 风险；大规模下仍需关注 LanceDB 查询、过滤、备份恢复和 MySQL 回表。 | 持续记录 `retrieval_ms`、`lancedb_ms`、`rerank_ms`；中期设计分片、ANN 或更专门的向量检索架构。 |
 | 部分缓解 | SSE 网关每个流式请求仍会使用一个 detached OS thread 和阻塞 libcurl 读取上游，但现在已用 `GATEWAY_MAX_STREAMS` 限制并发流数量。 | 并发资源不再无限增长；高并发下仍会按活跃流占用线程。 | 后续改为受控线程池、连接计数和超时回收；或者使用支持流式回调的异步 HTTP 客户端。 |
 | 已修复 | Gateway 转发 GET query 时原来手动拼接参数，没有 URL encode。现在 `cpp_gateway/src/main.cc` 已补 `urlEncode()`、`appendQueryParam()` 和 `buildPathWithQuery()`。 | 特殊字符不会再破坏转发语义。 | 后续如果 GET 路由继续增加，复用该 helper。 |
 | P2 | Gateway 的 MySQL / Redis 连接仍以 `cpp_gateway/config.json` 为准，安全配置和部分路径来自 `.env`。 | 部署时容易误以为 `.env` 已经覆盖全部配置，导致环境漂移。 | 将 config.json 生成化，或让启动脚本按 `.env` 渲染 config。 |
@@ -51,14 +51,14 @@
 已完成：
 
 - 文档解析覆盖 `.md`、`.txt`、`.json`、`.csv`、`.pdf`、`.docx`、`.xlsx`。
-- ingest 支持 chunk、embedding、FAISS 构建、索引元数据和任务状态。
-- 检索链路支持 BM25、FAISS、RRF、CrossEncoder rerank 和指标记录。
+- ingest 支持 chunk、embedding、LanceDB 写入、索引元数据和任务状态。
+- 检索链路支持 LanceDB 召回、MySQL chunk 回表、CrossEncoder rerank 和指标记录。
 - chat 支持异步 Celery 和 OpenAI-compatible streaming，回答、citations、metrics 能落库。
 - 监控聚合已经覆盖系统资源、队列、RAG 数据、延迟、成本估算和检索质量指标。
 
 待补：
 
-- FAISS/mapping 缓存、全局索引或分片索引。
+- LanceDB 表维护、orphan vector 清理、备份恢复和分片/ANN 方案。
 - 真实业务 QA 标注集，用固定数据集评估 Recall@K、MRR、NDCG 和答案可用性。
 - 更多 contract 测试，尤其是模型不可用、索引不匹配、空检索、重复上传。
 
@@ -82,7 +82,7 @@
 | 已完成 | 修掉明显一致性风险 | 已统一 chat message 校验、清理旧 `StreamChatService.*`、补充 Gateway query encode helper。 |
 | 基础完成 | 提升可回归性 | 已增加 Python pytest 基础集，并补 `scripts/ci_smoke.sh`；后续继续扩展 contract/E2E。 |
 | P1 / 近期 | 提升部署稳定性 | 生成化 Gateway config；补 Docker Compose；记录 request id；统一错误 envelope。 |
-| P2 / 中期 | 提升检索规模 | 加 FAISS/mapping cache；设计全局或分片索引；减少 mapping JSON 重复保存全文。 |
+| P2 / 中期 | 提升检索规模 | 完善 LanceDB cleanup/backup/restore；设计分片或 ANN；降低跨文档检索和 MySQL 回表放大。 |
 | P2 / 中期 | 提升质量评估 | 建业务 QA 集；固定 benchmark；记录每轮模型、top_k、candidate_top_k、rerank 配置。 |
 | P3 / 后续 | 生产化 | 多租户隔离、审计日志、向量库/ANN、后台重建索引、灰度模型切换。 |
 

@@ -1,6 +1,10 @@
 from typing import Any, Dict, List, Optional
 
-from python_rag.app.agent.tools.base import BaseTool
+from python_rag.app.agent.tools.base import (
+    BaseTool,
+    tool_error_result,
+    tool_success_result,
+)
 from python_rag.app.agent.tools.registry import ToolRegistry, default_registry
 
 
@@ -91,11 +95,13 @@ class ListMessageCitationsTool(BaseTool):
         arguments = arguments or {}
         message_id = _normalize_message_id(arguments.get("message_id"))
         if message_id is None:
-            return {
-                "citations": [],
-                "total": 0,
-                "error": "message_id is required",
-            }
+            return tool_error_result(
+                "message_id is required",
+                {
+                    "citations": [],
+                    "total": 0,
+                },
+            )
 
         try:
             citations_map = list_citations_by_message_ids([message_id])
@@ -104,18 +110,22 @@ class ListMessageCitationsTool(BaseTool):
                 _format_citation(row, self.max_snippet_chars)
                 for row in rows
             ]
-            return {
-                "message_id": message_id,
-                "citations": citations,
-                "total": len(citations),
-            }
+            return tool_success_result(
+                {
+                    "message_id": message_id,
+                    "citations": citations,
+                    "total": len(citations),
+                }
+            )
         except Exception as exc:
-            return {
-                "message_id": message_id,
-                "citations": [],
-                "total": 0,
-                "error": str(exc),
-            }
+            return tool_error_result(
+                str(exc),
+                {
+                    "message_id": message_id,
+                    "citations": [],
+                    "total": 0,
+                },
+            )
 
 
 def register_citation_tools(registry: ToolRegistry = default_registry) -> ToolRegistry:

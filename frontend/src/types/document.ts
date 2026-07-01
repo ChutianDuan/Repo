@@ -7,6 +7,9 @@ export interface UploadDocumentResponse {
   db_task_id: number;
   state: string;
   status_url: string;
+  source_url?: string;
+  final_url?: string;
+  title?: string;
 }
 
 export interface DeletedDocumentResponse {
