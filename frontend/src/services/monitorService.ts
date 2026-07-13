@@ -6,14 +6,29 @@ export async function getHealth(baseUrl: string): Promise<HealthSnapshot> {
   const response = await fetch(joinUrl(baseUrl, "/health"));
   const text = await response.text();
 
-  if (!response.ok) {
-    throw new Error(text || `${response.status} ${response.statusText}`);
-  }
   if (!text) {
     throw new Error("health response is empty");
   }
-
-  return JSON.parse(text) as HealthSnapshot;
+  const parsed = JSON.parse(text) as {
+    data?: Partial<HealthSnapshot>;
+    ok?: boolean;
+    mysql?: HealthSnapshot["mysql"];
+    redis?: HealthSnapshot["redis"];
+    python?: HealthSnapshot["python"];
+  };
+  const payload = parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
+  if (
+    typeof payload.ok === "boolean"
+    && payload.mysql
+    && payload.redis
+    && payload.python
+  ) {
+    return payload as HealthSnapshot;
+  }
+  if (!response.ok) {
+    throw new Error(text || `${response.status} ${response.statusText}`);
+  }
+  throw new Error("health response is invalid");
 }
 
 export function getMonitorOverview(baseUrl: string): Promise<MonitorOverview> {

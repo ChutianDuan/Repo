@@ -1,10 +1,12 @@
+import ipaddress
 import re
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import unescape
 from html.parser import HTMLParser
 from typing import Dict, List
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 from python_rag.app.core.error_codes import ERR_INVALID_REQUEST
 from python_rag.app.core.errors import AppError
@@ -13,6 +15,8 @@ from python_rag.app.shared.text_chunker import normalize_text
 
 
 FETCH_TIMEOUT_SECONDS = 20
+MAX_WEB_DOCUMENT_BYTES = 5 * 1024 * 1024
+MAX_WEB_REDIRECTS = 5
 WEB_DOCUMENT_USER_AGENT = "python-rag-web-ingest/1.0"
 WEB_DOCUMENT_MIME = "text/markdown; charset=utf-8"
 _IGNORED_TAGS = {"script", "style", "noscript", "template", "svg", "canvas"}
@@ -162,42 +166,113 @@ def validate_web_url(url: str) -> str:
         raise AppError(ERR_INVALID_REQUEST, "url is required")
 
     parsed = urlparse(normalized)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    if parsed.scheme not in ("http", "https") or not parsed.netloc or not parsed.hostname:
         raise AppError(ERR_INVALID_REQUEST, "url must be an http or https URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise AppError(ERR_INVALID_REQUEST, "url must not contain credentials")
     return normalized
+
+
+def _validate_public_target(url: str) -> str:
+    normalized = validate_web_url(url)
+    parsed = urlparse(normalized)
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = {
+            item[4][0].split("%", 1)[0]
+            for item in socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
+        }
+    except (OSError, ValueError) as exc:
+        raise AppError(ERR_INVALID_REQUEST, "url host could not be resolved") from exc
+
+    if not addresses:
+        raise AppError(ERR_INVALID_REQUEST, "url host could not be resolved")
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError as exc:
+            raise AppError(ERR_INVALID_REQUEST, "url host resolved to an invalid address") from exc
+        if not ip.is_global:
+            raise AppError(ERR_INVALID_REQUEST, "url must resolve to a public address")
+    return normalized
+
+
+def _read_limited_response(response) -> bytes:
+    content_length = response.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_WEB_DOCUMENT_BYTES:
+                raise AppError(ERR_INVALID_REQUEST, "fetched web page is too large")
+        except ValueError:
+            pass
+
+    chunks = []
+    total_bytes = 0
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        total_bytes += len(chunk)
+        if total_bytes > MAX_WEB_DOCUMENT_BYTES:
+            raise AppError(ERR_INVALID_REQUEST, "fetched web page is too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _fetch_response(source_url: str):
+    current_url = source_url
+    for redirect_count in range(MAX_WEB_REDIRECTS + 1):
+        current_url = _validate_public_target(current_url)
+        try:
+            response = http_client.request(
+                "GET",
+                current_url,
+                timeout=FETCH_TIMEOUT_SECONDS,
+                allow_redirects=False,
+                stream=True,
+                headers={
+                    "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+                    "User-Agent": WEB_DOCUMENT_USER_AGENT,
+                },
+            )
+        except AppError:
+            raise
+        except Exception as exc:
+            raise AppError(ERR_INVALID_REQUEST, "failed to fetch url: {0}".format(exc)) from exc
+
+        if response.status_code not in {301, 302, 303, 307, 308}:
+            return response, current_url
+
+        location = response.headers.get("location")
+        response.close()
+        if not location:
+            raise AppError(ERR_INVALID_REQUEST, "web redirect is missing a location")
+        if redirect_count >= MAX_WEB_REDIRECTS:
+            raise AppError(ERR_INVALID_REQUEST, "too many web redirects")
+        current_url = urljoin(current_url, location)
+
+    raise AppError(ERR_INVALID_REQUEST, "too many web redirects")
 
 
 def fetch_web_page_document(url: str) -> WebPageDocument:
     source_url = validate_web_url(url)
     try:
-        response = http_client.request(
-            "GET",
-            source_url,
-            timeout=FETCH_TIMEOUT_SECONDS,
-            allow_redirects=True,
-            headers={
-                "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
-                "User-Agent": WEB_DOCUMENT_USER_AGENT,
-            },
-        )
+        response, final_url = _fetch_response(source_url)
+        try:
+            if response.status_code >= 400:
+                raise AppError(
+                    ERR_INVALID_REQUEST,
+                    "failed to fetch url: http status {0}".format(response.status_code),
+                )
+            raw = _read_limited_response(response)
+            content_type = (response.headers.get("content-type") or "").lower()
+            text = _decode_response_text(response, raw)
+        finally:
+            response.close()
     except AppError:
         raise
-    except Exception as exc:
-        raise AppError(ERR_INVALID_REQUEST, "failed to fetch url: {0}".format(exc)) from exc
 
-    if response.status_code >= 400:
-        raise AppError(
-            ERR_INVALID_REQUEST,
-            "failed to fetch url: http status {0}".format(response.status_code),
-        )
-
-    raw = response.content or b""
     if not raw:
         raise AppError(ERR_INVALID_REQUEST, "fetched web page is empty")
-
-    content_type = (response.headers.get("content-type") or "").lower()
-    text = _decode_response_text(response, raw)
-    final_url = validate_web_url(getattr(response, "url", None) or source_url)
 
     if "html" in content_type or _looks_like_html(text):
         title, description, body_text = _extract_html_text(text)

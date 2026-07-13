@@ -1,21 +1,25 @@
-# Agent MVP 说明
+# 从 RAG 基线到可观测 Agent：MVP 的边界与闭环
 
-本文档固化第一版 RAG Agent 的可演示范围、启动方式和验收路径。MVP 目标不是扩展工具平台，而是保证一条稳定链路可以完整展示：
+[返回文档地图](README.md)
+
+把 Agent 接到 RAG 上并不难，难的是回答三个问题：它什么时候应该检索，工具失败后如何收敛，最后的答案能否追溯到一次真实运行。这个 MVP 不追求工具数量，而是先让一条最小闭环稳定成立：
 
 ```text
 上传文件或网页 URL -> ingest 建库 -> Agent 问答 -> 只读工具循环调用
 -> Trace 展示 -> citations 展示
 ```
 
-## MVP 范围
+这篇文章讨论这条闭环为什么这样划分、普通 RAG 为什么仍然保留，以及怎样用前端和 Trace 证明 Agent 确实执行过预期步骤。
+
+## 先定义边界，再讨论能力
 
 ### 已纳入
 
 - 文件上传、网页 URL 导入、解析、切片、embedding、LanceDB 向量索引构建。
-- 旧 RAG 路径：直接检索全局 READY 文档并生成回答。
+- 普通 RAG 路径：直接检索全局 indexed 文档并生成回答。
 - 新 Agent 路径：后端先做轻量检索意图路由，必要时强制首轮 `knowledge_search`；后续由 LLM 循环决策是否继续调用只读工具或输出最终答案。
 - Agent Trace：记录 `agent_runs`、`agent_steps`、`agent_tool_calls`，前端流式展示执行轨迹。
-- Citations：Agent 从 `knowledge_search` 结果生成 citations，并复用原有 `citations` 表和前端引用面板展示。
+- Citations：Agent 从 `knowledge_search` 结果生成 citations，并复用原有 `citations` 表和前端证据区域展示。
 - 前端工作台：上传文档、查看任务、问答、Trace、引用来源和监控概览。
 
 ### 暂不纳入
@@ -24,31 +28,31 @@
 - 长程自主规划和跨请求任务执行。当前循环只在单次 Agent 请求内运行，并受 `max_steps` 安全上限保护。
 - 多租户隔离和生产级鉴权审计。网关已有 API Key/限流基础能力，但 MVP 演示默认按本地环境使用。
 
-## 架构路径
+## 一次 Agent 请求经过哪些边界
 
-```text
-Browser / React Workbench
-  |
-  | /v1/documents, /v1/documents/web, /v1/sessions, /v1/chat/stream, /v1/agent/chat/stream
-  v
-C++ Drogon Gateway
-  |
-  | /internal/* and /api/agent/*
-  v
-FastAPI Internal Service
-  |
-  +-- Celery Worker: ingest / old RAG async chat
-  +-- AgentOrchestrator: LLM decision loop + readonly tools + Trace
-  +-- MySQL: docs, chunks, messages, citations, agent trace
-  +-- Redis: Celery broker / backend
-  +-- LanceDB + MySQL chunks: knowledge_search retrieval
+```mermaid
+flowchart LR
+    UI[React Workbench] -->|/v1/agent/chat/stream| G[Drogon Gateway]
+    G -->|/api/agent/chat/stream| A[FastAPI Agent Stream]
+    A --> M[Memory Context]
+    M --> I[Intent Router]
+    I --> R[Agent Runner]
+    R --> T[Readonly Tools]
+    T --> L[LanceDB Recall]
+    T --> DB[(MySQL Chunks)]
+    R --> Trace[(Runs / Steps / Tool Calls)]
+    R --> LLM[LLM]
+    LLM --> P[Answer + Citations]
+    P --> UI
 ```
+
+Celery 不参与 Agent 流式生成；它负责 ingest 和普通 RAG 的非流式任务。这个区别很重要：看到 Worker 没有 `chat_generate` 并不代表 Agent 流没有执行。
 
 ## 代码目录
 
-Agent 相关代码已经收敛在 `python_rag/app/agent`：`orchestrator.py` 负责编排决策，`tools/local` 放本地只读工具，`tools/mcp` 是 MCP Tool 包装预留目录，`streaming` 负责 Agent SSE 输出，`trace` 负责持久化 run / step / tool call。普通 RAG、chat、retrieval、documents、ingest、sessions、messages、tasks 等业务模块位于 `python_rag/app/modules`；Celery app 和 worker task 位于 `python_rag/app/workers`。
+Agent 代码收敛在 `python_rag/app/agent`：`orchestrator.py` 保留稳定调用入口，`agent_runner.py` 承担执行循环，`intent_router.py` 处理轻量检索意图，`tool_protocol.py` 统一工具结果，`tools/local` 放只读工具，`streaming` 负责可续传 SSE，`trace` 负责 run / step / tool call 持久化。普通 RAG 和检索能力位于 `python_rag/app/modules`，Celery 入口位于 `python_rag/app/workers`。
 
-## 启动说明
+## 先把运行条件固定下来
 
 ### 1. 环境变量
 
@@ -64,9 +68,9 @@ MVP 默认使用远端 OpenAI-compatible LLM：
 LLM_RUNTIME=api
 LLM_ENABLE=true
 LLM_PROVIDER=openai_compatible
-LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-MIMO_API_KEY=your-api-key
-LLM_MODEL=glm-4.7-flash
+LLM_BASE_URL=https://provider.example/v1
+LLM_API_KEY=your-api-key
+LLM_MODEL=your-model
 ```
 
 如果本机没有 reranker 权重且不希望演示时下载模型，可以临时设置：
@@ -92,7 +96,7 @@ bash scripts/init_db.sh
 
 ```bash
 bash scripts/start_vllm.sh
-START_INIT_DB=true START_FRONTEND=true bash scripts/start_all.sh
+START_INIT_DB=true START_FRONTEND=true bash scripts/start_all.sh start
 ```
 
 默认地址：
@@ -115,11 +119,11 @@ curl http://127.0.0.1:8000/internal/health
 bash scripts/start_all.sh stop
 ```
 
-## 旧 RAG 与新 Agent 路径
+## 为什么还要保留普通 RAG
 
-### 旧 RAG
+### 普通 RAG 是稳定基线
 
-旧 RAG 路径由网关提交 chat 任务，Worker 执行检索和回答：
+普通 RAG 的非流式路径由 Gateway 提交 Chat 任务，Worker 执行检索和回答；流式路径则由 FastAPI 直接生成：
 
 ```text
 POST /v1/sessions/{session_id}/messages
@@ -128,11 +132,11 @@ POST /v1/chat/stream
 
 特点：
 
-- 默认检索全局 READY 文档。
+- 默认检索全局 indexed 文档。
 - 可选 `doc_id` / `doc_ids` 限定文档范围。
 - citations 来自检索命中的 raw hits，并随 assistant message 落库。
 
-### 新 Agent
+### Agent 增加决策层，而不是替换检索层
 
 新 Agent 演示优先使用网关流式入口：
 
@@ -161,20 +165,20 @@ GET  /internal/agent/runs/{run_id}/steps
 - 工具调用、工具结果、最终回答会写入 Trace。Run 级 Trace 还会记录 `AGENT_VERSION`、`PROMPT_VERSION` 和 `prompt_tokens` / `completion_tokens` / `total_tokens` 汇总。
 - `knowledge_search` 命中的 chunk 会转换成 citations，保存到原有 `citations` 表。
 
-## 前端验收流程
+## 在工作台里观察真实执行
 
 1. 打开 `http://127.0.0.1:5173`。
-2. 在 `Workspace` 创建或选择用户会话。
-3. 上传 `day7_demo.md` 或任意 `.md/.txt/.pdf/.docx/.xlsx/.csv/.json` 文档；也可以输入网页 URL 导入网页正文。
-4. 等待文档状态变为 `READY`，或在 `Tasks` 页面确认 ingest 任务成功。
-5. 开启流式问答与 RAG/Agent 开关。
-6. 提问：`根据知识库总结这个系统的架构和核心链路`。
-7. 观察右侧 `Agent Trace`：项目文档类问题通常会先出现 `forced_tool_call` / `knowledge_search`，随后出现 LLM 决策步骤、工具结果和最终生成。
-8. 回答完成后刷新消息或等待前端自动刷新，引用面板应显示 citations。
+2. 在 Settings 创建或选择用户，然后回到 Sessions 创建会话。
+3. 从左侧文档轨道上传 `day7_demo.md`，或导入一个可直接访问的网页 URL。
+4. 等待文档依次经过 Parsing、Chunking、Embedding，最终进入 Indexed；失败时直接查看任务错误。
+5. 保持 `Agent + RAG` 开启，提问：`根据知识库总结这个系统的架构和核心链路`。
+6. 观察中央 Execution Flow：`knowledge_search`、LanceDB、MySQL hydration、CrossEncoder 与保存 citations 只会依据真实事件推进。
+7. 观察右侧 Agent Trace：事件应按 `agent_step -> tool_call -> tool_result -> delta -> final -> done` 延伸，并保留 `run_id`、`step_id` 和 `event_id`。
+8. 回答完成后检查引用编号和来源 chunk；没有检索证据时 citations 为空是正确结果。
 
 ## CLI 验收
 
-旧 RAG 一键链路：
+普通 RAG 一键链路：
 
 ```bash
 bash scripts/e2e_all.sh ./day7_demo.md
@@ -218,6 +222,10 @@ python3 -m pytest \
 更完整的本地检查：
 
 ```bash
-cd python_rag && python3 -m compileall app && cd ..
+python3 -m compileall python_rag tests
 python3 -m pytest tests
 ```
+
+## MVP 完成不等于生产完成
+
+这条链路已经足以证明 Agent 能检索、能失败、能降级、能留下 Trace，也能把 citations 持久化。但它仍然是单请求内的受限循环，不包含写工具、跨请求自主任务、多租户隔离和生产级审计。保留这些边界，比在演示中暗示“通用 Agent 平台”更重要。

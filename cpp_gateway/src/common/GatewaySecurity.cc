@@ -484,9 +484,9 @@ HttpResponsePtr GatewaySecurity::makeErrorResponse(
     const std::string& message
 ) const {
     Json::Value body(Json::objectValue);
-    body["ok"] = false;
     body["code"] = code;
     body["message"] = message;
+    body["data"] = Json::nullValue;
 
     auto resp = HttpResponse::newHttpJsonResponse(body);
     resp->setStatusCode(status);

@@ -31,7 +31,7 @@ case "${LLM_RUNTIME}" in
     echo "[INFO] LLM model=${LLM_MODEL}"
     echo "[INFO] local vLLM will not be started"
 
-    if [ "${LLM_API_CHECK}" = "true" ] || [ "${LLM_API_CHECK}" = "1" ]; then
+    if is_true "$LLM_API_CHECK"; then
       if ! command -v curl >/dev/null 2>&1; then
         echo "[WARN] curl is unavailable; skipping LLM API check" >&2
         exit 0
@@ -46,7 +46,7 @@ case "${LLM_RUNTIME}" in
         echo "[OK] LLM API /models reachable"
       else
         message="LLM API /models check failed; verify LLM_BASE_URL, LLM_API_KEY/MIMO_API_KEY and provider compatibility"
-        if [ "${LLM_API_CHECK_STRICT}" = "true" ] || [ "${LLM_API_CHECK_STRICT}" = "1" ]; then
+        if is_true "$LLM_API_CHECK_STRICT"; then
           echo "[ERROR] ${message}" >&2
           exit 1
         fi

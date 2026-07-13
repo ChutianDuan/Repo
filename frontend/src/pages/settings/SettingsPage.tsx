@@ -1,5 +1,6 @@
 import { PageTitle } from "../../components/common/PageTitle";
 import { SectionCard } from "../../components/common/SectionCard";
+import type { UserItem } from "../../types/user";
 
 interface SettingsPageProps {
   apiBaseUrl: string;
@@ -10,6 +11,9 @@ interface SettingsPageProps {
   chunkSize: string;
   chunkOverlap: string;
   modelName: string;
+  users: UserItem[];
+  newUserName: string;
+  pending: string | null;
   onApiBaseUrlChange: (value: string) => void;
   onUserIdChange: (value: string) => void;
   onTopKChange: (value: number) => void;
@@ -18,6 +22,9 @@ interface SettingsPageProps {
   onChunkSizeChange: (value: string) => void;
   onChunkOverlapChange: (value: string) => void;
   onModelNameChange: (value: string) => void;
+  onNewUserNameChange: (value: string) => void;
+  onSelectUser: (user: UserItem) => void;
+  onCreateUser: () => void;
 }
 
 export function SettingsPage({
@@ -29,6 +36,9 @@ export function SettingsPage({
   chunkSize,
   chunkOverlap,
   modelName,
+  users,
+  newUserName,
+  pending,
   onApiBaseUrlChange,
   onUserIdChange,
   onTopKChange,
@@ -37,6 +47,9 @@ export function SettingsPage({
   onChunkSizeChange,
   onChunkOverlapChange,
   onModelNameChange,
+  onNewUserNameChange,
+  onSelectUser,
+  onCreateUser,
 }: SettingsPageProps) {
   return (
     <div className="settings-page page-stack">
@@ -67,6 +80,32 @@ export function SettingsPage({
         </div>
       </SectionCard>
 
+      <SectionCard title="用户" description="会话与文档使用当前用户 ID。">
+        <div className="settings-user-row">
+          <input
+            value={newUserName}
+            onChange={(event) => onNewUserNameChange(event.target.value)}
+            placeholder="输入新用户名"
+          />
+          <button type="button" onClick={onCreateUser} disabled={pending !== null || !newUserName.trim()}>
+            {pending === "user" ? "创建中" : "创建用户"}
+          </button>
+        </div>
+        <div className="settings-user-list">
+          {users.map((user) => (
+            <button
+              type="button"
+              key={user.id}
+              className={String(user.id) === userId ? "is-active" : ""}
+              onClick={() => onSelectUser(user)}
+            >
+              <strong>{user.name}</strong>
+              <code>#{user.id}</code>
+            </button>
+          ))}
+        </div>
+      </SectionCard>
+
       <SectionCard title="检索" description="这些参数会随下一次提问提交。">
         <div className="settings-grid">
           <label className="field">
@@ -74,7 +113,7 @@ export function SettingsPage({
             <input
               type="number"
               min={1}
-              max={20}
+              max={10}
               value={topK}
               onChange={(event) => onTopKChange(Number(event.target.value))}
             />

@@ -1,15 +1,21 @@
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { AgentTraceRow } from "../../components/AgentTracePanel";
+import { AgentTracePanel } from "../../components/AgentTracePanel";
+import { AnswerDocument } from "../../components/workspace/AnswerDocument";
+import { ExecutionFlow } from "../../components/workspace/ExecutionFlow";
+import { WorkspaceDocumentRail } from "../../components/workspace/WorkspaceDocumentRail";
+import type { Citation } from "../../types/citation";
+import type { DocumentListItem } from "../../types/document";
 import type { ChatMessage } from "../../types/message";
-import type { Session } from "../../types/session";
-import type { TaskStatus } from "../../types/task";
-import { AgentTracePanel, type AgentTraceRow } from "../../components/AgentTracePanel";
-import { ChatWorkspace } from "../../components/workspace/ChatWorkspace";
-import { ReferencePanel } from "../../components/workspace/ReferencePanel";
-import { StatusBadge } from "../../components/common/StatusBadge";
-import { formatDurationMs, formatNumber, stateTone } from "../../utils/format";
+import type { Session, SessionSummary } from "../../types/session";
+import type { TaskRecord, TaskStatus } from "../../types/task";
 
 interface WorkspacePageProps {
   session: Session | null;
-  readyDocumentCount: number;
+  sessions: SessionSummary[];
+  documents: DocumentListItem[];
+  tasks: TaskRecord[];
+  selectedDocId: number | null;
   messages: ChatMessage[];
   question: string;
   topK: number;
@@ -17,81 +23,37 @@ interface WorkspacePageProps {
   streamingEnabled: boolean;
   pending: string | null;
   selectedFileName: string | null;
+  webUrl: string;
   error: string | null;
-  ingestTask: TaskStatus | null;
   chatTask: TaskStatus | null;
   agentTraceRows: AgentTraceRow[];
   onCreateSession: () => void;
+  onSelectSession: (sessionId: number) => void;
   onRefreshMessages: () => void;
+  onSelectDocument: (docId: number) => void;
   onQuestionChange: (value: string) => void;
   onTopKChange: (value: number) => void;
   onRagEnabledChange: (value: boolean) => void;
   onFileChange: (file: File | null) => void;
+  onWebUrlChange: (value: string) => void;
   onUpload: () => void;
+  onUploadWebDocument: () => void;
   onAsk: () => void;
 }
 
 function latestMessageByRole(messages: ChatMessage[], role: ChatMessage["role"]): ChatMessage | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === role) {
-      return messages[index];
-    }
+    if (messages[index].role === role) return messages[index];
   }
   return null;
-}
-
-function textPreview(value: string | undefined, fallback: string, maxLength = 180): string {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return fallback;
-  }
-  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}...` : trimmed;
-}
-
-function metaNumber(meta: Record<string, unknown> | null | undefined, key: string): number | null {
-  const value = meta?.[key];
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function metaText(meta: Record<string, unknown> | null | undefined, key: string): string | null {
-  const value = meta?.[key];
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-  return String(value);
-}
-
-type PipelineState = "done" | "active" | "idle" | "missing";
-
-interface PipelineStep {
-  label: string;
-  detail: string;
-  state: PipelineState;
-}
-
-function pipelineStateLabel(state: PipelineState): string {
-  if (state === "done") {
-    return "done";
-  }
-  if (state === "active") {
-    return "active";
-  }
-  if (state === "missing") {
-    return "not reported";
-  }
-  return "idle";
 }
 
 export function WorkspacePage({
   session,
-  readyDocumentCount,
+  sessions,
+  documents,
+  tasks,
+  selectedDocId,
   messages,
   question,
   topK,
@@ -99,165 +61,119 @@ export function WorkspacePage({
   streamingEnabled,
   pending,
   selectedFileName,
+  webUrl,
   error,
-  ingestTask,
   chatTask,
   agentTraceRows,
   onCreateSession,
+  onSelectSession,
   onRefreshMessages,
+  onSelectDocument,
   onQuestionChange,
   onTopKChange,
   onRagEnabledChange,
   onFileChange,
+  onWebUrlChange,
   onUpload,
+  onUploadWebDocument,
   onAsk,
 }: WorkspacePageProps) {
-  const assistantMessage = latestMessageByRole(messages, "assistant");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [hoveredCitation, setHoveredCitation] = useState<Citation | null>(null);
+  const [connectorPath, setConnectorPath] = useState<string | null>(null);
   const userMessage = latestMessageByRole(messages, "user");
-  const documentLabel = `${readyDocumentCount} 份文档可检索`;
-  const documentStatus = readyDocumentCount > 0 ? "indexed" : "EMPTY";
-  const canAsk = Boolean(session);
-  const latestStatus = agentTraceRows[agentTraceRows.length - 1]?.status || chatTask?.state || "idle";
-  const latestQuestion = textPreview(userMessage?.content || question, "等待提问");
-  const finalAnswer = textPreview(assistantMessage?.content, "等待回答", 220);
-  const retrievedCount = metaNumber(chatTask?.meta, "retrieved_count");
-  const rawHitCount = metaNumber(chatTask?.meta, "raw_hit_count");
-  const retrievalMs = metaNumber(chatTask?.meta, "retrieval_ms") ?? metaNumber(assistantMessage?.meta, "retrieval_ms");
-  const e2eLatencyMs = metaNumber(chatTask?.meta, "e2e_latency_ms") ?? metaNumber(assistantMessage?.meta, "e2e_latency_ms");
-  const citationCount = assistantMessage?.citations.length ?? metaNumber(chatTask?.meta, "citation_count") ?? 0;
-  const hasReadyDocuments = readyDocumentCount > 0;
-  const ingestActive = pending === "upload" || ingestTask?.state === "PENDING" || ingestTask?.state === "PROCESSING";
-  const chatActive = pending === "chat" || chatTask?.state === "PROCESSING";
-  const chatDone = chatTask?.state === "SUCCESS" || assistantMessage?.status === "SUCCESS";
-  const rerankDetail = metaText(chatTask?.meta, "rerank_count") || metaText(chatTask?.meta, "rerank_ms");
-  const pipelineSteps: PipelineStep[] = [
-    {
-      label: "Upload",
-      detail: hasReadyDocuments ? `${formatNumber(readyDocumentCount)} ready docs` : "waiting for docs",
-      state: hasReadyDocuments ? "done" : ingestActive ? "active" : "idle",
-    },
-    {
-      label: "Chunk",
-      detail: metaText(ingestTask?.meta, "stage") || (hasReadyDocuments ? "chunks indexed" : "not started"),
-      state: hasReadyDocuments ? "done" : ingestActive ? "active" : "idle",
-    },
-    {
-      label: "Embedding",
-      detail: hasReadyDocuments ? "vectors ready" : "waiting for chunks",
-      state: hasReadyDocuments ? "done" : ingestActive ? "active" : "idle",
-    },
-    {
-      label: "LanceDB",
-      detail: hasReadyDocuments ? "index ready" : "waiting for vectors",
-      state: hasReadyDocuments ? "done" : ingestActive ? "active" : "idle",
-    },
-    {
-      label: "Retrieval",
-      detail: retrievedCount === null ? `topK ${topK}` : `${formatNumber(retrievedCount)} chunks`,
-      state: retrievedCount !== null || rawHitCount !== null ? "done" : chatActive ? "active" : "idle",
-    },
-    {
-      label: "Rerank",
-      detail: rerankDetail || "not reported by API",
-      state: rerankDetail ? "done" : chatActive || chatDone ? "missing" : "idle",
-    },
-    {
-      label: "LLM",
-      detail: metaText(chatTask?.meta, "answer_source") || (ragEnabled ? "agent answer" : "direct answer"),
-      state: chatDone ? "done" : chatActive ? "active" : "idle",
-    },
-    {
-      label: "Citations",
-      detail: `${formatNumber(citationCount)} sources`,
-      state: citationCount > 0 ? "done" : chatActive ? "active" : "idle",
-    },
-  ];
+  const assistantMessage = latestMessageByRole(messages, "assistant");
+  const documentNames = useMemo(
+    () => new Map(documents.map((document) => [document.doc_id, document.filename])),
+    [documents],
+  );
+
+  useLayoutEffect(() => {
+    function updateConnector() {
+      const root = rootRef.current;
+      if (!root || !hoveredCitation) {
+        setConnectorPath(null);
+        return;
+      }
+      const source = root.querySelector<HTMLElement>(
+        `.citation-marker[data-citation-doc-id="${hoveredCitation.doc_id}"]:hover, .citation-marker[data-citation-doc-id="${hoveredCitation.doc_id}"]:focus`,
+      ) || root.querySelector<HTMLElement>(`.citation-marker[data-citation-doc-id="${hoveredCitation.doc_id}"]`);
+      const target = root.querySelector<HTMLElement>(`[data-doc-id="${hoveredCitation.doc_id}"]`);
+      if (!source || !target) {
+        setConnectorPath(null);
+        return;
+      }
+      const rootRect = root.getBoundingClientRect();
+      const sourceRect = source.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const startX = sourceRect.left - rootRect.left;
+      const startY = sourceRect.top + sourceRect.height / 2 - rootRect.top;
+      const endX = targetRect.right - rootRect.left;
+      const endY = targetRect.top + targetRect.height / 2 - rootRect.top;
+      const bend = Math.max(48, (startX - endX) * 0.4);
+      setConnectorPath(`M ${startX} ${startY} C ${startX - bend} ${startY}, ${endX + bend} ${endY}, ${endX} ${endY}`);
+    }
+
+    updateConnector();
+    window.addEventListener("resize", updateConnector);
+    return () => window.removeEventListener("resize", updateConnector);
+  }, [hoveredCitation, messages]);
 
   return (
-    <div className="workspace-page">
-      <section className="rag-workbench-board">
-        <div className="rag-workbench-board__head">
-          <div>
-            <span className="section-label">RAG Workbench</span>
-            <h1>问答执行台</h1>
-            <p>把一次问答拆成可解释的检索、工具调用、生成和引用链路。</p>
-          </div>
-          <div className="rag-workbench-board__status">
-            <StatusBadge label={latestStatus} tone={stateTone(latestStatus)} />
-            <span>{ragEnabled ? `RAG top_${topK}` : "Direct"}</span>
-          </div>
-        </div>
+    <div className="workspace-page workspace-diagram" ref={rootRef}>
+      {connectorPath ? (
+        <svg className="evidence-connector" aria-hidden="true">
+          <path d={connectorPath} />
+        </svg>
+      ) : null}
 
-        <div className="rag-focus-grid">
-          <article className="rag-focus-card rag-focus-card--question">
-            <span>User Question</span>
-            <strong>{latestQuestion}</strong>
-          </article>
-          <article className="rag-focus-card rag-focus-card--answer">
-            <span>Final Answer</span>
-            <strong>{finalAnswer}</strong>
-          </article>
-          <article className="rag-focus-card">
-            <span>Agent Steps</span>
-            <strong>{formatNumber(agentTraceRows.length)}</strong>
-          </article>
-          <article className="rag-focus-card">
-            <span>Latency</span>
-            <strong>{formatDurationMs(e2eLatencyMs ?? retrievalMs)}</strong>
-          </article>
-        </div>
+      <WorkspaceDocumentRail
+        documents={documents}
+        tasks={tasks}
+        selectedDocId={selectedDocId}
+        selectedFileName={selectedFileName}
+        webUrl={webUrl}
+        pending={pending}
+        onSelectDocument={onSelectDocument}
+        onFileChange={onFileChange}
+        onWebUrlChange={onWebUrlChange}
+        onUpload={onUpload}
+        onUploadWebDocument={onUploadWebDocument}
+      />
 
-        <div className="rag-pipeline-rail" aria-label="RAG pipeline">
-          {pipelineSteps.map((step) => (
-            <article key={step.label} className={`rag-pipeline-step rag-pipeline-step--${step.state}`}>
-              <span>{step.label}</span>
-              <strong>{pipelineStateLabel(step.state)}</strong>
-              <small>{step.detail}</small>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <div className="workspace-main-grid">
-        <ChatWorkspace
+      <div className="workspace-diagram__center">
+        <ExecutionFlow
           session={session}
-          documentLabel={documentLabel}
-          documentStatus={documentStatus}
-          messages={messages}
+          userMessage={userMessage}
+          assistantMessage={assistantMessage}
+          chatTask={chatTask}
+          rows={agentTraceRows}
+        />
+        <AnswerDocument
+          session={session}
+          sessions={sessions}
+          userMessage={userMessage}
+          assistantMessage={assistantMessage}
           question={question}
           topK={topK}
           ragEnabled={ragEnabled}
           streamingEnabled={streamingEnabled}
           pending={pending}
-          canAsk={canAsk}
-          selectedFileName={selectedFileName}
           error={error}
-          toolbar={
-            <>
-              <button type="button" className="button-secondary" onClick={onCreateSession} disabled={pending !== null}>
-                {pending === "session" ? "创建中" : session ? "新会话" : "创建会话"}
-              </button>
-              <button type="button" className="button-ghost" onClick={onRefreshMessages} disabled={pending !== null || !session}>
-                刷新
-              </button>
-            </>
-          }
+          documentNames={documentNames}
+          hoveredCitation={hoveredCitation}
+          onCitationHover={setHoveredCitation}
+          onCreateSession={onCreateSession}
+          onSelectSession={onSelectSession}
+          onRefreshMessages={onRefreshMessages}
           onQuestionChange={onQuestionChange}
           onTopKChange={onTopKChange}
           onRagEnabledChange={onRagEnabledChange}
-          onFileChange={onFileChange}
-          onUpload={onUpload}
           onAsk={onAsk}
         />
-        <div className="workspace-side-panel">
-          <AgentTracePanel rows={agentTraceRows} />
-          <ReferencePanel
-            citations={assistantMessage?.citations || []}
-            chatTask={chatTask}
-            ingestTask={ingestTask}
-          />
-        </div>
       </div>
+
+      <AgentTracePanel rows={agentTraceRows} />
     </div>
   );
 }

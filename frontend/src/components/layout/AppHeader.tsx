@@ -1,55 +1,98 @@
+import {
+  ArrowClockwise,
+  GearSix,
+  Pulse,
+} from "@phosphor-icons/react";
 import type { AppRoute } from "../../app/router";
-import type { MonitorOverview } from "../../types/monitor";
-import { formatNumber } from "../../utils/format";
-import { HealthDot } from "../common/HealthDot";
+import type { HealthSnapshot } from "../../types/api";
+import type { MonitorOverview, ServiceState } from "../../types/monitor";
 
 interface AppHeaderProps {
   route: AppRoute;
   overview: MonitorOverview;
-  searchScope: string;
+  health: HealthSnapshot | null;
   onNavigate: (route: AppRoute) => void;
   onRefresh: () => void;
   refreshing: boolean;
 }
 
-const routeLabel: Record<AppRoute, string> = {
-  workspace: "问答",
-  documents: "文档索引",
-  tasks: "任务",
-  monitor: "状态",
-  settings: "配置",
-};
+const PRIMARY_NAV: Array<{ route: AppRoute; label: string }> = [
+  { route: "documents", label: "Documents" },
+  { route: "workspace", label: "Sessions" },
+  { route: "tasks", label: "Runs" },
+  { route: "monitor", label: "Monitor" },
+];
 
-export function AppHeader({ route, overview, searchScope, onNavigate, onRefresh, refreshing }: AppHeaderProps) {
+function healthState(value: boolean | undefined): ServiceState {
+  if (value === true) return "ok";
+  if (value === false) return "error";
+  return "unknown";
+}
+
+function ServiceSignal({ label, state }: { label: string; state: ServiceState }) {
   return (
-    <header className="app-header app-header--simple">
-      <div className="app-header__brand" onClick={() => onNavigate("workspace")} role="button" tabIndex={0}>
-        <span className="brand-mark">R</span>
-        <div>
-          <strong>RAG 笔记助手</strong>
-          <small>{routeLabel[route]} · 上传文档后直接提问</small>
-        </div>
-      </div>
+    <span className={`service-signal service-signal--${state}`} title={`${label}: ${state}`}>
+      <span aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
 
-      <div className="app-header__scope">
-        <span>知识库</span>
-        <strong>{searchScope}</strong>
-      </div>
+export function AppHeader({
+  route,
+  overview,
+  health,
+  onNavigate,
+  onRefresh,
+  refreshing,
+}: AppHeaderProps) {
+  return (
+    <header className="app-header app-header--workbench">
+      <button
+        type="button"
+        className="workbench-brand"
+        onClick={() => onNavigate("workspace")}
+        aria-label="Open RAG Workbench"
+      >
+        <span className="workbench-brand__mark"><Pulse size={18} weight="bold" /></span>
+        <strong>RAG Workbench</strong>
+      </button>
 
-      <div className="app-header__metrics" aria-label="rag summary">
-        <span>Ready {formatNumber(overview.rag.documents_ready)}</span>
-        <span>Chunks {overview.rag.total_chunks === null ? "--" : formatNumber(overview.rag.total_chunks)}</span>
-        <span>Queue {overview.queue.pending + overview.queue.running}</span>
-        <HealthDot label="API" state={overview.services.api} compact />
-        <HealthDot label="Worker" state={overview.services.worker} compact />
-      </div>
+      <nav className="top-navigation" aria-label="Primary navigation">
+        {PRIMARY_NAV.map((item) => (
+          <button
+            key={item.route}
+            type="button"
+            className={route === item.route ? "top-navigation__item is-active" : "top-navigation__item"}
+            onClick={() => onNavigate(item.route)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
 
-      <div className="app-header__actions">
-        <button type="button" className="button-ghost" onClick={() => onNavigate("documents")}>
-          管理文档
+      <div className="header-runtime" aria-label="Runtime health">
+        <ServiceSignal label="Gateway" state={health ? "ok" : "unknown"} />
+        <ServiceSignal label="FastAPI" state={healthState(health?.python?.ok)} />
+        <ServiceSignal label="Worker" state={overview.services.worker} />
+        <button
+          type="button"
+          className="header-icon-button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          aria-label="Refresh runtime status"
+          title="Refresh runtime status"
+        >
+          <ArrowClockwise size={17} className={refreshing ? "is-spinning" : ""} />
         </button>
-        <button type="button" className="button-secondary" onClick={onRefresh} disabled={refreshing}>
-          {refreshing ? "刷新中" : "刷新"}
+        <button
+          type="button"
+          className={route === "settings" ? "header-icon-button is-active" : "header-icon-button"}
+          onClick={() => onNavigate("settings")}
+          aria-label="Open settings"
+          title="Settings"
+        >
+          <GearSix size={18} />
         </button>
       </div>
     </header>

@@ -23,8 +23,9 @@ using namespace drogon;
 namespace {
 HttpResponsePtr makeBadRequestResponse(const std::string& error) {
     Json::Value body(Json::objectValue);
-    body["ok"] = false;
-    body["error"] = error;
+    body["code"] = 4000;
+    body["message"] = error;
+    body["data"] = Json::nullValue;
 
     auto resp = HttpResponse::newHttpJsonResponse(body);
     resp->setStatusCode(k400BadRequest);
@@ -40,6 +41,7 @@ void applyCorsHeaders(const HttpRequestPtr& req, const HttpResponsePtr& resp) {
     resp->addHeader("Access-Control-Allow-Origin", origin.empty() ? "*" : origin);
     resp->addHeader("Vary", "Origin");
     resp->addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    resp->addHeader("Access-Control-Expose-Headers", "X-User-Message-ID");
 
     const auto requestedHeaders = req ? req->getHeader("Access-Control-Request-Headers") : std::string();
     if (!requestedHeaders.empty()) {
@@ -283,8 +285,9 @@ int main() {
                     auto jsonPtr = req->getJsonObject();
                     if (!jsonPtr || !jsonPtr->isObject()) {
                         Json::Value json;
-                        json["code"] = 400;
+                        json["code"] = 4000;
                         json["message"] = "json body is required";
+                        json["data"] = Json::nullValue;
                         auto resp = HttpResponse::newHttpJsonResponse(json);
                         resp->setStatusCode(k400BadRequest);
                         secureCallback(resp);

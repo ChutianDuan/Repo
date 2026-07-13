@@ -1,9 +1,13 @@
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException
 
 from python_rag.app.core.errors import AppError
 from python_rag.app.core.exception_handlers import (
     app_error_handler,
     generic_exception_handler,
+    http_exception_handler,
+    request_validation_error_handler,
 )
 from python_rag.app.api.v1.routers import register_routers
 
@@ -14,6 +18,8 @@ app = FastAPI(
 )
 
 app.add_exception_handler(AppError, app_error_handler)
+app.add_exception_handler(RequestValidationError, request_validation_error_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
 register_routers(app)

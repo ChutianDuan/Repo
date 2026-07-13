@@ -238,6 +238,9 @@ void StreamChatService::startStreamResponse(
     resp->addHeader("Connection", "keep-alive");
     resp->addHeader("X-Accel-Buffering", "no");
     resp->addHeader("X-Gateway-Max-Streams", std::to_string(maxConcurrentStreams_));
+    if (body.isMember("user_message_id") && body["user_message_id"].isInt()) {
+        resp->addHeader("X-User-Message-ID", std::to_string(body["user_message_id"].asInt()));
+    }
     resp->setExpiredTime(0);
 
     callback(resp);

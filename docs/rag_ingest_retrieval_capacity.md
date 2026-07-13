@@ -1,10 +1,14 @@
-# RAG 文件上传、向量检索与系统负载评估
+# 从一个文件到百万 Chunk：RAG Ingest、检索与容量边界
 
-本文说明当前系统从“文件或网页 URL 入库”到“基于文档问答”的完整链路，并重点解释 chunk 切片、embedding 向量化、LanceDB 向量索引、Top-K 召回、重排序、上下文拼接和 LLM 调用之间的关系。
+[返回文档地图](README.md)
 
-本文按目标设计说明时，假设 embedding 向量维度为 `512`，向量类型为 `float32`。当前默认向量存储来自 [python_rag/app/core/config.py](../python_rag/app/core/config.py)：`VECTOR_STORE_PROVIDER=lancedb`、`RETRIEVAL_RECALL_PROVIDER=lancedb`、`LANCEDB_PATH=./data/lancedb`、`LANCEDB_TABLE=chunk_vectors`。chunk 配置默认 `INGEST_CHUNK_SIZE=800`、`INGEST_CHUNK_OVERLAP=100`。
+RAG 容量问题经常被简化成“向量库能存多少条”。实际系统中，向量只是其中一层：原文和 chunk 在 MySQL，索引在 LanceDB，embedding 与 reranker 消耗计算，LLM 又受上下文和生成吞吐影响。最先成为瓶颈的通常不是纯向量磁盘。
 
-## 1. 总体链路
+本文沿 ingest 和 query 两条链路拆开成本，再用可替换公式估算 chunk、向量、回表和模型负载。所有容量数字都是规划值，不是当前机器的 benchmark 结果。
+
+为了让计算直观，示例统一假设向量维度 `d=512`、类型 `float32`。实际维度由当前 embedding 模型决定；切换到其他维度时，纯向量存储和暴力距离计算会近似按 `d / 512` 线性缩放。当前默认存储配置是 LanceDB，chunk 参数为 `INGEST_CHUNK_SIZE=800`、`INGEST_CHUNK_OVERLAP=100`。
+
+## 1. 先把两条成本链分开
 
 ```text
 文件上传 / 网页 URL
@@ -22,7 +26,7 @@ Celery ingest 异步任务
   |-- LanceDB 向量写入
   |-- document_indexes 写入索引元数据
   v
-文档 READY
+文档 indexed
 
 用户提问
   |
@@ -53,7 +57,7 @@ LanceDB Top-K 或 Candidate-K 召回
 | 链路 | 触发时机 | 主要成本 | 主要产物 |
 | --- | --- | --- | --- |
 | Ingest 建库链路 | 文件上传或网页导入后 | 文档解析、chunk、embedding、LanceDB 写入 | `doc_chunks`、LanceDB `chunk_vectors`、`document_indexes` |
-| Query 问答链路 | 用户提问时 | query embedding、LanceDB 召回、rerank、LLM 推理 | answer、citations、messages |
+| Query 问答链路 | 用户提问时 | query embedding、LanceDB 召回、MySQL 回表、rerank、LLM 推理 | answer、citations、messages |
 
 ## 2. 上传与 Ingest 过程
 
@@ -202,7 +206,7 @@ question -> embedding_model -> float32[512]
 
 ### 3.2 LanceDB Top-K 召回
 
-LanceDB 根据 query vector 在 READY 文档范围内搜索相似 chunk：
+LanceDB 根据 query vector 在 indexed 文档范围内搜索相似 chunk：
 
 ```text
 query_vector -> LanceDB chunk_vectors -> candidate chunks
@@ -320,7 +324,7 @@ LLM / vLLM 推理 > reranker > embedding > LanceDB 召回
 
 如果 LanceDB 表很大、过滤范围很宽，或回 MySQL 补齐 chunk 文本很慢，检索阶段也可能成为瓶颈。此时优先看 `retrieval_ms`、`lancedb_ms`、`rerank_ms`、候选数和 MySQL 查询耗时。
 
-## 4. 512 维向量下的容量估算
+## 4. 先用 512 维建立可缩放的容量基线
 
 ### 4.1 每个 chunk 的基础成本
 
@@ -329,6 +333,8 @@ LLM / vLLM 推理 > reranker > embedding > LanceDB 召回
 ```text
 vector_bytes_per_chunk = 512 * 4 = 2048 bytes ≈ 2 KB
 ```
+
+更一般的公式是 `dimension * bytes_per_value`。例如维度翻倍到 1024，纯向量部分也近似翻倍；MySQL chunk 文本不会随维度变化。
 
 但系统实际存储不只有向量：
 
@@ -376,7 +382,7 @@ chunk_count ≈ 文档字符数 / 700
 
 - MySQL 中 chunk 文本是否过大。
 - LanceDB 表是否持续增长且缺少清理、备份和恢复流程。
-- 查询是否需要跨所有 READY 文档检索。
+- 查询是否需要跨所有 indexed 文档检索。
 - 是否需要按用户、租户或知识库做过滤和分片。
 
 ## 5. 检索计算量估算
@@ -396,7 +402,7 @@ chunk_count ≈ 文档字符数 / 700
 | 1,000,000 | 5.12 亿 | 开始明显，需要关注 LanceDB 查询、过滤和内存带宽 |
 | 10,000,000 | 51.2 亿 | 需要更明确的分片、过滤、索引和容量设计 |
 
-当前实现会先解析 READY 文档范围，再把 `doc_ids` 作为 LanceDB 查询过滤条件。如果一次只查少量文档，即使系统总文档很多，只要过滤后的 chunk 数不大，向量召回压力仍然可控。
+当前实现会先解析 indexed 文档范围，再把 `doc_ids` 作为 LanceDB 查询过滤条件。如果一次只查少量文档，即使系统总文档很多，只要过滤后的 chunk 数不大，向量召回压力仍然可控。
 
 如果未来要频繁“跨所有文档检索”，总 chunk 数会直接影响搜索复杂度，此时需要考虑：
 
@@ -554,10 +560,10 @@ ingest_time ≈ text_extract
 | P2 | 定期清理 orphan vectors 并建立 LanceDB 备份恢复流程 | 防止文档删除或重建后向量表膨胀。 |
 | P2 | 大规模时引入 ANN、分片或专门向量检索架构 | 单机默认配置不适合千万级在线检索。 |
 
-## 9. 结论
+## 9. 最终判断：先测计算链，再扩向量库
 
 在 `512` 维 embedding 下，向量本身的存储成本并不高，约 `2 KB / chunk`。如果按默认 `800` 字符切片、`100` overlap，一个百万字符文档大约会产生 `1429` 个 chunk，纯向量只有约 `2.8 MB`。因此，中小规模 RAG 系统的主要瓶颈不是向量存储，而是 embedding 模型吞吐、reranker 延迟、LLM / vLLM 上下文长度和生成吞吐。
 
-当前 LanceDB 默认架构可以较稳地支撑中小规模本地检索；到 10 万到 100 万 chunk 时，需要重点验证 LanceDB 查询、MySQL 回表、reranker 候选数和备份恢复流程；超过百万级后，应认真考虑分片、ANN、冷热数据分层或专门向量检索架构。
+当前 LanceDB 默认架构适合中小规模本地检索；到 10 万到 100 万 chunk 时，需要用真实 benchmark 验证 LanceDB 查询、MySQL 回表、reranker 候选数和备份恢复流程；超过百万级后，应认真考虑分片、ANN、冷热数据分层或专门向量检索架构。
 
 质量上，最关键的是两点：第一，embedding 必须稳定、一致、可评估；第二，rerank 必须是真正基于 question/chunk pair 的语义重排序，而不是简单按向量召回分数或原顺序截断。一个更合理的生产配置是：LanceDB 先召回 `20` 到 `50` 个候选，reranker 重排后取 `3` 到 `5` 个 chunk 拼接给 LLM。

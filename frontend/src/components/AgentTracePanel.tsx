@@ -1,6 +1,10 @@
-import { EmptyState } from "./common/EmptyState";
-import { StatusBadge } from "./common/StatusBadge";
-import { formatNumber, formatScore, stateTone } from "../utils/format";
+import {
+  ArrowCounterClockwise,
+  Broadcast,
+  Check,
+  WarningCircle,
+} from "@phosphor-icons/react";
+import { formatDurationMs, formatScore } from "../utils/format";
 
 export interface TraceCitation {
   docId?: number | null;
@@ -9,6 +13,10 @@ export interface TraceCitation {
   score?: number | null;
   snippet?: string;
   title?: string;
+  originalRank?: number | null;
+  lancedbRank?: number | null;
+  lancedbScore?: number | null;
+  rerankScore?: number | null;
 }
 
 export interface RetrievalTraceDetails {
@@ -16,9 +24,13 @@ export interface RetrievalTraceDetails {
   denseTopK?: number | null;
   rerankTopK?: number | null;
   candidateCount?: number | null;
+  mysqlHydratedCount?: number | null;
   vectorSearchLatencyMs?: number | null;
   rerankLatencyMs?: number | null;
   retrievalLatencyMs?: number | null;
+  rerankModel?: string;
+  rerankProvider?: string;
+  rerankUsed?: boolean | null;
 }
 
 export interface AgentTraceRow {
@@ -33,173 +45,107 @@ export interface AgentTraceRow {
   startedAtMs?: number;
   retrieval?: RetrievalTraceDetails;
   citations?: TraceCitation[];
+  runId?: number | null;
+  stepId?: number | null;
+  eventId?: string | null;
+  lastEventId?: string | null;
+  resumeAttempt?: number;
 }
 
 interface AgentTracePanelProps {
   rows: AgentTraceRow[];
 }
 
-function formatLatency(value: number | undefined): string {
-  if (value === undefined || value === null) {
-    return "--";
+function lastEventId(rows: AgentTraceRow[]): string | null {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (rows[index].eventId) return rows[index].eventId || null;
   }
-  if (value < 1000) {
-    return `${value} ms`;
-  }
-  return `${(value / 1000).toFixed(1)} s`;
+  return null;
 }
 
-function metricValue(value: number | null | undefined): string {
-  return value === null || value === undefined ? "--" : formatNumber(value);
+function eventTitle(row: AgentTraceRow): string {
+  if (row.type === "resume") return `Resumed from event ${row.lastEventId || "unknown"}`;
+  if (row.type === "tool_call") return row.tool || "tool call";
+  if (row.type === "tool_result") return `${row.tool || "tool"} result`;
+  if (row.type === "delta") return "answer tokens";
+  if (row.type === "final") return "answer and citations persisted";
+  if (row.type === "done") return "stream completed";
+  return row.output || row.type;
 }
 
-function displayText(value: string | undefined): string {
-  return value && value.trim() ? value : "--";
-}
-
-function traceKind(row: AgentTraceRow): string {
-  if (row.type === "tool_call") {
-    return "Tool Call";
-  }
-  if (row.type === "tool_result") {
-    return "Tool Result";
-  }
-  if (row.id.includes("generation")) {
-    return "Final Answer";
-  }
-  return "Agent Step";
-}
-
-function traceTitle(row: AgentTraceRow): string {
-  if (row.type === "tool_call") {
-    return row.tool ? `调用 ${row.tool}` : "调用工具";
-  }
-  if (row.type === "tool_result") {
-    return row.tool ? `${row.tool} 返回结果` : "工具返回结果";
-  }
-  return displayText(row.output || row.type);
+function isFailed(row: AgentTraceRow): boolean {
+  return ["FAILED", "FAILURE", "ERROR"].includes(row.status);
 }
 
 export function AgentTracePanel({ rows }: AgentTracePanelProps) {
-  const latestStatus = rows[rows.length - 1]?.status || "idle";
-  const toolCallCount = rows.filter((row) => row.type === "tool_call").length;
-  const agentStepCount = rows.filter((row) => row.type !== "tool_call" && row.type !== "tool_result").length;
-  const totalLatency = rows.reduce((sum, row) => sum + (row.latencyMs || 0), 0);
+  const currentLastEventId = lastEventId(rows);
+  const currentRunId = rows.find((row) => row.runId)?.runId;
 
   return (
-    <aside className="agent-trace-panel">
-      <div className="agent-trace-panel__head">
+    <aside className="agent-trace-panel agent-trace-timeline" aria-labelledby="agent-trace-title">
+      <header className="agent-trace-timeline__head">
         <div>
-          <span className="section-label">Agent Trace</span>
-          <h2>执行路径</h2>
+          <span><Broadcast size={15} /> SSE transport</span>
+          <h2 id="agent-trace-title">Agent Trace</h2>
         </div>
-        <StatusBadge label={latestStatus} tone={stateTone(latestStatus)} />
-      </div>
+        <dl>
+          <div><dt>run_id</dt><dd>{currentRunId ?? "--"}</dd></div>
+          <div><dt>Last-Event-ID</dt><dd>{currentLastEventId ?? "--"}</dd></div>
+        </dl>
+      </header>
 
-      <section className="agent-trace-section">
-        <div className="trace-metrics" aria-label="agent trace metrics">
-          <div>
-            <span>Agent Steps</span>
-            <strong>{formatNumber(agentStepCount)}</strong>
-          </div>
-          <div>
-            <span>Tool Calls</span>
-            <strong>{formatNumber(toolCallCount)}</strong>
-          </div>
-          <div>
-            <span>Latency</span>
-            <strong>{formatLatency(totalLatency || undefined)}</strong>
-          </div>
+      {rows.length === 0 ? (
+        <div className="agent-trace-timeline__empty">
+          <p>等待 Agent SSE 事件。</p>
+          <code>agent_step → tool_call → tool_result → delta → final → done</code>
         </div>
-
-        {rows.length === 0 ? (
-          <EmptyState title="暂无 Agent 轨迹" description="提问后展示判断、工具调用、检索结果和生成步骤。" />
-        ) : (
-          <div className="agent-path" aria-label="Agent execution path">
-            {rows.map((row) => (
-              <article key={row.id} className={`agent-path-card agent-path-card--${stateTone(row.status)}`}>
-                <div className="agent-path-card__marker">{row.step}</div>
-                <div className="agent-path-card__body">
-                  <div className="agent-path-card__top">
-                    <span>{traceKind(row)}</span>
-                    <StatusBadge label={row.status} tone={stateTone(row.status)} />
+      ) : (
+        <ol className="trace-event-list">
+          {rows.map((row) => {
+            const failed = isFailed(row);
+            const resumed = row.type === "resume";
+            return (
+              <li
+                key={row.id}
+                className={`trace-event trace-event--${row.type}${resumed ? " is-resume" : ""}${failed ? " is-failed" : ""}`}
+              >
+                <span className="trace-event__marker" aria-hidden="true">
+                  {resumed ? <ArrowCounterClockwise size={13} /> : failed ? <WarningCircle size={13} /> : <Check size={12} />}
+                </span>
+                <div className="trace-event__content">
+                  <div className="trace-event__topline">
+                    <code>{row.type}</code>
+                    <span>{row.status.toLowerCase()}</span>
                   </div>
-                  <h3>{traceTitle(row)}</h3>
-                  <dl className="agent-path-card__meta">
-                    <div>
-                      <dt>Type</dt>
-                      <dd>{displayText(row.type)}</dd>
-                    </div>
-                    <div>
-                      <dt>Tool</dt>
-                      <dd>{displayText(row.tool)}</dd>
-                    </div>
-                    <div>
-                      <dt>Latency</dt>
-                      <dd>{formatLatency(row.latencyMs)}</dd>
-                    </div>
+                  <strong>{eventTitle(row)}</strong>
+                  <dl>
+                    <div><dt>event_id</dt><dd>{row.eventId || "--"}</dd></div>
+                    <div><dt>step_id</dt><dd>{row.stepId ?? "--"}</dd></div>
+                    <div><dt>tool_name</dt><dd>{row.tool || "--"}</dd></div>
+                    <div><dt>latency</dt><dd>{formatDurationMs(row.latencyMs ?? null)}</dd></div>
                   </dl>
                   {row.retrieval ? (
-                    <dl className="agent-path-card__meta">
-                      <div>
-                        <dt>Provider</dt>
-                        <dd>{displayText(row.retrieval.provider)}</dd>
-                      </div>
-                      <div>
-                        <dt>Dense TopK</dt>
-                        <dd>{metricValue(row.retrieval.denseTopK)}</dd>
-                      </div>
-                      <div>
-                        <dt>Rerank TopK</dt>
-                        <dd>{metricValue(row.retrieval.rerankTopK)}</dd>
-                      </div>
-                      <div>
-                        <dt>Candidates</dt>
-                        <dd>{metricValue(row.retrieval.candidateCount)}</dd>
-                      </div>
-                      <div>
-                        <dt>Vector</dt>
-                        <dd>{formatLatency(row.retrieval.vectorSearchLatencyMs ?? undefined)}</dd>
-                      </div>
-                      <div>
-                        <dt>Rerank</dt>
-                        <dd>{formatLatency(row.retrieval.rerankLatencyMs ?? undefined)}</dd>
-                      </div>
-                      <div>
-                        <dt>Total</dt>
-                        <dd>{formatLatency(row.retrieval.retrievalLatencyMs ?? undefined)}</dd>
-                      </div>
-                    </dl>
+                    <div className="trace-event__retrieval">
+                      <span>{row.retrieval.provider || "retrieval"}</span>
+                      <span>{row.retrieval.candidateCount ?? "--"} candidates</span>
+                      <span>{row.retrieval.rerankModel || "reranker unknown"}</span>
+                    </div>
                   ) : null}
-                  {row.citations && row.citations.length > 0 ? (
-                    <div className="agent-trace-citations">
-                      {row.citations.slice(0, 3).map((citation, index) => (
-                        <article key={`${row.id}-citation-${citation.chunkId ?? index}`}>
-                          <header>
-                            <strong>{displayText(citation.title || `doc ${citation.docId ?? "--"}`)}</strong>
-                            <span>chunk {metricValue(citation.chunkIndex)} / score {formatScore(citation.score ?? Number.NaN)}</span>
-                          </header>
-                          <p title={citation.snippet}>{displayText(citation.snippet)}</p>
-                        </article>
+                  {row.citations?.length ? (
+                    <div className="trace-event__evidence">
+                      {row.citations.slice(0, 2).map((citation, index) => (
+                        <span key={`${row.id}-${citation.chunkId ?? index}`}>
+                          chunk {citation.chunkIndex ?? "--"} / {formatScore(citation.rerankScore ?? citation.score ?? Number.NaN)}
+                        </span>
                       ))}
                     </div>
                   ) : null}
-                  <div className="agent-path-card__io">
-                    <div>
-                      <span>Input</span>
-                      <p title={row.input}>{displayText(row.input)}</p>
-                    </div>
-                    <div>
-                      <span>Output</span>
-                      <p title={row.output}>{displayText(row.output)}</p>
-                    </div>
-                  </div>
                 </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </aside>
   );
 }

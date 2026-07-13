@@ -10,26 +10,14 @@ activate_python_env "${RAG_API_ENV:-rag-api}" "${RAG_API_VENV:-${REPO_ROOT}/.ven
 
 WORKER_DISABLE_CUDA="${WORKER_DISABLE_CUDA:-${PYTHON_DISABLE_CUDA:-false}}"
 WORKER_CUDA_VISIBLE_DEVICES="${WORKER_CUDA_VISIBLE_DEVICES:-${PYTHON_CUDA_VISIBLE_DEVICES:-}}"
-
-case "$WORKER_DISABLE_CUDA" in
-  true|1|yes|on)
-    export CUDA_VISIBLE_DEVICES=""
-    ;;
-  *)
-    if [ -n "$WORKER_CUDA_VISIBLE_DEVICES" ]; then
-      export CUDA_VISIBLE_DEVICES="$WORKER_CUDA_VISIBLE_DEVICES"
-    fi
-    ;;
-esac
+configure_cuda_visibility "worker" "$WORKER_DISABLE_CUDA" "$WORKER_CUDA_VISIBLE_DEVICES"
 
 export PYTHONPATH="$REPO_ROOT"
 
 CELERY_POOL="${CELERY_POOL:-threads}"
 CELERY_CONCURRENCY="${CELERY_CONCURRENCY:-4}"
 
-echo "[INFO] worker CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>}"
-
-celery -A python_rag.app.workers.celery_app worker \
+exec celery -A python_rag.app.workers.celery_app worker \
   -l INFO \
   --pool "${CELERY_POOL}" \
   --concurrency "${CELERY_CONCURRENCY}"

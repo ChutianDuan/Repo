@@ -1,15 +1,8 @@
-# Python dict 转成 SSE 文本
-
-import json
 from typing import Any, Dict, Optional
 
+from python_rag.app.core.error_codes import ERR_STREAM_ABORTED
+from python_rag.app.shared.sse import build_sse_event
 
-def build_sse_event(data: Dict[str, Any], event: Optional[str] = None) -> str:
-    lines = []
-    if event:
-        lines.append("event: %s" % event)
-    lines.append("data: %s" % json.dumps(data, ensure_ascii=False))
-    return "\n".join(lines) + "\n\n"
 
 def build_delta_event(delta: str, index: int) -> str:
     return build_sse_event({
@@ -27,8 +20,22 @@ def build_done_event(meta: Optional[Dict[str, Any]] = None) -> str:
         payload["meta"] = meta
     return build_sse_event(payload)
 
-def build_error_event(message: str) -> str:
+def build_error_event(
+    message: str,
+    code: int = ERR_STREAM_ABORTED,
+    data: Any = None,
+) -> str:
     return build_sse_event({
         "type": "error",
+        "code": code,
         "message": message,
+        "data": data,
     })
+
+
+__all__ = [
+    "build_delta_event",
+    "build_done_event",
+    "build_error_event",
+    "build_sse_event",
+]

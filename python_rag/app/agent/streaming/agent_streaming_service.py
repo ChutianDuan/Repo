@@ -6,9 +6,15 @@ from threading import RLock
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple
 
 from python_rag.app.agent.orchestrator import AgentOrchestrator
-from python_rag.app.modules.chat.stream_event_builder import build_sse_event
+from python_rag.app.core.error_codes import ERR_STREAM_ABORTED
 from python_rag.app.modules.chat.repo import bulk_insert_citations
 from python_rag.app.modules.messages.repo import create_message
+from python_rag.app.shared.sse import (
+    build_sse_comment,
+    build_sse_event,
+    parse_last_event_id,
+    resume_requested,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -16,6 +22,7 @@ logger = logging.getLogger(__name__)
 AGENT_EVENT_TYPES = {"agent_step", "tool_call", "tool_result", "final"}
 STREAM_RESUME_TTL_SECONDS = 15 * 60
 MAX_COMPLETED_STREAMS = 128
+STREAM_HEARTBEAT_SECONDS = 15.0
 
 
 @dataclass
@@ -55,19 +62,6 @@ def _stream_key(
     return (session_id, "message", str(message or "").strip())
 
 
-def _parse_last_event_id(last_event_id: Optional[str]) -> int:
-    if last_event_id is None:
-        return 0
-    try:
-        return max(0, int(str(last_event_id).strip()))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _resume_requested(last_event_id: Optional[str]) -> bool:
-    return last_event_id is not None and str(last_event_id).strip() != ""
-
-
 def _is_terminal_event(event: Dict[str, Any]) -> bool:
     return event.get("type") in {"done", "error"}
 
@@ -101,13 +95,7 @@ def _build_numbered_sse(
     event_id: Optional[int],
     event: Optional[str] = None,
 ) -> str:
-    if event_id is not None:
-        payload = dict(payload)
-        payload["event_id"] = event_id
-    raw = build_sse_event(payload, event=event)
-    if event_id is None:
-        return raw
-    return "id: {0}\n{1}".format(event_id, raw)
+    return build_sse_event(payload, event=event, event_id=event_id)
 
 
 def _sse_for_event(event: Dict[str, Any], event_id: Optional[int] = None) -> str:
@@ -134,11 +122,14 @@ def _sse_for_event(event: Dict[str, Any], event_id: Optional[int] = None) -> str
         return _build_numbered_sse(payload, event_id)
 
     if event_type == "error":
+        payload = {
+            "type": "error",
+            "code": event.get("code", ERR_STREAM_ABORTED),
+            "message": str(event.get("message") or "agent stream error"),
+            "data": event.get("data"),
+        }
         return _build_numbered_sse(
-            {
-                "type": "error",
-                "message": str(event.get("message") or "agent stream error"),
-            },
+            payload,
             event_id,
         )
 
@@ -304,8 +295,29 @@ def _get_or_start_stream_state(
         if existing is not None:
             with existing.lock:
                 is_active = existing.completed_at is None
-            if is_active or _resume_requested(last_event_id):
+            if is_active or resume_requested(last_event_id):
                 return existing
+
+        if resume_requested(last_event_id):
+            state = _AgentStreamState(
+                key=key,
+                session_id=session_id,
+                message=message,
+                trace_id=trace_id,
+                created_at=now,
+                updated_at=now,
+                next_event_id=parse_last_event_id(last_event_id) + 1,
+            )
+            _append_event(
+                state,
+                {
+                    "type": "error",
+                    "code": ERR_STREAM_ABORTED,
+                    "message": "stream resume state expired",
+                },
+            )
+            _STREAMS[key] = state
+            return state
 
         state = _AgentStreamState(
             key=key,
@@ -332,7 +344,7 @@ async def stream_agent_chat(
         trace_id=trace_id,
         last_event_id=last_event_id,
     )
-    queue, replay = _subscribe(state, _parse_last_event_id(last_event_id))
+    queue, replay = _subscribe(state, parse_last_event_id(last_event_id))
 
     try:
         for record in replay:
@@ -341,7 +353,14 @@ async def stream_agent_chat(
                 return
 
         while queue is not None:
-            record = await queue.get()
+            try:
+                record = await asyncio.wait_for(
+                    queue.get(),
+                    timeout=STREAM_HEARTBEAT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                yield build_sse_comment()
+                continue
             yield _sse_for_event(record.event, record.event_id)
             if _is_terminal_event(record.event):
                 break

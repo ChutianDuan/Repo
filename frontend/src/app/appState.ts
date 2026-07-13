@@ -33,7 +33,7 @@ export function normalizeTopK(value: number): number {
   if (!Number.isFinite(value)) {
     return 3;
   }
-  return Math.max(1, Math.min(20, Math.round(value)));
+  return Math.max(1, Math.min(10, Math.round(value)));
 }
 
 export function normalizeDocumentState(value: string | null | undefined): string {

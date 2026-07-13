@@ -1,23 +1,45 @@
-# Drogon Gateway 鉴权与限流
+# 把流量挡在业务之前：Drogon Gateway 的鉴权、限流与 SSE 保护
 
-本文档说明 C++ Drogon Gateway 的 API Key 鉴权和 Redis 限流实现。
+[返回文档地图](README.md)
 
-## 保护范围
+Gateway 的安全职责不是判断“这个问题能不能回答”，而是在请求进入 Python 业务逻辑之前解决三个更基础的问题：调用者是谁，请求频率是否可接受，长连接是否会耗尽进程资源。
 
-- `/health` 不做鉴权和限流，保留给负载均衡、运维探活使用。
-- `/v1/*` 业务接口会先执行 API Key 鉴权，再执行限流。
-- `OPTIONS` 预检请求不拦截，CORS 允许 `Authorization`、`X-API-Key` 和 `X-User-Id`。
+## 请求进入业务前经历什么
 
-## API Key 鉴权
+```mermaid
+flowchart LR
+    C[Client] --> H{Health / OPTIONS?}
+    H -->|yes| P[Pass]
+    H -->|no| A[API Key]
+    A -->|invalid| E401[401]
+    A -->|valid| IP[Redis IP Window]
+    IP -->|exceeded| E429[429]
+    IP --> U[Redis User Window]
+    U -->|Redis error, fail closed| E503[503]
+    U -->|allowed| S{SSE request?}
+    S -->|yes| Slot[Acquire Stream Slot]
+    Slot -->|full| E429
+    Slot -->|ok| B[Business Handler]
+    S -->|no| B
+```
 
-客户端可以使用以下任一方式传递 API Key：
+保护范围：
 
-```bash
+- `/health` 不做鉴权和限流，供负载均衡与运维探活。
+- `OPTIONS` 不拦截，CORS 允许 `Authorization`、`X-API-Key`、`X-User-Id` 和 Last-Event-ID。
+- `/v1/*` 先鉴权，再执行 IP / User 限流。
+- `/v1/chat/stream` 与 `/v1/agent/chat/stream` 还要申请 SSE stream slot。
+
+## API Key 不是用户系统，但可以形成稳定 principal
+
+客户端支持两种 header：
+
+```http
 X-API-Key: your-secret-key
 Authorization: Bearer your-secret-key
 ```
 
-网关从统一的 `GatewayConfig` 入口读取环境变量配置，`cpp_gateway/scripts/start_gateway.sh` 已经会加载根目录 `.env`。
+配置：
 
 ```bash
 GATEWAY_AUTH_ENABLED=true
@@ -25,22 +47,29 @@ GATEWAY_API_KEYS=admin=dev-secret,worker=worker-secret
 GATEWAY_API_KEY_HEADER=X-API-Key
 ```
 
-说明：
+`GATEWAY_API_KEYS` 支持 `name=secret`、`name:secret` 或纯 secret。名称会成为限流 principal；纯 secret 只生成本地指纹，原始 key 不进入 Redis key。
 
-- `GATEWAY_API_KEYS` 支持逗号分隔的 `name=secret`、`name:secret` 或纯 secret。
-- `name` 会作为限流 principal；纯 secret 会生成本地指纹，避免把原始 key 写进 Redis key。
-- `GATEWAY_AUTH_ENABLED` 默认在存在 `GATEWAY_API_KEYS` 时启用；生产环境建议显式设置为 `true`。
-- 鉴权失败返回 `401`，响应体形如：`{"ok":false,"code":"UNAUTHORIZED","message":"missing API key"}`。
+这套能力适合服务级或本地环境访问控制，不等于完整用户身份体系。生产环境仍需要密钥轮换、审计和租户授权。
 
-## Redis 限流
+鉴权与限流错误使用统一的非 SSE 响应 envelope：
 
-实现位于 `cpp_gateway/src/common/GatewaySecurity.*`，使用 Drogon 默认 Redis client：
+```json
+{
+  "code": "UNAUTHORIZED",
+  "message": "missing API key",
+  "data": null
+}
+```
 
-1. IP 维度：按客户端 IP 计数。
-2. User 维度：优先使用 `X-User-Id`，没有时使用 API Key principal；如果二者都没有，则只做 IP 限流。
-3. Redis key 使用固定窗口，Lua 脚本一次完成 `INCR`、首次 `EXPIRE` 和 `TTL` 查询，避免 `INCR` 成功但过期时间设置失败导致 key 长期驻留。
+## 为什么同时做 IP 和 User 两层限流
 
-可配置项：
+只有 IP 限流时，同一 NAT 下的用户会互相影响；只有 User 限流时，匿名请求又可能绕开约束。因此网关按顺序执行：
+
+1. 连接 IP 固定窗口。
+2. `X-User-Id`；没有时使用 API Key principal。
+3. 两者都没有时只保留 IP 限流。
+
+Redis Lua 脚本在一次操作中完成 `INCR`、首次 `EXPIRE` 和 `TTL` 查询，避免计数成功但过期时间丢失。
 
 ```bash
 GATEWAY_RATE_LIMIT_ENABLED=true
@@ -52,17 +81,16 @@ GATEWAY_RATE_LIMIT_REDIS_PREFIX=rag_gateway:rate_limit
 GATEWAY_TRUST_X_FORWARDED_FOR=false
 ```
 
-说明：
+关键取舍：
 
-- 默认窗口为 60 秒。
-- IP 默认每窗口 120 次；User 默认每窗口 60 次。
-- `GATEWAY_RATE_LIMIT_FAIL_OPEN=false` 时 Redis 异常返回 `503 RATE_LIMIT_UNAVAILABLE`；设置为 `true` 时 Redis 异常会放行并写 warning 日志。
-- `GATEWAY_TRUST_X_FORWARDED_FOR=true` 时才信任 `X-Forwarded-For` / `X-Real-IP`，否则使用连接 peer IP。
-- 限流命中返回 `429`，并带 `Retry-After` 以及 `X-RateLimit-IP-*` / `X-RateLimit-User-*` 响应头。
+- `FAIL_OPEN=false` 时 Redis 故障返回 `503 RATE_LIMIT_UNAVAILABLE`；安全优先，但会牺牲可用性。
+- `FAIL_OPEN=true` 时继续放行并写 warning；可用性优先，但失去速率保护。
+- 只有明确位于可信反向代理之后，才设置 `TRUST_X_FORWARDED_FOR=true`，否则客户端可以伪造来源 IP。
+- 命中限制返回 `429`、`Retry-After` 和 `X-RateLimit-*` headers。
 
-## SSE 并发保护
+## SSE 保护的是线程和连接，而不只是请求数
 
-`POST /v1/chat/stream` 会在开始流式代理前申请一个 stream slot，超过上限会返回 `429`：
+当前 Gateway 每个活跃流使用一个受控的 stream slot，但底层仍是 detached OS thread 和阻塞 libcurl。因此 SSE 的主要资源不是瞬时 QPS，而是连接持续时间。
 
 ```bash
 GATEWAY_MAX_STREAMS=64
@@ -73,17 +101,15 @@ GATEWAY_SSE_CURL_BUFFER_BYTES=1024
 GATEWAY_SSE_EMIT_GATEWAY_METRICS=true
 ```
 
-说明：
+- Chat 和 Agent 流共享同一个并发上限。
+- 上游结束、失败或下游断开后释放 slot。
+- upstream idle timeout 防止无数据连接永久占用线程。
+- `gateway_metrics` 在首个上游字节前发送，用于 Gateway 视角 TTFT；它是 transport metadata，不带 Agent event ID。
+- Last-Event-ID 由 Gateway 透传给 Python，续传状态由后端流注册表管理。
 
-- 默认最多允许 64 个并发 SSE 流。
-- 直接携带 `user_message_id` 的请求和需要先创建 user message 的请求都会占用同一个并发配额。
-- slot 会在上游流结束、上游失败或下游断开后释放，避免一请求一 detached thread 的并发数量失控。
-- 下游断开时，`ResponseStream::send` 失败会中止 curl 读取并释放 slot；上游长时间无数据时按 idle timeout 返回 SSE error。
-- 默认会在首个上游字节到达前发送 `gateway_metrics` SSE 事件，包含网关观测到的 `ttft_ms`。
+## 最小验证
 
-## 验证示例
-
-启动前在 `.env` 中写入：
+在本地测试配置中启用较低阈值：
 
 ```bash
 GATEWAY_AUTH_ENABLED=true
@@ -93,19 +119,19 @@ GATEWAY_RATE_LIMIT_IP_LIMIT=3
 GATEWAY_RATE_LIMIT_USER_LIMIT=2
 ```
 
-重新启动 Gateway：
+重启 Gateway：
 
 ```bash
-bash cpp_gateway/scripts/start_gateway.sh
+bash scripts/start_all.sh restart gateway
 ```
 
-缺少 API Key：
+缺少 key：
 
 ```bash
 curl -i http://127.0.0.1:8080/v1/monitor/overview
 ```
 
-携带 API Key：
+携带 key 和用户身份：
 
 ```bash
 curl -i http://127.0.0.1:8080/v1/monitor/overview \
@@ -113,4 +139,13 @@ curl -i http://127.0.0.1:8080/v1/monitor/overview \
   -H "X-User-Id: demo-user"
 ```
 
-重复请求超过窗口阈值后会返回 `429 RATE_LIMITED`。
+重复请求超过 User 阈值后应返回 `429`。验证完成后恢复真实配置，不要把演示 key 提交到仓库。
+
+## 这层保护没有解决什么
+
+- API Key 不是多租户授权模型。
+- 固定窗口不提供令牌桶那样平滑的突发控制。
+- stream slot 限制不能消除“一流一线程”的扩展上限。
+- 当前没有 request ID 全链路审计，也没有 Gateway handler 自动化测试覆盖所有安全分支。
+
+这些边界应该进入容量和上线评审，而不是因为本地 `curl` 返回 200 就被忽略。

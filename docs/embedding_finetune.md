@@ -1,8 +1,12 @@
-# Embedding LoRA 微调实验
+# 当 Top-1 上升而 Recall@10 下降：一次 Embedding LoRA 实验复盘
 
-本文记录 KALM embedding 的 LoRA triplet 微调思路、实验结果，以及它如何接入当前 RAG 系统。主 README 只保留摘要，完整流程、指标和解释放在这里，方便面试或复盘时展开说明。
+[返回文档地图](README.md)
 
-## 实验目标
+Embedding 微调最危险的结论是“指标涨了，所以检索一定更好”。这次 KALM LoRA triplet 实验得到了一组更值得讨论的结果：Top-1、MRR 和 NDCG 上升，但 Recall@5 / Recall@10 下降。它说明模型更会把正确结果排到前面，同时也可能牺牲宽召回。
+
+本文记录数据构造、两轮 hard-negative 自举、指标解释和接入当前 RAG 系统时必须遵守的索引兼容约束。所有数字只对应这次实验数据，不代表当前默认 Qwen embedding 的线上表现。
+
+## 先明确实验想修复什么
 
 通用 embedding 模型在领域文档中可能出现以下问题：
 
@@ -12,28 +16,17 @@
 
 本实验不是只做一次静态 triplet 训练，而是采用“BM25 弱监督 + embedding 自举挖掘”的两阶段流程。目标是先用公开数据集快速构造可训练样本，再用第一轮模型反过来挖掘更难、更贴近模型错误分布的数据对，扩大 positive 与 negative 的 margin，并提升伪检索排序指标。
 
-## 数据构造与训练流程
+## 两轮自举如何产生更难的负样本
 
-```text
-Public Dataset
-      |
-      v
-BM25 weak supervision
-      |-- build initial query-positive pairs
-      |-- sample BM25 hard negatives
-      v
-LoRA training round 1
-      |
-      v
-Embedding model mining
-      |-- encode query and corpus
-      |-- retrieve candidates with the trained model
-      |-- rebuild positive / hard negative pairs
-      v
-LoRA training round 2
-      |
-      v
-Evaluate triplet margin and pseudo retrieval metrics
+```mermaid
+flowchart TD
+    D[Public Dataset] --> B[BM25 Weak Supervision]
+    B --> P[Query / Positive / Hard Negative]
+    P --> R1[LoRA Round 1]
+    R1 --> M[Embedding Mining]
+    M --> H[Harder Negatives]
+    H --> R2[LoRA Round 2]
+    R2 --> E[Triplet + Pseudo Retrieval Evaluation]
 ```
 
 具体思路：
@@ -47,17 +40,19 @@ Evaluate triplet margin and pseudo retrieval metrics
 
 这个流程的核心是自举：BM25 提供低成本初始监督，第一轮模型暴露自身排序错误，第二轮训练重点学习这些更有价值的困难样本。
 
-## 模型信息
+## 实验材料与可复现边界
 
 | 项 | 值 |
 | --- | --- |
-| Base model | `/home/ubuntu/NLP/models/kalm_embedding` |
-| LoRA output | `./outputs/kalm_05b_lora_triplet_ddp_v2/final` |
+| Base model | KALM embedding，本地实验制品未纳入仓库 |
+| LoRA output | 本地 LoRA 输出目录，未纳入仓库 |
 | Triplet samples | 1727 |
 
-当前项目的 `python_rag/app/modules/ingest/embedding_service.py` 通过 `SentenceTransformer(EMBEDDING_MODEL)` 加载 embedding 模型。如果要直接使用 LoRA 结果，建议先将 LoRA adapter 合并或导出为可被 `SentenceTransformer` 直接加载的模型目录；另一种方式是扩展 embedding service，让它显式加载 base model 和 adapter。
+原实验依赖本机模型与输出目录，因此仓库当前只能复核指标记录，不能单凭本文重跑训练。要形成完整可复现实验，还需要补数据版本、随机种子、训练参数、依赖锁定和模型 artifact 校验值。
 
-## Triplet 级别指标
+当前项目通过 `SentenceTransformer(EMBEDDING_MODEL)` 加载 embedding 模型。如果要使用 LoRA 结果，应先将 adapter 合并或导出为可直接加载的模型目录；另一种方式是显式扩展 embedding service，让它同时加载 base model 和 adapter。
+
+## Triplet 指标：正负间隔确实扩大了
 
 | 指标 | Base | LoRA | LoRA - Base |
 | --- | ---: | ---: | ---: |
@@ -74,7 +69,7 @@ Evaluate triplet margin and pseudo retrieval metrics
 - `Mean Margin` 从 `0.113591` 提升到 `0.245272`，说明正负样本间隔扩大。
 - LoRA 后 positive 和 negative 的绝对 score 都下降，但 negative 下降更多，因此 margin 提升。embedding 评估更关注相对排序和 margin，不应只看绝对相似度。
 
-## 伪检索指标
+## 伪检索指标：头部更强，宽召回更弱
 
 | 指标 | Base | LoRA | LoRA - Base |
 | --- | ---: | ---: | ---: |
@@ -94,7 +89,7 @@ Evaluate triplet margin and pseudo retrieval metrics
 - `MRR@5`、`MRR@10` 和 `NDCG@5`、`NDCG@10` 都提升，说明排序质量整体变好。
 - `Recall@5` 和 `Recall@10` 下降，说明 LoRA 模型更强调头部排序，但宽召回有一定损失。后续需要用真实业务 QA 集继续验证，并考虑调大 `top_k`、混合召回或 rerank。
 
-## 接入当前系统
+## 接入系统前，先处理向量空间兼容
 
 ### 配置模型
 
@@ -127,10 +122,12 @@ bash scripts/e2e_ingest.sh ./day7_demo.md
 
 原因是旧向量索引使用的是旧向量空间。项目会把模型名写入 `document_indexes.embedding_model`，查询时如果发现当前模型和索引模型不一致，会返回冲突错误，提醒重新 ingest。
 
-## 面试可讲点
+## 这次实验真正值得讨论的结论
 
 - 为什么微调 embedding：提升领域 query 与 chunk 的匹配能力。
 - 为什么看 triplet margin：RAG 检索更依赖相对排序，而不是单个分数的绝对值。
 - 为什么保存 embedding model：防止旧索引和新模型混用。
 - 为什么 Recall@5/10 下降也不能直接判定失败：Top-1、MRR、NDCG 提升说明头部排序更强，但宽召回需要结合业务数据继续评估。
 - 如何接入工程：导出可加载模型、更新环境变量、重新 ingest、校验 `document_indexes.embedding_model`。
+
+还需要保留一个负面结论：这不是完整业务 QA 评估。伪检索样本与训练构造存在相关性，Top-1 提升可能部分来自数据分布。下一步应在独立人工标注集上比较默认 Qwen embedding、KALM base、LoRA 和 rerank 组合，而不是只继续优化同一套 triplet。

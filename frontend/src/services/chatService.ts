@@ -131,6 +131,17 @@ export interface AgentFinalEvent {
   [key: string]: unknown;
 }
 
+export interface StreamTransportEvent {
+  type: string;
+  eventId: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface StreamResumeEvent {
+  lastEventId: string;
+  attempt: number;
+}
+
 export interface StreamChatCallbacks {
   onDelta?: (delta: string) => void;
   onDone?: (meta: StreamChatDoneMeta) => void;
@@ -138,6 +149,8 @@ export interface StreamChatCallbacks {
   onToolCall?: (event: AgentToolCallEvent) => void;
   onToolResult?: (event: AgentToolResultEvent) => void;
   onFinal?: (event: AgentFinalEvent) => void;
+  onTransportEvent?: (event: StreamTransportEvent) => void;
+  onResume?: (event: StreamResumeEvent) => void;
 }
 
 interface ProcessedSseEvent {
@@ -148,6 +161,7 @@ interface ProcessedSseEvent {
 interface StreamSseOptions {
   resumeOnDisconnect?: boolean;
   maxResumeAttempts?: number;
+  resolveResumeRequest?: (request: unknown, response: Response) => unknown | null;
 }
 
 function appendDecodedText(
@@ -158,7 +172,11 @@ function appendDecodedText(
   return (current + decoder.decode(chunk, { stream: true })).replace(/\r\n/g, "\n");
 }
 
-function processSseEvent(rawEvent: string, callbacks: StreamChatCallbacks): ProcessedSseEvent {
+function processSseEvent(
+  rawEvent: string,
+  callbacks: StreamChatCallbacks,
+  beforeDispatch?: (eventId: string | null) => void,
+): ProcessedSseEvent {
   const lines = rawEvent.split("\n");
   const trimmedLines = lines.map((line) => line.trim());
   const eventName = trimmedLines
@@ -188,6 +206,12 @@ function processSseEvent(rawEvent: string, callbacks: StreamChatCallbacks): Proc
   };
   const type = payload.type || eventName;
   const nextEventId = eventId || (payload.event_id === undefined ? null : String(payload.event_id));
+  beforeDispatch?.(nextEventId);
+  callbacks.onTransportEvent?.({
+    type: type || "message",
+    eventId: nextEventId,
+    payload,
+  });
 
   if (type === "delta") {
     callbacks.onDelta?.(payload.delta || "");
@@ -236,6 +260,30 @@ async function streamSse(
   const maxResumeAttempts = options.maxResumeAttempts ?? 3;
   let resumeAttempts = 0;
   let lastEventId: string | null = null;
+  let resumeFromEventId: string | null = null;
+  let activeRequest = request;
+  let resumeRequestReady = options.resolveResumeRequest === undefined;
+
+  const canResume = () => Boolean(
+    options.resumeOnDisconnect
+    && lastEventId
+    && resumeRequestReady
+    && resumeAttempts < maxResumeAttempts,
+  );
+
+  const scheduleResume = () => {
+    if (!lastEventId) {
+      return;
+    }
+    resumeFromEventId = lastEventId;
+    resumeAttempts += 1;
+  };
+
+  const announceResumed = (receivedEventId: string | null) => {
+    if (!resumeFromEventId || !receivedEventId) return;
+    callbacks.onResume?.({ lastEventId: resumeFromEventId, attempt: resumeAttempts });
+    resumeFromEventId = null;
+  };
 
   while (true) {
     const headers: Record<string, string> = {
@@ -251,14 +299,22 @@ async function streamSse(
       response = await fetch(joinUrl(baseUrl, path), {
         method: "POST",
         headers,
-        body: JSON.stringify(request),
+        body: JSON.stringify(activeRequest),
       });
     } catch (error) {
-      if (!options.resumeOnDisconnect || !lastEventId || resumeAttempts >= maxResumeAttempts) {
+      if (!canResume()) {
         throw error;
       }
-      resumeAttempts += 1;
+      scheduleResume();
       continue;
+    }
+
+    if (options.resolveResumeRequest) {
+      const resolvedRequest = options.resolveResumeRequest(request, response);
+      if (resolvedRequest !== null) {
+        activeRequest = resolvedRequest;
+        resumeRequestReady = true;
+      }
     }
 
     if (!response.ok) {
@@ -281,7 +337,7 @@ async function streamSse(
       try {
         result = await reader.read();
       } catch (error) {
-        if (!options.resumeOnDisconnect || !lastEventId || resumeAttempts >= maxResumeAttempts) {
+        if (!canResume()) {
           throw error;
         }
         readFailed = true;
@@ -297,7 +353,7 @@ async function streamSse(
       buffer = events.pop() || "";
 
       for (const rawEvent of events) {
-        const processed = processSseEvent(rawEvent, callbacks);
+        const processed = processSseEvent(rawEvent, callbacks, announceResumed);
         if (processed.eventId) {
           lastEventId = processed.eventId;
         }
@@ -306,7 +362,7 @@ async function streamSse(
     }
 
     if (!readFailed && buffer.trim()) {
-      const processed = processSseEvent(buffer.trim(), callbacks);
+      const processed = processSseEvent(buffer.trim(), callbacks, announceResumed);
       if (processed.eventId) {
         lastEventId = processed.eventId;
       }
@@ -317,11 +373,11 @@ async function streamSse(
       return;
     }
 
-    if (!options.resumeOnDisconnect || !lastEventId || resumeAttempts >= maxResumeAttempts) {
+    if (!canResume()) {
       throw new Error("stream closed before done event");
     }
 
-    resumeAttempts += 1;
+    scheduleResume();
   }
 }
 
@@ -330,7 +386,35 @@ export async function streamChat(
   request: StreamChatRequest,
   callbacks: StreamChatCallbacks = {},
 ): Promise<void> {
-  return streamSse(baseUrl, "/v1/chat/stream", request, callbacks);
+  return streamSse(
+    baseUrl,
+    "/v1/chat/stream",
+    request,
+    callbacks,
+    {
+      resumeOnDisconnect: true,
+      resolveResumeRequest: (initialRequest, response) => {
+        const rawMessageId = response.headers.get("X-User-Message-ID");
+        const userMessageId = Number(rawMessageId);
+        if (
+          !rawMessageId
+          || !Number.isInteger(userMessageId)
+          || userMessageId <= 0
+          || typeof initialRequest !== "object"
+          || initialRequest === null
+        ) {
+          return null;
+        }
+
+        const resumeRequest: Record<string, unknown> = {
+          ...(initialRequest as Record<string, unknown>),
+          user_message_id: userMessageId,
+        };
+        delete resumeRequest.content;
+        return resumeRequest;
+      },
+    },
+  );
 }
 
 export async function streamAgentChat(

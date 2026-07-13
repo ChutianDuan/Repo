@@ -1,6 +1,10 @@
-# 部署后性能测试指南
+# 不要只测 QPS：RAG 系统的性能测试与结果留档
 
-本文用于部署后的性能验证、回归对比和压测记录。目标不是一次性跑通，而是形成一套后续可以重复执行、持续留档的测试流程。
+[返回文档地图](README.md)
+
+传统 Web 压测常用 QPS 和平均延迟概括结果，但 RAG 请求同时包含检索、回表、rerank、模型首 token、持续生成和 citations 持久化。只报告一个 QPS，既看不出用户等待在哪里，也无法判断系统是否已经用队列积压换取表面吞吐。
+
+这份指南的目标不是跑出一个最好看的数字，而是建立可重复的基线：固定输入和模型，分离 ingest、异步 Chat 与 SSE，记录 P95/P99、队列、错误、成本和检索质量，并保留足够环境信息供版本回归。
 
 当前项目的性能数据主要来自两处：
 
@@ -14,6 +18,17 @@
 - 吞吐：`QPS`、`concurrent sessions`、`worker queue depth`、`active SSE connections`
 - 稳定性/质量：`error rate`、`timeout rate`、`retrieval_ms`、`citation_count`、`no_context ratio`
 
+## 先写下性能假设
+
+一次测试应该先声明要验证什么，例如：
+
+- 单并发下 TTFT 是否满足交互目标。
+- 并发增加时瓶颈先出现在 Worker、reranker、LLM 还是 SSE slot。
+- embedding 或模型切换是否改变成本与 P95。
+- 队列在停止施压后能否回落，而不是持续积压。
+
+没有假设的压测容易退化成“把并发调高，截一张成功率图”。
+
 ## 1. 测试前准备
 
 ### 1.1 环境检查
@@ -21,7 +36,7 @@
 开始测试前，至少确认以下条件：
 
 - MySQL、Redis、FastAPI、Celery Worker、C++ Gateway 已启动
-- 如使用真实模型，Embedding 服务和 LLM / vLLM 已启动
+- 如使用真实模型，embedding provider / 本地模型和 LLM / vLLM 已可用
 - 已执行数据库初始化和迁移：
 
 ```bash
@@ -66,31 +81,22 @@ EMBEDDING_COST_PER_1K_TOKENS=
 - 部署机器规格
 - 是否启用 mock fallback
 
+测真实模型性能时应设置 `CHAT_ENABLE_MOCK_FALLBACK=false`。否则模型故障可能被 mock 回答掩盖，延迟和成功率都会失真。
+
 ## 2. 观测入口
 
 ### 2.1 服务启动
 
-建议每个服务单独开一个终端：
+MySQL / Redis 和模型入口可用后，使用统一入口启动被测栈：
 
 ```bash
-# 1. MySQL / Redis 先启动，并初始化数据库
 bash scripts/init_db.sh
-
-# 2. 可选：启动 vLLM
-source .venv/bin/activate
 bash scripts/start_vllm.sh
-
-# 3. 启动 FastAPI
-source .venv/bin/activate
-bash scripts/start_api.sh
-
-# 4. 启动 Celery Worker
-source .venv/bin/activate
-bash scripts/start_worker.sh
-
-# 5. 启动 C++ Gateway
-bash cpp_gateway/scripts/start_gateway.sh
+START_FRONTEND=true bash scripts/start_all.sh start
+bash scripts/start_all.sh status
 ```
+
+需要观察单个进程的前台日志时，再使用 `start_api.sh`、`start_worker.sh` 或 `start_gateway.sh` 单独启动。不要同时保留统一脚本和手工启动的重复进程。
 
 ### 2.2 健康检查
 
@@ -118,8 +124,11 @@ curl http://127.0.0.1:8080/v1/monitor/overview
 目的：确认链路能跑通，不看性能结论。
 
 ```bash
+# 只验证上传与 ingest
 bash scripts/e2e_ingest.sh ./day7_demo.md
-bash scripts/e2e_chat.sh ./day7_demo.md
+
+# 验证 Gateway 上传、ingest、Chat、citations 与 monitor
+bash scripts/e2e_all.sh ./day7_demo.md
 ```
 
 检查点：
@@ -384,7 +393,22 @@ python3 scripts/metrics_benchmark.py \
   --concurrency 8
 ```
 
-### 7.3 多并发档位手动执行
+### 7.3 绕过 RAG 测原始 vLLM
+
+当目标是区分“模型本身慢”还是“检索链路慢”时，直接调用 OpenAI-compatible endpoint：
+
+```bash
+python3 scripts/vllm_benchmark.py \
+  --base-url http://127.0.0.1:9000/v1 \
+  --model Qwen3-14B \
+  --mode both \
+  --requests 20 \
+  --concurrency 5
+```
+
+该脚本不经过 Gateway、FastAPI、LanceDB 或 reranker。报告中的 TTFT 和吞吐不能代表完整 RAG 体验，只适合建立模型服务基线。API Key 从 `VLLM_API_KEY` 或 `LLM_API_KEY` 读取，不进入命令参数和 JSON 输出。
+
+### 7.4 多并发档位手动执行
 
 ```bash
 for c in 1 2 4 8 16; do
@@ -435,6 +459,8 @@ done
 - `requests` 是否存在
 - `--python-base-url` 和 `--gateway-base-url` 是否可达
 
-## 9. 结论建议
+## 9. 结论应该回答什么
 
-部署后性能验证不要只做一轮短压测。至少保留一轮单并发基线、一轮并发爬坡和一轮长稳结果，后续版本升级、模型切换、Worker 并发调整和机器规格变化，都用同一套模板对比，结论才可靠。
+部署后性能验证不要只做一轮短压测。至少保留一轮单并发基线、一轮并发爬坡和一轮长稳结果，后续版本升级、模型切换、Worker 并发调整和机器规格变化，都用同一套模板对比。
+
+最终结论至少回答：瓶颈位于哪一段，目标并发下 P95/P99 是否可接受，停止施压后队列是否恢复，错误是否来自限流、超时还是模型，质量与成本是否发生回退。无法回答这些问题的 QPS 数字，不足以支持上线或扩容决策。

@@ -9,13 +9,27 @@ from python_rag.app.modules.ingest.web_page_service import WebPageDocument
 
 
 class FakeResponse:
-    def __init__(self, html: str, url: str = "https://example.com/docs") -> None:
-        self.status_code = 200
+    def __init__(
+        self,
+        html: str,
+        url: str = "https://example.com/docs",
+        status_code: int = 200,
+        headers=None,
+    ) -> None:
+        self.status_code = status_code
         self.url = url
-        self.headers = {"content-type": "text/html; charset=utf-8"}
+        self.headers = headers or {"content-type": "text/html; charset=utf-8"}
         self.encoding = "utf-8"
         self.apparent_encoding = "utf-8"
         self.content = html.encode("utf-8")
+        self.closed = False
+
+    def iter_content(self, chunk_size):
+        del chunk_size
+        yield self.content
+
+    def close(self):
+        self.closed = True
 
 
 def test_fetch_web_page_document_extracts_readable_markdown(monkeypatch):
@@ -41,9 +55,11 @@ def test_fetch_web_page_document_extracts_readable_markdown(monkeypatch):
     def fake_request(method, url, **kwargs):
         assert method == "GET"
         assert url == "https://example.com/docs"
-        assert kwargs["allow_redirects"] is True
+        assert kwargs["allow_redirects"] is False
+        assert kwargs["stream"] is True
         return FakeResponse(html)
 
+    monkeypatch.setattr(web_page_service, "_validate_public_target", lambda url: url)
     monkeypatch.setattr(web_page_service.http_client, "request", fake_request)
 
     document = web_page_service.fetch_web_page_document("https://example.com/docs")
@@ -63,6 +79,58 @@ def test_fetch_web_page_document_rejects_non_http_url():
         web_page_service.fetch_web_page_document("ftp://example.com/file")
 
     assert "http or https" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/admin",
+        "http://10.0.0.1/internal",
+        "http://169.254.169.254/latest/meta-data",
+        "http://[::1]/admin",
+    ],
+)
+def test_fetch_web_page_document_rejects_non_public_targets(url):
+    with pytest.raises(AppError, match="public address"):
+        web_page_service.fetch_web_page_document(url)
+
+
+def test_fetch_web_page_document_revalidates_redirect_target(monkeypatch):
+    response = FakeResponse(
+        "",
+        status_code=302,
+        headers={"location": "http://127.0.0.1/internal"},
+    )
+    monkeypatch.setattr(
+        web_page_service,
+        "_validate_public_target",
+        lambda url: url if "example.com" in url else (_ for _ in ()).throw(
+            AppError(4000, "url must resolve to a public address")
+        ),
+    )
+    monkeypatch.setattr(web_page_service.http_client, "request", lambda *args, **kwargs: response)
+
+    with pytest.raises(AppError, match="public address"):
+        web_page_service.fetch_web_page_document("https://example.com/docs")
+
+    assert response.closed is True
+
+
+def test_fetch_web_page_document_rejects_oversized_body(monkeypatch):
+    response = FakeResponse(
+        "ignored",
+        headers={
+            "content-type": "text/html",
+            "content-length": str(web_page_service.MAX_WEB_DOCUMENT_BYTES + 1),
+        },
+    )
+    monkeypatch.setattr(web_page_service, "_validate_public_target", lambda url: url)
+    monkeypatch.setattr(web_page_service.http_client, "request", lambda *args, **kwargs: response)
+
+    with pytest.raises(AppError, match="too large"):
+        web_page_service.fetch_web_page_document("https://example.com/docs")
+
+    assert response.closed is True
 
 
 def test_save_web_document_writes_markdown_and_creates_document_record(monkeypatch, tmp_path):

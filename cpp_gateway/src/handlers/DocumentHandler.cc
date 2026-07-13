@@ -168,6 +168,7 @@ void DocumentService::uploadAndSubmit(
         Json::Value json;
         json["code"] = 400;
         json["message"] = "invalid multipart form data";
+        json["data"] = Json::nullValue;
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k400BadRequest);
         (*sharedCallback)(resp);
@@ -179,6 +180,7 @@ void DocumentService::uploadAndSubmit(
         Json::Value json;
         json["code"] = 400;
         json["message"] = "exactly one file is required";
+        json["data"] = Json::nullValue;
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k400BadRequest);
         (*sharedCallback)(resp);
@@ -201,6 +203,7 @@ void DocumentService::uploadAndSubmit(
         Json::Value json;
         json["code"] = 400;
         json["message"] = "user_id must be positive";
+        json["data"] = Json::nullValue;
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k400BadRequest);
         (*sharedCallback)(resp);
@@ -213,6 +216,7 @@ void DocumentService::uploadAndSubmit(
         Json::Value json;
         json["code"] = 500;
         json["message"] = std::string("failed to create upload dir: ") + e.what();
+        json["data"] = Json::nullValue;
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k500InternalServerError);
         (*sharedCallback)(resp);
@@ -226,6 +230,7 @@ void DocumentService::uploadAndSubmit(
         json["code"] = 400;
         json["message"] =
             "unsupported file type; currently supported: " + supportedDocumentTypesText();
+        json["data"] = Json::nullValue;
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k400BadRequest);
         (*sharedCallback)(resp);
@@ -239,7 +244,7 @@ void DocumentService::uploadAndSubmit(
         Json::Value json;
         json["code"] = 400;
         json["message"] = "upload file is too large";
-        json["max_document_size_bytes"] = Json::Int64(maxSizeBytes);
+        json["data"]["max_document_size_bytes"] = Json::Int64(maxSizeBytes);
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k400BadRequest);
         (*sharedCallback)(resp);
@@ -249,8 +254,7 @@ void DocumentService::uploadAndSubmit(
     const std::string storedName = buildStoredFileName(userId, originalName, sha256);
     const std::string storagePath = (getUploadDir() / storedName).string();
 
-    // Drogon 官方文件上传示例里是 parse 后拿 HttpFile，再保存。这里为兼容我们自定义命名，
-    // 直接把 file.fileContent() 写到目标路径。multipart 解析流程本身来自官方示例和 wiki。 :contentReference[oaicite:3]{index=3}
+    // Keep the original filename in metadata while storing a collision-safe name on disk.
     try {
         std::ofstream ofs(storagePath, std::ios::binary);
         if (!ofs) {
@@ -262,6 +266,7 @@ void DocumentService::uploadAndSubmit(
         Json::Value json;
         json["code"] = 500;
         json["message"] = std::string("failed to save file: ") + e.what();
+        json["data"] = Json::nullValue;
         auto resp = HttpResponse::newHttpJsonResponse(json);
         resp->setStatusCode(k500InternalServerError);
         (*sharedCallback)(resp);
@@ -284,6 +289,7 @@ void DocumentService::uploadAndSubmit(
                 Json::Value json;
                 json["code"] = 500;
                 json["message"] = "inserted document but failed to read doc_id";
+                json["data"] = Json::nullValue;
                 auto resp = HttpResponse::newHttpJsonResponse(json);
                 resp->setStatusCode(k500InternalServerError);
                 (*sharedCallback)(resp);
@@ -302,8 +308,8 @@ void DocumentService::uploadAndSubmit(
                                 Json::Value json;
                                 json["code"] = 502;
                                 json["message"] = err;
-                                json["doc_id"] = Json::Int64(docId);
-                                json["rolled_back"] = true;
+                                json["data"]["doc_id"] = Json::Int64(docId);
+                                json["data"]["rolled_back"] = true;
                                 auto resp = HttpResponse::newHttpJsonResponse(json);
                                 resp->setStatusCode(k502BadGateway);
                                 (*sharedCallback)(resp);
@@ -312,8 +318,8 @@ void DocumentService::uploadAndSubmit(
                                 Json::Value json;
                                 json["code"] = 502;
                                 json["message"] = err + "; rollback document cleanup failed: " + e.base().what();
-                                json["doc_id"] = Json::Int64(docId);
-                                json["rolled_back"] = false;
+                                json["data"]["doc_id"] = Json::Int64(docId);
+                                json["data"]["rolled_back"] = false;
                                 auto resp = HttpResponse::newHttpJsonResponse(json);
                                 resp->setStatusCode(k502BadGateway);
                                 (*sharedCallback)(resp);
@@ -353,6 +359,7 @@ void DocumentService::uploadAndSubmit(
             json["message"] = dbError.find("Duplicate entry") != std::string::npos
                 ? "document already exists for this user"
                 : std::string("db insert document failed: ") + dbError;
+            json["data"] = Json::nullValue;
             auto resp = HttpResponse::newHttpJsonResponse(json);
             resp->setStatusCode(
                 dbError.find("Duplicate entry") != std::string::npos

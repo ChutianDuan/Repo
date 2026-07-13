@@ -4,12 +4,54 @@
 
 load_dotenv() {
   local env_file="${1:-.env}"
-  if [ -f "$env_file" ]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$env_file"
+  [ -f "$env_file" ] || return 0
+
+  # Explicit process environment wins over .env, so commands such as
+  # START_FRONTEND=true bash scripts/start_all.sh remain predictable.
+  local -A exported_before=()
+  local name
+  while IFS= read -r name; do
+    exported_before["$name"]="${!name}"
+  done < <(compgen -e)
+
+  local restore_allexport=false
+  case "$-" in
+    *a*) restore_allexport=true ;;
+    *) set -a ;;
+  esac
+
+  # shellcheck disable=SC1090
+  source "$env_file"
+
+  if [ "$restore_allexport" = "false" ]; then
     set +a
   fi
+
+  for name in "${!exported_before[@]}"; do
+    printf -v "$name" '%s' "${exported_before[$name]}"
+    export "$name"
+  done
+}
+
+is_true() {
+  case "${1:-}" in
+    true|1|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+configure_cuda_visibility() {
+  local label="$1"
+  local disabled="${2:-false}"
+  local devices="${3:-}"
+
+  if is_true "$disabled"; then
+    export CUDA_VISIBLE_DEVICES=""
+  elif [ -n "$devices" ]; then
+    export CUDA_VISIBLE_DEVICES="$devices"
+  fi
+
+  echo "[INFO] ${label} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>}"
 }
 
 configure_vcpkg_defaults() {
@@ -149,36 +191,6 @@ poll_gateway_task() {
   for _ in $(seq 1 "$max_rounds"); do
     local task_resp
     task_resp="$(curl -fsS "${auth_headers[@]}" "$status_url")"
-    echo "$task_resp"
-
-    local state
-    state="$(printf "%s" "$task_resp" | json_read "data.get('data', data).get('state')")"
-    if [ "$state" = "SUCCESS" ]; then
-      echo "[OK] ${label} success"
-      return 0
-    fi
-    if [ "$state" = "FAILURE" ] || [ "$state" = "FAILED" ]; then
-      echo "[ERROR] ${label} failed" >&2
-      return 1
-    fi
-
-    sleep 1
-  done
-
-  echo "[ERROR] timeout waiting ${label}" >&2
-  return 1
-}
-
-poll_internal_task() {
-  local base_url="$1"
-  local task_id="$2"
-  local label="$3"
-  local max_rounds="${4:-60}"
-  local status_url="${base_url}/internal/tasks/${task_id}"
-
-  for _ in $(seq 1 "$max_rounds"); do
-    local task_resp
-    task_resp="$(curl -fsS "$status_url")"
     echo "$task_resp"
 
     local state

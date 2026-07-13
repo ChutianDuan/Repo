@@ -256,3 +256,28 @@ def test_stream_agent_chat_resumes_after_client_disconnect(monkeypatch):
             ],
         }
     ]
+
+
+def test_stream_agent_chat_reports_expired_resume_state():
+    agent_streaming_service._reset_agent_stream_registry_for_tests()
+
+    async def collect_events():
+        return [
+            event
+            async for event in agent_streaming_service.stream_agent_chat(
+                session_id=99,
+                message="expired",
+                last_event_id="4",
+            )
+        ]
+
+    try:
+        events = asyncio.run(collect_events())
+    finally:
+        agent_streaming_service._reset_agent_stream_registry_for_tests()
+
+    assert len(events) == 1
+    assert events[0].startswith("id: 5\n")
+    assert '"type": "error"' in events[0]
+    assert '"code": 6004' in events[0]
+    assert "stream resume state expired" in events[0]

@@ -1,8 +1,22 @@
-# Agent API 文档
+# 在 JSON 与 SSE 之间：RAG / Agent API 契约
 
-本文档只覆盖 MVP 演示所需的旧 RAG 与新 Agent 接口。外部演示优先走 C++ Gateway 的 `/v1/*`，持久化 Trace 调试走 FastAPI 内部 `/internal/agent/*`。
+[返回文档地图](README.md)
 
-## 通用响应
+RAG 客户端真正需要稳定的不是 URL 数量，而是三类契约：普通请求怎样表达成功和失败，异步任务怎样确认完成，SSE 断线后怎样继续同一次生成。
+
+外部客户端优先使用 Drogon Gateway `/v1/*`；FastAPI `/internal/*` 只用于服务间调用和调试。兼容 `/api/agent/*` 不是推荐的新客户端入口。
+
+## 先选择正确的交互模式
+
+| 需求 | 推荐入口 | 完成依据 |
+| --- | --- | --- |
+| 上传并建库 | `POST /v1/documents` / `documents/web` | 轮询 task 到 `SUCCESS`，文档最终 indexed |
+| 非流式普通 RAG | `POST /v1/sessions/{id}/messages` | task 成功后重新查询 messages |
+| 流式普通 RAG | `POST /v1/chat/stream` | SSE `done` |
+| 流式 Agent | `POST /v1/agent/chat/stream` | SSE `final` 后的 `done` |
+| Trace 调试 | `/internal/agent/runs/{id}` | 持久化 run / steps / tool calls |
+
+## JSON envelope 与一个已知例外
 
 普通 JSON 接口统一返回：
 
@@ -14,11 +28,16 @@
 }
 ```
 
-SSE 接口返回 `text/event-stream`，每个事件形如：
+FastAPI 验证错误、业务错误和多数 Gateway 错误也使用相同 envelope，并通过 HTTP status 表达传输层语义。
+
+Gateway 自身的参数校验、鉴权、限流错误也使用同一 envelope；SSE 错误仍通过 `type=error` 事件表达。
+
+SSE 接口返回 `text/event-stream`。可续传事件同时在 SSE `id` 和 JSON `event_id` 中带编号：
 
 ```text
+id: 7
 event: agent_step
-data: {"type":"agent_step","run_id":1}
+data: {"type":"agent_step","event_id":7,"run_id":1}
 
 ```
 
@@ -103,7 +122,7 @@ Content-Type: application/json
 GET /v1/tasks/{task_id}
 ```
 
-任务成功时 `data.state` 为 `SUCCESS`。文档完成 ingest 后进入全局 READY 知识库。
+任务成功时 `data.state` 为 `SUCCESS`。文档只有在后续 embedding 任务完成、`index_status=indexed` 后才真正可检索；解析 task 成功不等于索引已经完成。
 
 ### 查询文档
 
@@ -173,9 +192,9 @@ GET /v1/sessions/{session_id}/messages
 }
 ```
 
-## 旧 RAG 接口
+## 普通 RAG 接口
 
-### 异步旧 RAG 问答
+### 异步普通 RAG 问答
 
 ```http
 POST /v1/sessions/{session_id}/messages
@@ -216,7 +235,7 @@ Content-Type: application/json
 
 客户端随后轮询 `/v1/tasks/{task_id}`，成功后调用 `/v1/sessions/{session_id}/messages` 展示回答与 citations。
 
-### 流式旧 RAG 问答
+### 流式普通 RAG 问答
 
 ```http
 POST /v1/chat/stream
@@ -242,6 +261,24 @@ SSE 事件：
 | `done` | 结束事件，`meta` 包含 `assistant_message_id`、`citation_count`、`retrieval_ms` 等。 |
 | `error` | 流式失败。 |
 
+首次请求携带 `content`，Gateway 创建 user message 后通过响应头返回：
+
+```http
+X-User-Message-ID: 21
+```
+
+连接中断后，客户端使用同一个 `user_message_id`，移除 `content`，并携带最后确认的事件 ID：
+
+```http
+POST /v1/chat/stream
+Last-Event-ID: 18
+Content-Type: application/json
+
+{"session_id":3,"user_message_id":21,"top_k":5}
+```
+
+如果重新发送原始 `content`，Gateway 会把它当成新消息，存在重复生成风险。续传状态默认保留 15 分钟；过期时返回明确 `error`，不会静默重启任务。
+
 ## 新 Agent 接口
 
 ### 网关流式 Agent 问答
@@ -266,6 +303,7 @@ SSE 事件：
 
 | `type` | 说明 |
 | --- | --- |
+| `gateway_metrics` | Gateway transport metadata，例如 Gateway 视角 TTFT；不参与 Agent event ID。 |
 | `agent_step` | Agent 决策步骤状态。 |
 | `tool_call` | 工具开始调用，工具名来自当前可用只读工具列表。 |
 | `tool_result` | 工具返回结果或失败信息，`result` 使用 `ok/error/data` 结构。 |
@@ -287,6 +325,8 @@ event: done
 data: {"type":"done","meta":{"agent_run_id":8,"citation_count":5}}
 
 ```
+
+Agent 续传请求必须复用相同 `trace_id` 并携带 Last-Event-ID。后端以 session + trace ID 识别同一次运行；客户端不应在重连时生成新的 trace ID。
 
 ### FastAPI 非流式 Agent 问答
 
@@ -410,10 +450,24 @@ Agent 当前只允许只读工具。入口会先做轻量检索意图判断：�
         "title": "day7_demo.md",
         "content": "截断后的 chunk 内容",
         "snippet": "引用片段",
-        "score": 0.91
+        "score": 0.91,
+        "lancedb_score": 0.82,
+        "rerank_score": 0.91,
+        "lancedb_rank": 4,
+        "original_rank": 4
       }
     ],
-    "total": 1
+    "total": 1,
+    "retrieval": {
+      "provider": "lancedb",
+      "candidate_count": 50,
+      "mysql_hydrated_candidate_count": 50,
+      "rerank_used": true,
+      "rerank_model": "Qwen/Qwen3-Reranker-0.6B",
+      "vector_search_latency_ms": 12,
+      "rerank_latency_ms": 38,
+      "retrieval_latency_ms": 57
+    }
   }
 }
 ```
@@ -446,7 +500,16 @@ Agent 会把带有 `doc_id`、`chunk_id`、`chunk_index` 的结果转换为 cita
 | 现象 | 可能原因 | 处理 |
 | --- | --- | --- |
 | `session not found` | `session_id` 不存在。 | 先调用 `/v1/sessions` 创建会话。 |
-| `no ready document index found` | 没有 READY 文档或 embedding 模型切换后旧索引不可用。 | 上传文档并等待 ingest 成功，必要时重新 ingest。 |
+| `no ready document index found` | 没有 indexed 文档，或 embedding 模型切换后旧索引不可用。 | 上传文档并等待 embedding 完成，必要时重新 ingest。 |
 | Agent 没有工具调用 | 问题未命中强制检索路由，且被 LLM 判断为闲聊或不依赖文档。 | 提问中明确要求“根据知识库/项目文档/代码/架构/上传文档”。 |
 | citations 为空 | 工具未检索到结果，或工具结果缺少 chunk 元数据。 | 检查 `tool_result.result.data.total` 和 `/internal/agent/runs/{run_id}/steps`。 |
 | Agent 返回“已达到工具调用上限” | 达到 `max_steps` 安全上限。 | 查看 Trace 中 `termination_reason=max_steps`，必要时缩小问题或提高 `max_steps`。 |
+
+## 客户端实现检查清单
+
+- 同时检查 HTTP status 和 JSON `code`，并兼容 Gateway 安全错误的旧结构。
+- 异步路径以 task 状态为准，不把提交成功当成业务完成。
+- SSE parser 保留 `id`、`event` 和多行 `data`，忽略 heartbeat comment。
+- 只在收到 `done` 后认为流完整结束；`final` 表示答案已保存，但传输仍有终止事件。
+- 普通 Chat 续传复用 `X-User-Message-ID`；Agent 续传复用 `trace_id`。
+- UI 不要从缺失字段推断健康、逐节点耗时或句子级 citation span。

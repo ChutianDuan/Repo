@@ -6,8 +6,24 @@ import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from python_rag.app.agent import orchestration_config as config
+from python_rag.app.agent.intent_router import (
+    KNOWLEDGE_SEARCH_ROUTER_REASON,
+    build_forced_knowledge_search_tool_call as _build_forced_knowledge_search_tool_call,
+    should_force_knowledge_search as _should_force_knowledge_search,
+)
 from python_rag.app.agent.memory import session as session_memory
 from python_rag.app.agent.schemas import AgentStepStatus, AgentToolCallStatus
+from python_rag.app.agent.tool_protocol import (
+    normalize_tool_result as _normalize_tool_result,
+    parse_tool_arguments as _parse_tool_arguments,
+    tool_call_id as _tool_call_id,
+    tool_call_name as _tool_call_name,
+    tool_call_signature as _tool_call_signature,
+    tool_error_result as _tool_error_result,
+    tool_result_data as _tool_result_data,
+    tool_result_error as _tool_result_error,
+    validate_tool_arguments as _validate_tool_arguments,
+)
 from python_rag.app.agent.tools.local.knowledge_tools import KNOWLEDGE_SEARCH_TOOL_NAME
 from python_rag.app.agent.trace import trace_service as default_trace_service
 from python_rag.app.modules.llm import service as default_llm_service
@@ -24,161 +40,8 @@ MAX_STEPS_FALLBACK_ANSWER = (
     "已达到工具调用上限，以下结论仅基于已有观察；当前证据不足以继续补充，"
     "建议缩小问题或提高 max_steps 后重试。"
 )
-STANDARD_TOOL_RESULT_KEYS = {"ok", "error", "data"}
-KNOWLEDGE_SEARCH_ROUTER_REASON = "project_document_code_intent"
-
-KNOWLEDGE_SEARCH_STRONG_INTENT_TERMS = (
-    "项目文档",
-    "项目资料",
-    "知识库",
-    "文档里",
-    "文档中",
-    "上传文档",
-    "上传网页",
-    "网页上传",
-    "导入网页",
-    "项目架构",
-    "系统架构",
-    "代码库",
-    "当前项目",
-    "这个项目",
-    "agent项目",
-    "embedding",
-    "向量化",
-    "向量库",
-    "project docs",
-    "project document",
-    "knowledge base",
-    "codebase",
-    "source code",
-    "web ingest",
-    "web page",
-    "webpage",
-    "url import",
-    "vector index",
-)
-KNOWLEDGE_SEARCH_TOPIC_TERMS = (
-    "项目",
-    "文档",
-    "资料",
-    "代码",
-    "源码",
-    "架构",
-    "模块",
-    "实现",
-    "能力",
-    "功能",
-    "上传",
-    "导入",
-    "网页",
-    "索引",
-    "分块",
-    "检索",
-    "召回",
-    "引用",
-    "project",
-    "document",
-    "docs",
-    "code",
-    "architecture",
-    "module",
-    "implementation",
-    "capability",
-    "feature",
-    "upload",
-    "import",
-    "ingest",
-    "retrieval",
-    "index",
-    "chunk",
-    "citation",
-)
-KNOWLEDGE_SEARCH_CONTEXT_TERMS = (
-    "项目",
-    "系统",
-    "agent",
-    "当前",
-    "这个",
-    "本地",
-    "project",
-    "system",
-    "this",
-    "current",
-    "local",
-)
-KNOWLEDGE_SEARCH_INTENT_TERMS = (
-    "怎么",
-    "如何",
-    "为什么",
-    "是否",
-    "有没有",
-    "能否",
-    "支持",
-    "总结",
-    "说明",
-    "解释",
-    "介绍",
-    "查询",
-    "查看",
-    "列出",
-    "有哪些",
-    "优化",
-    "实现",
-    "流程",
-    "设计",
-    "what",
-    "how",
-    "why",
-    "whether",
-    "does",
-    "do ",
-    "can ",
-    "support",
-    "explain",
-    "summarize",
-    "list",
-    "show",
-    "optimize",
-    "implement",
-    "design",
-)
-
-
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
-
-
-def _normalize_intent_text(question: str) -> str:
-    return " ".join(str(question or "").strip().lower().split())
-
-
-def _should_force_knowledge_search(question: str) -> bool:
-    normalized = _normalize_intent_text(question)
-    if not normalized:
-        return False
-
-    if any(term in normalized for term in KNOWLEDGE_SEARCH_STRONG_INTENT_TERMS):
-        return True
-
-    has_topic = any(term in normalized for term in KNOWLEDGE_SEARCH_TOPIC_TERMS)
-    if not has_topic:
-        return False
-
-    return (
-        any(term in normalized for term in KNOWLEDGE_SEARCH_CONTEXT_TERMS)
-        or any(term in normalized for term in KNOWLEDGE_SEARCH_INTENT_TERMS)
-    )
-
-
-def _build_forced_knowledge_search_tool_call(question: str) -> Dict[str, Any]:
-    return {
-        "id": "forced_knowledge_search_0",
-        "type": "function",
-        "function": {
-            "name": KNOWLEDGE_SEARCH_TOOL_NAME,
-            "arguments": _json_dumps({"query": question}),
-        },
-    }
 
 
 async def _emit_agent_event(
@@ -245,200 +108,6 @@ def _add_usage(
                 + prompt_tokens
                 + completion_tokens
             )
-
-
-def _parse_tool_arguments(tool_call: Dict[str, Any]) -> Dict[str, Any]:
-    function = tool_call.get("function") or {}
-    raw_arguments = function.get("arguments")
-    if raw_arguments is None or raw_arguments == "":
-        return {}
-    if isinstance(raw_arguments, dict):
-        return raw_arguments
-    if not isinstance(raw_arguments, str):
-        raise ValueError("tool arguments must be a JSON object")
-
-    parsed = json.loads(raw_arguments)
-    if not isinstance(parsed, dict):
-        raise ValueError("tool arguments must be a JSON object")
-    return parsed
-
-
-def _tool_call_name(tool_call: Dict[str, Any]) -> str:
-    function = tool_call.get("function") or {}
-    return str(function.get("name") or "").strip()
-
-
-def _tool_call_id(tool_call: Dict[str, Any], fallback_index: int) -> str:
-    return str(tool_call.get("id") or "tool_call_{0}".format(fallback_index))
-
-
-def _tool_result_error(result: Any) -> Optional[str]:
-    if not isinstance(result, dict):
-        return "tool result must be a JSON object"
-    if _is_standard_tool_result(result) and result.get("ok") is True:
-        return None
-    error = result.get("error")
-    if error is None:
-        return None
-    error_message = str(error).strip()
-    return error_message or None
-
-
-def _is_standard_tool_result(result: Any) -> bool:
-    return (
-        isinstance(result, dict)
-        and STANDARD_TOOL_RESULT_KEYS.issubset(set(result.keys()))
-    )
-
-
-def _tool_success_result(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    return {
-        "ok": True,
-        "error": None,
-        "data": data if isinstance(data, dict) else {},
-    }
-
-
-def _tool_error_result(
-    error: Any,
-    data: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    error_message = str(error or "tool failed").strip() or "tool failed"
-    return {
-        "ok": False,
-        "error": error_message,
-        "data": data if isinstance(data, dict) else {},
-    }
-
-
-def _normalize_tool_result(result: Any) -> Dict[str, Any]:
-    if not isinstance(result, dict):
-        return _tool_error_result("tool result must be a JSON object")
-
-    if _is_standard_tool_result(result):
-        data = result.get("data")
-        ok = bool(result.get("ok"))
-        if not isinstance(data, dict):
-            data = {}
-        error_message = None
-        if not ok:
-            error_message = str(result.get("error") or "tool failed").strip()
-            if not error_message:
-                error_message = "tool failed"
-        return {
-            "ok": ok,
-            "error": error_message,
-            "data": data,
-        }
-
-    data = dict(result)
-    error_message = data.pop("error", None)
-    if error_message is not None:
-        return _tool_error_result(error_message, data)
-    return _tool_success_result(data)
-
-
-def _tool_result_data(result: Any) -> Dict[str, Any]:
-    if _is_standard_tool_result(result):
-        data = result.get("data")
-        return data if isinstance(data, dict) else {}
-    if isinstance(result, dict):
-        return result
-    return {}
-
-
-def _format_validation_type(expected_types: List[str]) -> str:
-    return " or ".join(expected_types)
-
-
-def _matches_schema_type(value: Any, schema_type: str) -> bool:
-    if schema_type == "string":
-        return isinstance(value, str)
-    if schema_type == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if schema_type == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if schema_type == "boolean":
-        return isinstance(value, bool)
-    if schema_type == "object":
-        return isinstance(value, dict)
-    if schema_type == "array":
-        return isinstance(value, list)
-    if schema_type == "null":
-        return value is None
-    return True
-
-
-def _validate_tool_arguments(arguments: Dict[str, Any], schema: Any) -> Optional[str]:
-    if not isinstance(arguments, dict):
-        return "tool arguments must be a JSON object"
-    if not isinstance(schema, dict):
-        return None
-
-    if schema.get("type") not in (None, "object"):
-        return "tool input_schema type must be object"
-
-    properties = schema.get("properties") or {}
-    if not isinstance(properties, dict):
-        properties = {}
-
-    required = schema.get("required") or []
-    if not isinstance(required, list):
-        required = []
-    for field in required:
-        if field not in arguments or arguments.get(field) is None:
-            return "tool argument '{0}' is required".format(field)
-
-    if schema.get("additionalProperties") is False:
-        for field in arguments:
-            if field not in properties:
-                return "unexpected tool argument '{0}'".format(field)
-
-    for field, value in arguments.items():
-        field_schema = properties.get(field)
-        if not isinstance(field_schema, dict):
-            continue
-
-        expected_type = field_schema.get("type")
-        if isinstance(expected_type, str):
-            expected_types = [expected_type]
-        elif isinstance(expected_type, list):
-            expected_types = [
-                item
-                for item in expected_type
-                if isinstance(item, str)
-            ]
-        else:
-            expected_types = []
-
-        if expected_types and not any(
-            _matches_schema_type(value, item)
-            for item in expected_types
-        ):
-            return "tool argument '{0}' must be {1}".format(
-                field,
-                _format_validation_type(expected_types),
-            )
-
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-
-        minimum = field_schema.get("minimum")
-        if minimum is not None and value < minimum:
-            return "tool argument '{0}' must be >= {1}".format(field, minimum)
-
-        maximum = field_schema.get("maximum")
-        if maximum is not None and value > maximum:
-            return "tool argument '{0}' must be <= {1}".format(field, maximum)
-
-    return None
-
-
-def _tool_call_signature(tool_name: str, arguments: Dict[str, Any]) -> str:
-    return "{0}:{1}".format(
-        tool_name,
-        json.dumps(arguments or {}, ensure_ascii=False, sort_keys=True),
-    )
 
 
 def _coerce_int(value: Any) -> Optional[int]:

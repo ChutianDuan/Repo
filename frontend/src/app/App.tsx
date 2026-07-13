@@ -37,6 +37,8 @@ import {
   type AgentToolResultEvent,
   type StreamChatCallbacks,
   type StreamChatDoneMeta,
+  type StreamResumeEvent,
+  type StreamTransportEvent,
 } from "../services/chatService";
 import { deleteDocument, listDocuments, uploadDocument, uploadWebDocument } from "../services/documentService";
 import { getHealth, getMonitorOverview } from "../services/monitorService";
@@ -80,10 +82,11 @@ function asNumber(value: unknown): number | null {
 }
 
 function getRetrievalTrace(result: unknown): RetrievalTraceDetails | undefined {
-  if (!result || typeof result !== "object") {
+  const data = unwrapToolResult(result);
+  if (!data) {
     return undefined;
   }
-  const retrieval = (result as { retrieval?: unknown }).retrieval;
+  const retrieval = data.retrieval;
   if (!retrieval || typeof retrieval !== "object") {
     return undefined;
   }
@@ -93,10 +96,22 @@ function getRetrievalTrace(result: unknown): RetrievalTraceDetails | undefined {
     denseTopK: asNumber(item.dense_top_k),
     rerankTopK: asNumber(item.rerank_top_k),
     candidateCount: asNumber(item.candidate_count),
+    mysqlHydratedCount: asNumber(item.mysql_hydrated_candidate_count),
     vectorSearchLatencyMs: asNumber(item.vector_search_latency_ms),
     rerankLatencyMs: asNumber(item.rerank_latency_ms),
     retrievalLatencyMs: asNumber(item.retrieval_latency_ms),
+    rerankModel: typeof item.rerank_model === "string" ? item.rerank_model : undefined,
+    rerankProvider: typeof item.rerank_provider === "string" ? item.rerank_provider : undefined,
+    rerankUsed: typeof item.rerank_used === "boolean" ? item.rerank_used : null,
   };
+}
+
+function unwrapToolResult(result: unknown): Record<string, unknown> | null {
+  if (!result || typeof result !== "object") return null;
+  const outer = result as Record<string, unknown>;
+  return outer.data && typeof outer.data === "object"
+    ? outer.data as Record<string, unknown>
+    : outer;
 }
 
 function normalizeCitation(value: unknown): Citation | null {
@@ -129,10 +144,11 @@ function normalizeCitations(value: unknown): Citation[] {
 }
 
 function getResultCitations(result: unknown): TraceCitation[] {
-  if (!result || typeof result !== "object") {
+  const data = unwrapToolResult(result);
+  if (!data) {
     return [];
   }
-  const results = (result as { results?: unknown }).results;
+  const results = data.results;
   if (!Array.isArray(results)) {
     return [];
   }
@@ -145,17 +161,21 @@ function getResultCitations(result: unknown): TraceCitation[] {
       score: asNumber(item.score),
       snippet: String(item.snippet ?? item.content ?? ""),
       title: typeof item.title === "string" ? item.title : undefined,
+      originalRank: asNumber(item.original_rank),
+      lancedbRank: asNumber(item.lancedb_rank),
+      lancedbScore: asNumber(item.lancedb_score),
+      rerankScore: asNumber(item.rerank_score),
     };
   });
 }
 
 function getResultCount(result: unknown): number | null {
-  if (!result || typeof result !== "object") {
+  const data = unwrapToolResult(result);
+  if (!data) {
     return null;
   }
-  const data = result as { total?: unknown; results?: unknown };
   if (typeof data.total === "number") {
-    return data.total;
+    return data.total as number;
   }
   if (Array.isArray(data.results)) {
     return data.results.length;
@@ -190,7 +210,7 @@ export default function App() {
   const [chunkSize, setChunkSize] = useState("800");
   const [chunkOverlap, setChunkOverlap] = useState("120");
   const [modelName, setModelName] = useState("local-llm");
-  const [question, setQuestion] = useState("这份文档讲了什么？");
+  const [question, setQuestion] = useState("根据知识库总结这个系统的文档入库和 Agent 问答链路");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [webUrl, setWebUrl] = useState("");
 
@@ -219,6 +239,9 @@ export default function App() {
   const readyDocuments = documents.filter(isIndexedDocument);
   const overview = monitorOverview || buildFallbackOverview(health, taskRecords, documents, apiLatencyMs, topK);
   const selectedFileName = selectedFile?.name || null;
+  const embeddingModelName = taskRecords
+    .map((task) => task.meta?.embedding_model)
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0) || null;
 
   function setTopK(value: number) {
     setTopKState(normalizeTopK(value));
@@ -337,11 +360,14 @@ export default function App() {
     if (stepIndex === 0 && status === "RUNNING") {
       upsertAgentTraceRow({
         id: "agent-decision",
-        type: event.step_type || "agent_step",
+        type: "agent_step",
         tool: "-",
         input: summarizeValue(prompt),
         output: "Agent 正在判断是否需要检索",
         status,
+        runId: asNumber(event.run_id),
+        stepId: asNumber(event.step_id),
+        eventId: event.event_id == null ? null : String(event.event_id),
       });
       return;
     }
@@ -349,12 +375,15 @@ export default function App() {
     if (event.decision === "tool_call") {
       upsertAgentTraceRow({
         id: "agent-decision",
-        type: event.step_type || "agent_step",
+        type: "agent_step",
         tool: "-",
         input: summarizeValue(prompt),
         output: "需要检索",
         latencyMs: event.latency_ms,
         status: "SUCCESS",
+        runId: asNumber(event.run_id),
+        stepId: asNumber(event.step_id),
+        eventId: event.event_id == null ? null : String(event.event_id),
       });
       return;
     }
@@ -362,11 +391,14 @@ export default function App() {
     if (stepIndex > 0 && status === "RUNNING") {
       upsertAgentTraceRow({
         id: "agent-generation",
-        type: event.step_type || "agent_step",
+        type: "agent_step",
         tool: "-",
         input: "检索结果",
         output: "正在生成答案",
         status,
+        runId: asNumber(event.run_id),
+        stepId: asNumber(event.step_id),
+        eventId: event.event_id == null ? null : String(event.event_id),
       });
       return;
     }
@@ -375,12 +407,15 @@ export default function App() {
       const answeredDirectly = stepIndex === 0;
       upsertAgentTraceRow({
         id: answeredDirectly ? "agent-decision" : "agent-generation",
-        type: event.step_type || "agent_step",
+        type: "agent_step",
         tool: "-",
         input: answeredDirectly ? summarizeValue(prompt) : "检索结果",
         output: answeredDirectly ? "无需检索，直接回答" : "答案已生成",
         latencyMs: event.latency_ms,
         status: "SUCCESS",
+        runId: asNumber(event.run_id),
+        stepId: asNumber(event.step_id),
+        eventId: event.event_id == null ? null : String(event.event_id),
       });
     }
   }
@@ -402,6 +437,9 @@ export default function App() {
       output: `调用 ${toolName}`,
       latencyMs: event.latency_ms,
       status: normalizeTraceStatus(event.status),
+      runId: asNumber(event.run_id),
+      stepId: asNumber(event.step_id),
+      eventId: event.event_id == null ? null : String(event.event_id),
     });
   }
 
@@ -426,6 +464,8 @@ export default function App() {
       output: `调用 ${toolName}`,
       latencyMs: event.latency_ms,
       status,
+      runId: asNumber(event.run_id),
+      stepId: asNumber(event.step_id),
     });
     upsertAgentTraceRow({
       id: `tool-result-${agentToolTraceId(event)}`,
@@ -437,14 +477,9 @@ export default function App() {
       status,
       retrieval,
       citations,
-    });
-    upsertAgentTraceRow({
-      id: "agent-generation",
-      type: "agent_step",
-      tool: "-",
-      input: output,
-      output: status === "FAILED" ? "检索失败，正在降级生成答案" : "正在生成答案",
-      status: "RUNNING",
+      runId: asNumber(event.run_id),
+      stepId: asNumber(event.step_id),
+      eventId: event.event_id == null ? null : String(event.event_id),
     });
   }
 
@@ -456,6 +491,75 @@ export default function App() {
       input: "检索结果",
       output: "答案已生成",
       status: "SUCCESS",
+      runId: asNumber(_event.run_id),
+      eventId: _event.event_id == null ? null : String(_event.event_id),
+    });
+  }
+
+  function handleStreamTransportEvent(event: StreamTransportEvent) {
+    if (!["delta", "final", "done", "error"].includes(event.type)) return;
+    const meta = event.payload.meta && typeof event.payload.meta === "object"
+      ? event.payload.meta as Record<string, unknown>
+      : {};
+    const runId = asNumber(event.payload.run_id ?? meta.run_id ?? meta.agent_run_id);
+    if (event.type === "delta") {
+      upsertAgentTraceRow({
+        id: "transport-delta",
+        type: "delta",
+        output: "Answer tokens are arriving over SSE",
+        status: "RUNNING",
+        eventId: event.eventId,
+        runId,
+      });
+      return;
+    }
+    if (event.type === "final") {
+      upsertAgentTraceRow({
+        id: "transport-delta",
+        type: "delta",
+        output: "Answer token stream completed",
+        status: "SUCCESS",
+        runId,
+      });
+      upsertAgentTraceRow({
+        id: "transport-final",
+        type: "final",
+        output: "Answer and citations persisted",
+        status: "SUCCESS",
+        eventId: event.eventId,
+        runId,
+      });
+      return;
+    }
+    if (event.type === "error") {
+      upsertAgentTraceRow({
+        id: `transport-error-${event.eventId || "unnumbered"}`,
+        type: "error",
+        output: String(event.payload.message || "SSE stream failed"),
+        status: "ERROR",
+        eventId: event.eventId,
+        runId,
+      });
+      return;
+    }
+    upsertAgentTraceRow({
+      id: "transport-done",
+      type: "done",
+      output: "SSE stream completed",
+      status: "SUCCESS",
+      eventId: event.eventId,
+      runId,
+    });
+  }
+
+  function handleStreamResume(event: StreamResumeEvent) {
+    upsertAgentTraceRow({
+      id: `transport-resume-${event.attempt}-${event.lastEventId}`,
+      type: "resume",
+      output: `Resumed from event ${event.lastEventId}`,
+      status: "SUCCESS",
+      lastEventId: event.lastEventId,
+      resumeAttempt: event.attempt,
     });
   }
 
@@ -957,6 +1061,8 @@ export default function App() {
                 ),
               );
             },
+            onTransportEvent: handleStreamTransportEvent,
+            onResume: handleStreamResume,
           };
 
           if (useAgentStream) {
@@ -965,6 +1071,7 @@ export default function App() {
               {
                 session_id: session.session_id,
                 message: prompt,
+                trace_id: `workbench-${session.session_id}-${streamTaskId}`,
               },
               callbacks,
             );
@@ -1176,6 +1283,9 @@ export default function App() {
           chunkSize={chunkSize}
           chunkOverlap={chunkOverlap}
           modelName={modelName}
+          users={latestUsers}
+          newUserName={newUserName}
+          pending={pending}
           onApiBaseUrlChange={setApiBaseUrl}
           onUserIdChange={setUserId}
           onTopKChange={setTopK}
@@ -1184,6 +1294,9 @@ export default function App() {
           onChunkSizeChange={setChunkSize}
           onChunkOverlapChange={setChunkOverlap}
           onModelNameChange={setModelName}
+          onNewUserNameChange={setNewUserName}
+          onSelectUser={handleSelectUser}
+          onCreateUser={handleCreateUser}
         />
       );
     }
@@ -1191,7 +1304,10 @@ export default function App() {
     return (
       <WorkspacePage
         session={session}
-        readyDocumentCount={readyDocuments.length}
+        sessions={sessions}
+        documents={documents}
+        tasks={taskRecords}
+        selectedDocId={currentDocumentId}
         messages={currentMessages}
         question={question}
         topK={topK}
@@ -1199,17 +1315,21 @@ export default function App() {
         streamingEnabled={streamingEnabled}
         pending={pending}
         selectedFileName={selectedFileName}
+        webUrl={webUrl}
         error={error}
-        ingestTask={ingestTask}
         chatTask={chatTask}
         agentTraceRows={agentTraceRows}
         onCreateSession={handleCreateSession}
+        onSelectSession={handleSelectSession}
         onRefreshMessages={handleRefreshMessages}
+        onSelectDocument={setCurrentDocumentId}
         onQuestionChange={setQuestion}
         onTopKChange={setTopK}
         onRagEnabledChange={setRagEnabled}
         onFileChange={setSelectedFile}
+        onWebUrlChange={setWebUrl}
         onUpload={handleUploadDocument}
+        onUploadWebDocument={handleUploadWebDocument}
         onAsk={handleAsk}
       />
     );
@@ -1230,23 +1350,12 @@ export default function App() {
     <AppShell
       route={route}
       overview={overview}
-      searchScope={`Global KB · ${readyDocuments.length} ready docs`}
-      sessions={sessions}
-      currentSessionId={session?.session_id || null}
-      users={latestUsers}
-      userId={userId}
-      newUserName={newUserName}
-      pending={pending}
+      health={health}
       refreshing={refreshingHealth}
-      retrievalMode={ragEnabled ? `RAG top_${topK}` : "Direct"}
       modelName={modelName}
+      embeddingModelName={embeddingModelName}
       onNavigate={navigate}
       onRefresh={() => void refreshHealth(false)}
-      onSelectSession={handleSelectSession}
-      onNewSession={handleCreateSession}
-      onSelectUser={handleSelectUser}
-      onNewUserNameChange={setNewUserName}
-      onCreateUser={handleCreateUser}
     >
       {renderRoute()}
     </AppShell>

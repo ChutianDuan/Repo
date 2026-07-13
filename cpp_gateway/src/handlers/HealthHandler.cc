@@ -40,20 +40,26 @@ void HealthService::handle(
             return;
         }
 
+        const bool healthy = state->mysqlOk && state->redisOk && state->pythonOk;
+        Json::Value data;
+        data["ok"] = healthy;
+
+        data["mysql"]["ok"] = state->mysqlOk;
+        data["mysql"]["error"] = state->mysqlErr;
+
+        data["redis"]["ok"] = state->redisOk;
+        data["redis"]["error"] = state->redisErr;
+
+        data["python"]["ok"] = state->pythonOk;
+        data["python"]["error"] = state->pythonErr;
+
         Json::Value json;
-        json["ok"] = state->mysqlOk && state->redisOk && state->pythonOk;
-
-        json["mysql"]["ok"] = state->mysqlOk;
-        json["mysql"]["error"] = state->mysqlErr;
-
-        json["redis"]["ok"] = state->redisOk;
-        json["redis"]["error"] = state->redisErr;
-
-        json["python"]["ok"] = state->pythonOk;
-        json["python"]["error"] = state->pythonErr;
+        json["code"] = healthy ? 0 : 5000;
+        json["message"] = healthy ? "ok" : "service unavailable";
+        json["data"] = data;
 
         auto resp = HttpResponse::newHttpJsonResponse(json);
-        resp->setStatusCode(json["ok"].asBool() ? k200OK : k503ServiceUnavailable);
+        resp->setStatusCode(healthy ? k200OK : k503ServiceUnavailable);
         callback(resp);
     };
 

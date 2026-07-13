@@ -11,23 +11,11 @@ activate_python_env "${RAG_API_ENV:-rag-api}" "${RAG_API_VENV:-${REPO_ROOT}/.ven
 
 API_DISABLE_CUDA="${API_DISABLE_CUDA:-${PYTHON_DISABLE_CUDA:-false}}"
 API_CUDA_VISIBLE_DEVICES="${API_CUDA_VISIBLE_DEVICES:-${PYTHON_CUDA_VISIBLE_DEVICES:-}}"
-
-case "$API_DISABLE_CUDA" in
-  true|1|yes|on)
-    export CUDA_VISIBLE_DEVICES=""
-    ;;
-  *)
-    if [ -n "$API_CUDA_VISIBLE_DEVICES" ]; then
-      export CUDA_VISIBLE_DEVICES="$API_CUDA_VISIBLE_DEVICES"
-    fi
-    ;;
-esac
+configure_cuda_visibility "api" "$API_DISABLE_CUDA" "$API_CUDA_VISIBLE_DEVICES"
 
 export PYTHONPATH="$REPO_ROOT"
 
 APP_RELOAD="${APP_RELOAD:-false}"
-
-echo "[INFO] api CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>}"
 
 UVICORN_ARGS=(
   python3 -m uvicorn python_rag.app.main:app
@@ -35,7 +23,7 @@ UVICORN_ARGS=(
   --port "${APP_PORT:-8000}"
 )
 
-if [ "${APP_RELOAD}" = "true" ]; then
+if is_true "$APP_RELOAD"; then
   UVICORN_ARGS+=(--reload)
 fi
 

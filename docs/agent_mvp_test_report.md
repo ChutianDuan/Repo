@@ -1,14 +1,18 @@
-# Agent MVP 联调测试报告
+# 一次 Agent MVP 联调如何证明“会检索、会失败、会收敛”
 
-日期：2026-05-27
+[返回文档地图](README.md)
 
-## 结论
+> 历史验证快照：初始验证日期为 2026-05-27，后续同步到 2026-07-01。文中的 run ID、服务健康状态、模型地址和通过数量只描述当时环境，不代表当前进程状态。
 
-Agent MVP 的代码级联调已完成，四个目标场景均有自动化覆盖：能回答、能按需调用 `knowledge_search`、能在无证据时说明知识库证据不足、能在工具返回 `error` 时记录失败并降级回答。
+Agent 演示最容易只验证成功路径：模型返回答案，页面出现文字，于是宣布“Agent 可用”。这份报告选择了更严格的证据标准，要求同一套执行循环同时证明四件事：需要知识时会检索，不需要时不滥用工具，没有证据时不编造，工具失败时能留下 Trace 并降级回答。
+
+## 先看结论
+
+在这次快照中，四个目标场景均有自动化覆盖：能回答、能按需调用 `knowledge_search`、能在无证据时说明知识库证据不足、能在工具返回 `error` 时记录失败并降级回答。
 
 本轮还将 LLM 默认运行方式改为远端 OpenAI-compatible API：`scripts/start_vllm.sh` 默认只检查 API 连通性，不再因为存在 `VLLM_MODEL_PATH` 自动启动本地 vLLM；本地 vLLM 仅在显式设置 `LLM_RUNTIME=local_vllm` 时使用。
 
-## 2026-06-28 增量同步
+## 第一次加固：工具协议与循环上限（2026-06-28）
 
 Agent hardening 已补充以下行为，并由自动化测试覆盖：
 
@@ -34,7 +38,7 @@ python -m pytest \
 python -m compileall python_rag/app/agent
 ```
 
-## 2026-07-01 增量同步
+## 第二次加固：检索不再只靠提示词（2026-07-01）
 
 Agent 的“是否检索”不再只依赖系统提示约束。`agent_runner.py` 增加轻量检索意图路由：问题命中项目文档、代码、架构、能力、上传文档、网页导入、embedding、索引等意图时，后端会在首轮 LLM 调用前强制执行一次 `knowledge_search`，Trace 决策记为 `forced_tool_call`，然后再让 LLM 基于工具结果总结。
 
@@ -44,7 +48,7 @@ Agent 的“是否检索”不再只依赖系统提示约束。`agent_runner.py`
 - 问候类问题仍不触发强制检索。
 - 原有工具调用、错误、超时、非法参数、重复调用和 `max_steps` 降级逻辑保持可用。
 
-## 变更范围
+## 改动落在了哪里
 
 | 文件 | 变更 |
 | --- | --- |
@@ -55,7 +59,7 @@ Agent 的“是否检索”不再只依赖系统提示约束。`agent_runner.py`
 | `.env.example` | 默认 LLM 配置改为远端 API：`LLM_RUNTIME=api`、`LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4`、`LLM_MODEL=glm-4.7-flash`。 |
 | `README.md`, `docs/environment.md`, `scripts/README.md` | 同步 API 模式启动和排障说明。 |
 
-## 场景验证
+## 四个场景分别证明什么
 
 | 场景 | 用户输入 | 预期 | 验证结果 |
 | --- | --- | --- | --- |
@@ -64,7 +68,7 @@ Agent 的“是否检索”不再只依赖系统提示约束。`agent_runner.py`
 | 3. 检索不到 | `文档里有没有区块链支付模块？` | 调用 `knowledge_search`，说明知识库证据不足 | 通过。测试确认工具调用成功但返回 `data.total=0`，最终回答包含“证据不足”。 |
 | 4. 工具失败 | `knowledge_search timeout` | 记录失败，并返回降级说明 | 通过。测试确认工具结果 `error=knowledge_search timeout` 被写为 FAILED tool_call，后续回答为降级说明。 |
 
-## Trace 与数据库记录
+## 为什么数据库 Trace 比控制台日志更可信
 
 - Agent Run：`trace_service.create_run()` 创建 `agent_runs`，结束时 `finish_run()` / `fail_run()` 写终态、输出、错误和 finished_at。
 - Agent Step：每轮 LLM 决策写入 `agent_steps`，包括 step_index、input_json、output_json、decision、token 和 latency。
@@ -72,7 +76,7 @@ Agent 的“是否检索”不再只依赖系统提示约束。`agent_runner.py`
 - 查询入口：`GET /api/agent/runs/{run_id}` 和 `GET /api/agent/runs/{run_id}/steps` 可展示完整 Trace，steps 响应包含对应 tool_calls。
 - 表结构：`db/004_create_agent_tables.sql` 提供 `agent_runs`、`agent_steps`、`agent_tool_calls`。
 
-## LLM API 模式
+## 模型运行方式也属于测试条件
 
 运行时 `.env` 需要使用 API 配置，不再指向本地 `127.0.0.1:9000/v1`：
 
@@ -87,7 +91,7 @@ LLM_MODEL=glm-4.7-flash
 
 改完 `.env` 后需要重启 FastAPI/Gateway。`bash scripts/start_vllm.sh` 在 API 模式下只检查 `${LLM_BASE_URL}/models`，不会启动本地模型。
 
-## 已执行验证
+## 当时实际执行的验证
 
 ```bash
 pytest tests/test_agent_orchestrator.py tests/test_agent_trace_service.py tests/test_knowledge_search_tool.py tests/test_agent_streaming_service.py tests/test_agent_api.py
@@ -113,18 +117,18 @@ pytest
 
 结果：未通过完整收集，原因是当前 Python 环境缺少 `numpy`，阻断 `tests/test_chunking_service.py` 和 `tests/test_reranker_service.py` 的 import；这不是本次 Agent 改动引入的问题。
 
-## Live 环境状态
+## 当时的 Live 环境状态
 
-已切换并重启服务，当前 live 环境状态：
+当时切换并重启服务后记录的 live 环境状态如下。它们是验收证据，不是当前健康检查：
 
 - `.env` 使用 `LLM_RUNTIME=api`、`LLM_BASE_URL=https://api.xiaomimimo.com/v1`、`LLM_MODEL=mimo-v2.5-pro`，API key 已配置但未在报告中展示。
 - `bash scripts/start_vllm.sh` 返回 `LLM runtime=api`、`local vLLM will not be started`、`LLM API /models reachable`。
-- `GET http://127.0.0.1:8000/internal/health` 返回 `ok=true`。
-- `GET http://127.0.0.1:8080/health` 返回 `ok=true`。
-- 当前库中存在 READY 文档，可用于真实检索。
+- `GET http://127.0.0.1:8000/internal/health` 返回 `data.ok=true`。
+- `GET http://127.0.0.1:8080/health` 返回 `data.ok=true`。
+- 当时数据库中存在 READY / indexed 文档，可用于真实检索。
 - 为避免 live 验收被 reranker 缺失权重下载阻塞，`.env` 设置 `RERANK_DOWNLOAD_IF_MISSING=false`，并保留 `RERANK_FALLBACK_TO_FAISS=true`（历史配置名；当前默认 LanceDB 召回路径下表示按召回顺序回退）。
 
-## Live 验收结果
+## 当时的 Live 验收结果
 
 | 场景 | 验收方式 | run_id | 结果 |
 | --- | --- | --- | --- |
@@ -134,3 +138,20 @@ pytest
 | 工具失败 | 受控失败工具 + 真实 DB Trace | 11 | SUCCESS；2 steps；`knowledge_search` 写入 FAILED，`error_message=knowledge_search timeout`，最终返回降级说明。 |
 
 说明：公开 `/api/agent/chat` 当前没有安全的工具失败注入参数，因此工具失败场景使用受控失败工具执行真实 `AgentOrchestrator` 与真实数据库 Trace 验证，避免破坏线上检索配置。
+
+## 这份报告没有证明什么
+
+- 没有证明高并发 SSE 的稳定性或容量上限。
+- 没有证明模型在真实业务 QA 集上的答案质量。
+- 没有证明历史 live 环境仍然在线。
+- 没有覆盖 Gateway handler 级自动化测试。
+
+重新验证当前版本时，应以仓库现有测试和统一启动入口为准：
+
+```bash
+python -m pytest tests
+python -m compileall python_rag tests
+bash scripts/ci_smoke.sh
+START_FRONTEND=true bash scripts/start_all.sh start
+bash scripts/start_all.sh status
+```
